@@ -10,8 +10,8 @@
     "build:web": "bun run --filter '@mpf/web' build",
     "typecheck": "bun run --filter '*' typecheck",
     "lint": "bun run --filter '*' lint",
-    "test": "bun run --filter '@mpf/backend' test",
-    "test:once": "bun run --filter '@mpf/backend' test:once",
+    "test": "bun run --filter './packages/*' test",
+    "test:once": "bun run --filter './packages/*' test:once",
     "test:e2e": "bun run --filter '@mpf/web' test:e2e"
   }
 }
