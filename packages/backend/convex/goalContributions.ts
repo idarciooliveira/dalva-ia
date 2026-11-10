@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-import { getOptionalUserId, requireUserId } from "./lib/auth";
+import { requireUserId } from "./lib/auth";
 import * as goalContributionsDomain from "./domain/goalContributions";
 
 /* -------------------------------------------------------------------------- */
