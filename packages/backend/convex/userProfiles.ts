@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getOptionalUserId, requireUserId } from "./lib/auth";
+import * as userProfilesDomain from "./domain/userProfiles";
 
 /* -------------------------------------------------------------------------- */
 /*  Queries                                                                   */
@@ -13,13 +14,10 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 export const getProfile = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getOptionalUserId(ctx);
     if (!userId) return null;
 
-    return await ctx.db
-      .query("userProfiles")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
+    return await userProfilesDomain.getProfile(ctx, userId);
   },
 });
 
@@ -36,29 +34,8 @@ export const createProfile = mutation({
     baseCurrency: v.string(),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    // Prevent duplicate profiles
-    const existing = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
-
-    if (existing) {
-      // Update currency if profile already exists (user went back in wizard)
-      await ctx.db.patch(existing._id, {
-        baseCurrency: args.baseCurrency,
-      });
-      return existing._id;
-    }
-
-    return await ctx.db.insert("userProfiles", {
-      userId,
-      name: undefined,
-      baseCurrency: args.baseCurrency,
-      onboardingCompleted: false,
-    });
+    const userId = await requireUserId(ctx);
+    return await userProfilesDomain.createProfile(ctx, userId, args);
   },
 });
 
@@ -69,16 +46,7 @@ export const createProfile = mutation({
 export const completeOnboarding = mutation({
   args: {},
   handler: async (ctx) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const profile = await ctx.db
-      .query("userProfiles")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .unique();
-
-    if (!profile) throw new Error("Profile not found");
-
-    await ctx.db.patch(profile._id, { onboardingCompleted: true });
+    const userId = await requireUserId(ctx);
+    await userProfilesDomain.completeOnboarding(ctx, userId);
   },
 });

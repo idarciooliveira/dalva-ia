@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getOptionalUserId, requireUserId } from "./lib/auth";
+import * as savingsGoalsDomain from "./domain/savingsGoals";
 
 /* -------------------------------------------------------------------------- */
 /*  Queries                                                                   */
@@ -15,17 +16,10 @@ export const listGoals = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getOptionalUserId(ctx);
     if (!userId) return [];
 
-    const goals = await ctx.db
-      .query("savingsGoals")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .take(100);
-
-    if (args.includeArchived) return goals;
-
-    return goals.filter((g) => !g.archived);
+    return await savingsGoalsDomain.listGoals(ctx, userId, args);
   },
 });
 
@@ -37,14 +31,8 @@ export const listGoals = query({
 export const getGoal = query({
   args: { id: v.id("savingsGoals") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const goal = await ctx.db.get(args.id);
-    if (!goal || goal.userId !== userId) {
-      throw new Error("Goal not found");
-    }
-    return goal;
+    const userId = await requireUserId(ctx);
+    return await savingsGoalsDomain.getGoal(ctx, userId, args);
   },
 });
 
@@ -66,35 +54,8 @@ export const createGoal = mutation({
     color: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    if (args.targetAmount <= 0) {
-      throw new Error("Target amount must be positive");
-    }
-
-    // Validate linked account ownership if provided
-    if (args.linkedAccountId) {
-      const account = await ctx.db.get(args.linkedAccountId);
-      if (!account || account.userId !== userId) {
-        throw new Error("Account not found");
-      }
-    }
-
-    return await ctx.db.insert("savingsGoals", {
-      userId,
-      name: args.name,
-      targetAmount: args.targetAmount,
-      currentAmount: 0,
-      isVirtual: args.isVirtual,
-      createdAt: new Date().toISOString().slice(0, 10),
-      ...(args.targetDate ? { targetDate: args.targetDate } : {}),
-      ...(args.linkedAccountId
-        ? { linkedAccountId: args.linkedAccountId }
-        : {}),
-      ...(args.icon ? { icon: args.icon } : {}),
-      ...(args.color ? { color: args.color } : {}),
-    });
+    const userId = await requireUserId(ctx);
+    return await savingsGoalsDomain.createGoal(ctx, userId, args);
   },
 });
 
@@ -111,26 +72,8 @@ export const updateGoal = mutation({
     color: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const goal = await ctx.db.get(args.id);
-    if (!goal || goal.userId !== userId) {
-      throw new Error("Goal not found");
-    }
-
-    if (args.targetAmount !== undefined && args.targetAmount <= 0) {
-      throw new Error("Target amount must be positive");
-    }
-
-    const patch: Record<string, unknown> = {};
-    if (args.name !== undefined) patch.name = args.name;
-    if (args.targetAmount !== undefined) patch.targetAmount = args.targetAmount;
-    if (args.targetDate !== undefined) patch.targetDate = args.targetDate;
-    if (args.icon !== undefined) patch.icon = args.icon;
-    if (args.color !== undefined) patch.color = args.color;
-
-    await ctx.db.patch(args.id, patch);
+    const userId = await requireUserId(ctx);
+    await savingsGoalsDomain.updateGoal(ctx, userId, args);
   },
 });
 
@@ -140,15 +83,8 @@ export const updateGoal = mutation({
 export const archiveGoal = mutation({
   args: { id: v.id("savingsGoals") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const goal = await ctx.db.get(args.id);
-    if (!goal || goal.userId !== userId) {
-      throw new Error("Goal not found");
-    }
-
-    await ctx.db.patch(args.id, { archived: true });
+    const userId = await requireUserId(ctx);
+    await savingsGoalsDomain.archiveGoal(ctx, userId, args);
   },
 });
 
@@ -158,15 +94,8 @@ export const archiveGoal = mutation({
 export const restoreGoal = mutation({
   args: { id: v.id("savingsGoals") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const goal = await ctx.db.get(args.id);
-    if (!goal || goal.userId !== userId) {
-      throw new Error("Goal not found");
-    }
-
-    await ctx.db.patch(args.id, { archived: false });
+    const userId = await requireUserId(ctx);
+    await savingsGoalsDomain.restoreGoal(ctx, userId, args);
   },
 });
 
@@ -176,24 +105,7 @@ export const restoreGoal = mutation({
 export const deleteGoal = mutation({
   args: { id: v.id("savingsGoals") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const goal = await ctx.db.get(args.id);
-    if (!goal || goal.userId !== userId) {
-      throw new Error("Goal not found");
-    }
-
-    // Delete all contributions for this goal
-    const contributions = await ctx.db
-      .query("goalContributions")
-      .withIndex("by_goalId", (q) => q.eq("goalId", args.id))
-      .take(500);
-
-    for (const c of contributions) {
-      await ctx.db.delete(c._id);
-    }
-
-    await ctx.db.delete(args.id);
+    const userId = await requireUserId(ctx);
+    await savingsGoalsDomain.deleteGoal(ctx, userId, args);
   },
 });

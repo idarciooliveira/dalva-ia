@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
-import { getAuthUserId } from "@convex-dev/auth/server";
+import { getOptionalUserId, requireUserId } from "./lib/auth";
+import * as accountsDomain from "./domain/accounts";
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -29,17 +30,10 @@ export const listAccounts = query({
     includeArchived: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
+    const userId = await getOptionalUserId(ctx);
     if (!userId) return [];
 
-    const accounts = await ctx.db
-      .query("accounts")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .take(100);
-
-    if (args.includeArchived) return accounts;
-
-    return accounts.filter((a) => !a.archived);
+    return await accountsDomain.listAccounts(ctx, userId, args);
   },
 });
 
@@ -51,14 +45,8 @@ export const listAccounts = query({
 export const getAccount = query({
   args: { id: v.id("accounts") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const account = await ctx.db.get(args.id);
-    if (!account || account.userId !== userId) {
-      throw new Error("Account not found");
-    }
-    return account;
+    const userId = await requireUserId(ctx);
+    return await accountsDomain.getAccount(ctx, userId, args);
   },
 });
 
@@ -78,17 +66,8 @@ export const createAccount = mutation({
     theme: v.optional(v.string()), // visual theme id
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    return await ctx.db.insert("accounts", {
-      userId,
-      name: args.name,
-      type: args.type,
-      balance: args.balance,
-      currency: args.currency,
-      ...(args.theme ? { theme: args.theme } : {}),
-    });
+    const userId = await requireUserId(ctx);
+    return await accountsDomain.createAccount(ctx, userId, args);
   },
 });
 
@@ -105,24 +84,8 @@ export const updateAccount = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const account = await ctx.db.get(args.id);
-    if (!account || account.userId !== userId) {
-      throw new Error("Account not found");
-    }
-
-    const { id, ...fields } = args;
-    // Only patch fields that were actually provided
-    const patch: Record<string, string> = {};
-    if (fields.name !== undefined) patch.name = fields.name;
-    if (fields.type !== undefined) patch.type = fields.type;
-    if (fields.theme !== undefined) patch.theme = fields.theme;
-    if (fields.icon !== undefined) patch.icon = fields.icon;
-    if (fields.description !== undefined) patch.description = fields.description;
-
-    await ctx.db.patch(args.id, patch);
+    const userId = await requireUserId(ctx);
+    await accountsDomain.updateAccount(ctx, userId, args);
   },
 });
 
@@ -132,15 +95,8 @@ export const updateAccount = mutation({
 export const archiveAccount = mutation({
   args: { id: v.id("accounts") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const account = await ctx.db.get(args.id);
-    if (!account || account.userId !== userId) {
-      throw new Error("Account not found");
-    }
-
-    await ctx.db.patch(args.id, { archived: true });
+    const userId = await requireUserId(ctx);
+    await accountsDomain.archiveAccount(ctx, userId, args);
   },
 });
 
@@ -150,15 +106,8 @@ export const archiveAccount = mutation({
 export const restoreAccount = mutation({
   args: { id: v.id("accounts") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const account = await ctx.db.get(args.id);
-    if (!account || account.userId !== userId) {
-      throw new Error("Account not found");
-    }
-
-    await ctx.db.patch(args.id, { archived: false });
+    const userId = await requireUserId(ctx);
+    await accountsDomain.restoreAccount(ctx, userId, args);
   },
 });
 
@@ -168,15 +117,8 @@ export const restoreAccount = mutation({
 export const deleteAccount = mutation({
   args: { id: v.id("accounts") },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const account = await ctx.db.get(args.id);
-    if (!account || account.userId !== userId) {
-      throw new Error("Account not found");
-    }
-
-    await ctx.db.delete(args.id);
+    const userId = await requireUserId(ctx);
+    await accountsDomain.deleteAccount(ctx, userId, args);
   },
 });
 
@@ -192,24 +134,7 @@ export const adjustBalance = mutation({
     note: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = await getAuthUserId(ctx);
-    if (!userId) throw new Error("Not authenticated");
-
-    const account = await ctx.db.get(args.id);
-    if (!account || account.userId !== userId) {
-      throw new Error("Account not found");
-    }
-
-    await ctx.db.insert("transactions", {
-      userId,
-      type: "adjustment",
-      amount: args.amount,
-      accountId: args.id,
-      date: args.date ?? new Date().toISOString().slice(0, 10),
-      description: "Balance adjustment",
-      ...(args.note ? { note: args.note } : {}),
-    });
-
-    await ctx.db.patch(args.id, { balance: account.balance + args.amount });
+    const userId = await requireUserId(ctx);
+    await accountsDomain.adjustBalance(ctx, userId, args);
   },
 });
