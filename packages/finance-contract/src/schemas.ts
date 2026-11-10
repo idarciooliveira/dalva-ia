@@ -8,6 +8,7 @@ import {
   goalContributionIdSchema,
   goalIdSchema,
   isoDateSchema,
+  moneyInputSchema,
   moneySchema,
   monthSchema,
   nonZeroMoneySchema,
@@ -22,7 +23,24 @@ import {
  *  - ids are opaque strings (`id`, not `_id`)
  *  - every amount is `Money` (minor units + currency) instead of a bare number
  *  - optional fields are omitted, never null
+ *
+ * Currency rules (the domain stores bare numbers, so the server fills these in):
+ *  - account balances and transactions use the account's currency
+ *  - goals, debts and every aggregate/report use the user's base currency
+ *  - a request `Money.currency` that differs from the target account's currency
+ *    is rejected with `validation_failed`; there is no cross-currency conversion,
+ *    so transfers between accounts of different currencies are rejected too
+ *
+ * Transfer legs and rows owned by goal contributions or debt payments are
+ * visible in transaction searches but must be changed through their own
+ * endpoints; `transactions.update` / `transactions.delete` on them returns `conflict`.
+ *
+ * Response dates are plain strings: the domain does not validate stored dates,
+ * and one legacy row must not make a whole list fail. Request dates are strict.
  */
+
+/** Dates in responses (see note above). Requests use `isoDateSchema`. */
+const responseDate = z.string();
 
 /* -------------------------------------------------------------------------- */
 /*  Enums                                                                     */
@@ -105,7 +123,7 @@ export const transactionSchema = z.object({
   accountId: accountIdSchema,
   categoryId: categoryIdSchema.optional(),
   subcategoryId: subcategoryIdSchema.optional(),
-  date: isoDateSchema,
+  date: responseDate,
   description: z.string().optional(),
   note: z.string().optional(),
   payee: z.string().optional(),
@@ -126,7 +144,7 @@ export const transferSchema = z.object({
   toAccountId: accountIdSchema,
   fromAccountName: z.string(),
   toAccountName: z.string(),
-  date: isoDateSchema,
+  date: responseDate,
   description: z.string().optional(),
   note: z.string().optional(),
 });
@@ -136,13 +154,13 @@ export const goalSchema = z.object({
   name: z.string(),
   targetAmount: moneySchema,
   currentAmount: moneySchema,
-  targetDate: isoDateSchema.optional(),
+  targetDate: responseDate.optional(),
   linkedAccountId: accountIdSchema.optional(),
   isVirtual: z.boolean(),
   icon: z.string().optional(),
   color: z.string().optional(),
   archived: z.boolean().optional(),
-  createdAt: isoDateSchema,
+  createdAt: responseDate,
 });
 
 export const goalContributionSchema = z.object({
@@ -150,7 +168,7 @@ export const goalContributionSchema = z.object({
   goalId: goalIdSchema,
   /** Positive = deposit, negative = withdrawal. */
   amount: moneySchema,
-  date: isoDateSchema,
+  date: responseDate,
   note: z.string().optional(),
   /** Outgoing transfer leg, present for account-linked goals. */
   transactionId: transactionIdSchema.optional(),
@@ -166,10 +184,10 @@ export const debtSchema = z.object({
   /** As stored by the app (the unit is not enforced by the backend). */
   interestRate: z.number().optional(),
   minimumPayment: moneySchema.optional(),
-  dueDate: isoDateSchema.optional(),
+  dueDate: responseDate.optional(),
   linkedAccountId: accountIdSchema.optional(),
   archived: z.boolean().optional(),
-  createdAt: isoDateSchema,
+  createdAt: responseDate,
 });
 
 export const debtPaymentSchema = z.object({
@@ -178,7 +196,7 @@ export const debtPaymentSchema = z.object({
   amount: moneySchema,
   principalAmount: moneySchema,
   interestAmount: moneySchema,
-  date: isoDateSchema,
+  date: responseDate,
   note: z.string().optional(),
   fromAccountId: accountIdSchema,
   sourceTransactionId: transactionIdSchema,
@@ -286,7 +304,7 @@ export const debtSummaryResponseSchema = z.object({
   totalOriginal: moneySchema,
   totalRemaining: moneySchema,
   recentPayment: moneySchema,
-  /** Up to 5 active debts, largest balance first. */
+  /** Up to 5 non-archived debts (paid-off ones included), largest balance first. */
   debts: z.array(
     z.object({
       id: debtIdSchema,
@@ -438,8 +456,8 @@ export const debtPaymentRecordRequestSchema = z
   .strictObject({
     debtId: debtIdSchema,
     amount: positiveMoneySchema,
-    principalAmount: moneySchema.optional(),
-    interestAmount: moneySchema.optional(),
+    principalAmount: moneyInputSchema.optional(),
+    interestAmount: moneyInputSchema.optional(),
     date: isoDateSchema,
     note: noteField.optional(),
     fromAccountId: accountIdSchema,

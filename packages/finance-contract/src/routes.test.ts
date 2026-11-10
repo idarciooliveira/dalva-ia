@@ -83,6 +83,14 @@ describe("matchRoute", () => {
     expect(matchRoute("GET", "/api/v2/accounts")).toBeNull();
     expect(matchRoute("GET", "/accounts")).toBeNull();
     expect(matchRoute("GET", "/api/v1/accounts/a/b")).toBeNull();
+    expect(matchRoute("GET", "/api/v1")).toBeNull();
+  });
+
+  it("rejects empty path segments and keeps encoded slashes inside one param", () => {
+    expect(matchRoute("GET", "/api/v1//accounts")).toBeNull();
+    expect(matchRoute("GET", "/api/v1/accounts//a")).toBeNull();
+    expect(matchRoute("GET", "/api/v1/accounts/a%2Fb")?.params).toEqual({ id: "a/b" });
+    expect(matchRoute("GET", "/api/v1/accounts/%E0%A4%A")).toBeNull();
   });
 });
 

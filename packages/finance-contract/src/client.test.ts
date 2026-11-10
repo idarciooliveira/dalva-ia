@@ -61,14 +61,47 @@ describe("reads", () => {
     expect(calls).toEqual(["Bearer tok_1", "Bearer tok_2"]);
   });
 
+  it("rejects ids that could escape the path", async () => {
+    const { client, fetchMock } = setup(() => json({ ok: true, data: {} }));
+    for (const id of ["..", ".", "a/b", "a%2Fb", "", "a b"]) {
+      await expect(client.accounts.get({ id })).rejects.toMatchObject({ code: "validation_failed", status: null });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("handles a baseUrl with a path prefix and trailing slash", async () => {
+    const calls: string[] = [];
+    const client = createFinanceClient({
+      baseUrl: "https://host.test/finance//",
+      getToken: () => "t",
+      fetch: (async (url: RequestInfo | URL) => {
+        calls.push(String(url));
+        return json({ ok: true, data: { items: [] } });
+      }) as typeof fetch,
+    });
+    await client.accounts.list();
+    expect(calls).toEqual(["https://host.test/finance/api/v1/accounts"]);
+  });
+
+  it("tolerates extra fields in responses (additive evolution)", async () => {
+    const { client } = setup(() =>
+      json({
+        ok: true,
+        data: { items: [{ ...accountJson, balance: { ...usd(1), formatted: "$0.01" }, newField: 1 }], extra: true },
+      }),
+    );
+    const { items } = await client.accounts.list();
+    expect(items[0]?.balance.amountMinor).toBe(1);
+  });
+
   it("encodes path params and applies request defaults", async () => {
     const { client, calls } = setup(() => json({ ok: true, data: { items: [], nextCursor: null } }));
     await client.transactions.search({ q: "coffee & tea" });
     expect(calls[0]!.url).toBe("https://api.example.test/api/v1/transactions?q=coffee+%26+tea&limit=25");
 
     const { client: c2, calls: calls2 } = setup(() => json({ ok: true, data: { account: accountJson } }));
-    await c2.accounts.get({ id: "a/b" });
-    expect(calls2[0]!.url).toBe("https://api.example.test/api/v1/accounts/a%2Fb");
+    await c2.accounts.get({ id: "a_b-1" });
+    expect(calls2[0]!.url).toBe("https://api.example.test/api/v1/accounts/a_b-1");
   });
 
   it("validates input before sending anything", async () => {
@@ -181,11 +214,77 @@ describe("errors", () => {
     expect(err).toMatchObject({ code: "invalid_response", status: 502 });
   });
 
-  it("flags an error envelope with an unknown code", async () => {
-    const err = await setup(() => json({ ok: false, error: { code: "teapot", message: "x" } }, 418)).client.accounts
+  it("keeps the server message and raw code for an error code it does not know", async () => {
+    const err = await setup(() =>
+      json({ ok: false, error: { code: "payload_too_large", message: "Body too big", details: { max: 1 } } }, 413),
+    ).client.accounts
       .list()
       .catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: "invalid_response", status: 418 });
+    expect(err).toMatchObject({
+      code: "invalid_response",
+      status: 413,
+      message: "Body too big",
+      details: { serverCode: "payload_too_large", details: { max: 1 } },
+    });
+  });
+
+  it("honours an error envelope even on a 2xx status", async () => {
+    const err = await setup(() => json({ ok: false, error: { code: "conflict", message: "dup" } }, 200)).client.accounts
+      .list()
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "conflict", status: 200, message: "dup" });
+  });
+
+  it("exposes the idempotency key on failed writes so they can be retried", async () => {
+    const client = createFinanceClient({
+      baseUrl: "https://api.example.test",
+      getToken: () => "t",
+      fetch: (async () => {
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+      generateIdempotencyKey: () => "generated-key-1",
+    });
+    const input = { type: "expense", amount: usd(100), accountId: "a", date: "2026-04-05" } as const;
+    expect(await client.transactions.create(input).catch((e: unknown) => e)).toMatchObject({
+      code: "network_error",
+      idempotencyKey: "generated-key-1",
+    });
+    expect(await client.transactions.create(input, { idempotencyKey: "caller-key-001" }).catch((e: unknown) => e)).toMatchObject({
+      idempotencyKey: "caller-key-001",
+    });
+    // reads have no key
+    expect(await client.accounts.list().catch((e: unknown) => e)).toMatchObject({ idempotencyKey: undefined });
+  });
+
+  it("also attaches the key to server errors on writes", async () => {
+    const { client } = setup(() => json({ ok: false, error: { code: "conflict", message: "key reused" } }, 409));
+    const err = await client.transactions
+      .delete({ id: "t1" }, { idempotencyKey: "caller-key-002" })
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: "conflict", idempotencyKey: "caller-key-002" });
+  });
+
+  it("passes caller cancellation and timeouts through unchanged", async () => {
+    const controller = new AbortController();
+    const hang = (async (_: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) return reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      })) as typeof fetch;
+    const client = createFinanceClient({ baseUrl: "https://api.example.test", getToken: () => "t", fetch: hang });
+
+    const pending = client.accounts.list(undefined, { signal: controller.signal }).catch((e: unknown) => e);
+    controller.abort();
+    const aborted = await pending;
+    expect(aborted).not.toBeInstanceOf(FinanceApiError);
+    expect((aborted as Error).name).toBe("AbortError");
+
+    const timedOut = await client.accounts
+      .list(undefined, { signal: AbortSignal.timeout(10) })
+      .catch((e: unknown) => e);
+    expect(timedOut).not.toBeInstanceOf(FinanceApiError);
+    expect((timedOut as Error).name).toBe("TimeoutError");
   });
 
   it("wraps network failures", async () => {

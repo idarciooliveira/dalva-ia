@@ -4,7 +4,8 @@ import { z } from "zod";
 /*  IDs: opaque, branded strings. No Convex types leak through the contract.  */
 /* -------------------------------------------------------------------------- */
 
-const opaqueId = z.string().min(1).max(128);
+/** URL-safe on purpose: ids go into path segments, so `.`, `..`, `/` and `%` must never validate. */
+const opaqueId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, "Invalid id");
 
 export const accountIdSchema = opaqueId.brand<"AccountId">();
 export const categoryIdSchema = opaqueId.brand<"CategoryId">();
@@ -60,20 +61,32 @@ export type Month = z.output<typeof monthSchema>;
 /** Three uppercase letters. Format-checked, not checked against the ISO registry. */
 export const currencyCodeSchema = z.string().regex(/^[A-Z]{3}$/, "Expected ISO 4217 code, e.g. USD");
 
-/** Signed integer minor units (cents) in a currency. */
-export const moneySchema = z.strictObject({
+/**
+ * Signed integer minor units in a currency, used in responses. Tolerates extra
+ * keys so fields can be added to Money later without breaking old clients.
+ *
+ * "Minor unit" is the ISO 4217 one: 10^-exponent of the major unit (JPY 0,
+ * USD 2, KWD 3). See `currencyExponent`.
+ */
+export const moneySchema = z.object({
+  amountMinor: z.number().int(),
+  currency: currencyCodeSchema,
+});
+
+/** Same shape for requests, but rejects unknown keys so typos are not silently dropped. */
+export const moneyInputSchema = z.strictObject({
   amountMinor: z.number().int(),
   currency: currencyCodeSchema,
 });
 
 /** Strictly positive amount (> 0). */
-export const positiveMoneySchema = moneySchema.refine((m) => m.amountMinor > 0, {
+export const positiveMoneySchema = moneyInputSchema.refine((m) => m.amountMinor > 0, {
   message: "Amount must be positive",
   path: ["amountMinor"],
 });
 
 /** Non-zero amount; the sign is meaningful (balance adjustments, adjustments). */
-export const nonZeroMoneySchema = moneySchema.refine((m) => m.amountMinor !== 0, {
+export const nonZeroMoneySchema = moneyInputSchema.refine((m) => m.amountMinor !== 0, {
   message: "Amount must not be zero",
   path: ["amountMinor"],
 });

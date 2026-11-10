@@ -5,6 +5,7 @@ import {
   accountIdSchema,
   currencyCodeSchema,
   isoDateSchema,
+  moneyInputSchema,
   moneySchema,
   monthSchema,
   nonZeroMoneySchema,
@@ -21,6 +22,14 @@ describe("ids", () => {
     expect(accountIdSchema.safeParse("").success).toBe(false);
     expect(accountIdSchema.safeParse(42).success).toBe(false);
     expect(accountIdSchema.safeParse("x".repeat(129)).success).toBe(false);
+  });
+
+  it.each([".", "..", "a/b", "a\\b", "a%2Fb", "a b", "a?b", "a#b", "é"])("rejects path-unsafe id %j", (id) => {
+    expect(accountIdSchema.safeParse(id).success).toBe(false);
+  });
+
+  it("accepts Convex-style ids", () => {
+    expect(accountIdSchema.safeParse("jd7f3k9x2m8n4p5q6r7s8t9v0w1y2z3a").success).toBe(true);
   });
 
   it("is branded at the type level only", () => {
@@ -83,9 +92,16 @@ describe("money schemas", () => {
     { amountMinor: 1, currency: "usd" },
     { amountMinor: 1 },
     { currency: "USD" },
-    { amountMinor: 1, currency: "USD", extra: true },
   ])("rejects %j", (value) => {
     expect(moneySchema.safeParse(value).success).toBe(false);
+  });
+
+  it("tolerates extra keys in responses but not in requests", () => {
+    const withExtra = { amountMinor: 1, currency: "USD", formatted: "$0.01" };
+    expect(moneySchema.safeParse(withExtra).success).toBe(true);
+    expect(moneyInputSchema.safeParse(withExtra).success).toBe(false);
+    expect(positiveMoneySchema.safeParse(withExtra).success).toBe(false);
+    expect(nonZeroMoneySchema.safeParse(withExtra).success).toBe(false);
   });
 
   it("positive and non-zero variants", () => {

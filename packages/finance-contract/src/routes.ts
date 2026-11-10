@@ -152,7 +152,9 @@ export interface RouteMatch extends NamedRoute {
 /** Resolve an incoming request (method + full pathname incl. `/api/v1`) to a route. */
 export function matchRoute(method: string, pathname: string): RouteMatch | null {
   if (pathname !== API_BASE_PATH && !pathname.startsWith(`${API_BASE_PATH}/`)) return null;
-  const actual = pathname.slice(API_BASE_PATH.length).split("/").filter(Boolean);
+  const rest = pathname.slice(API_BASE_PATH.length).replace(/\/$/, "");
+  const actual = rest === "" ? [] : rest.slice(1).split("/");
+  if (actual.some((segment) => segment === "")) return null;
 
   for (const named of allRoutes()) {
     if (named.route.method !== method) continue;

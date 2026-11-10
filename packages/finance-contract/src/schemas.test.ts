@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   accountSchema,
+  cashflowResponseSchema,
+  debtSummaryResponseSchema,
+  goalSchema,
+  netWorthResponseSchema,
+  spendingByCategoryResponseSchema,
+  subcategoriesListRequestSchema,
   accountsListRequestSchema,
   cashflowRequestSchema,
   debtPaymentRecordRequestSchema,
@@ -229,5 +235,71 @@ describe("response models", () => {
       expect(accountSchema.safeParse({ ...account, type }).success).toBe(true);
     }
     expect(accountSchema.safeParse({ ...account, type: "crypto" }).success).toBe(false);
+  });
+});
+
+describe("report response models", () => {
+  it("accepts cashflow, spending and net worth shaped as documented", () => {
+    expect(
+      cashflowResponseSchema.safeParse({
+        currentMonth: { income: usd(1000), expenses: usd(400), net: usd(600) },
+        trend: [{ month: "2026-03", income: usd(1), expenses: usd(2) }],
+      }).success,
+    ).toBe(true);
+    expect(
+      cashflowResponseSchema.safeParse({
+        currentMonth: { income: usd(1000), expenses: usd(400), net: usd(600) },
+        trend: [{ month: "Mar", income: usd(1), expenses: usd(2) }],
+      }).success,
+    ).toBe(false);
+    expect(
+      spendingByCategoryResponseSchema.safeParse({
+        month: "2026-04",
+        total: usd(300),
+        categories: [
+          { categoryId: "c1", name: "Food", amount: usd(200) },
+          { categoryId: null, name: "Uncategorized", amount: usd(100) },
+        ],
+      }).success,
+    ).toBe(true);
+    expect(
+      netWorthResponseSchema.safeParse({ hasData: true, totalAssets: usd(5), totalDebts: usd(9), netWorth: usd(-4) })
+        .success,
+    ).toBe(true);
+  });
+
+  it("bounds debt summary percentPaid to 0..100", () => {
+    const row = { id: "d", name: "Loan", creditor: "Bank", originalAmount: usd(10), currentBalance: usd(5) };
+    const parse = (percentPaid: number) =>
+      debtSummaryResponseSchema.safeParse({
+        totalOriginal: usd(10),
+        totalRemaining: usd(5),
+        recentPayment: usd(0),
+        debts: [{ ...row, percentPaid }],
+      }).success;
+    expect(parse(50)).toBe(true);
+    expect(parse(101)).toBe(false);
+    expect(parse(-1)).toBe(false);
+  });
+
+  it("tolerates non-ISO legacy dates and extra fields in responses", () => {
+    expect(
+      goalSchema.safeParse({
+        id: "g",
+        name: "Trip",
+        targetAmount: usd(10),
+        currentAmount: usd(0),
+        isVirtual: true,
+        createdAt: "01/02/2026",
+        somethingNew: 1,
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("subcategories.list request", () => {
+  it("categoryId is optional", () => {
+    expect(subcategoriesListRequestSchema.safeParse({}).success).toBe(true);
+    expect(subcategoriesListRequestSchema.safeParse({ categoryId: "c1", includeArchived: "true" }).success).toBe(true);
   });
 });

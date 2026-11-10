@@ -121,3 +121,21 @@ describe("moneyFromDecimal", () => {
     expect(moneyFromDecimal("12.34", "USD")).toEqual({ amountMinor: 1234, currency: "USD" });
   });
 });
+
+describe("currency exponent table", () => {
+  it("follows ISO 4217 (not CLDR/Intl, which differs for e.g. IQD)", () => {
+    for (const code of ["BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF"]) {
+      expect(currencyExponent(code), code).toBe(0);
+    }
+    for (const code of ["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]) {
+      expect(currencyExponent(code), code).toBe(3);
+    }
+    for (const code of ["USD", "EUR", "AOA", "BRL", "GBP", "CHF", "ZAR", "MZN", "CAD"]) {
+      expect(currencyExponent(code), code).toBe(2);
+    }
+  });
+
+  it("falls back to 2 for well-formed codes it does not know", () => {
+    expect(currencyExponent("BTC")).toBe(2);
+  });
+});
