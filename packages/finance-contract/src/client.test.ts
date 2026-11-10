@@ -17,6 +17,14 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 }
 
+/** Mimics fetch: rejects with `signal.reason` as soon as (or if already) aborted. */
+const hangUntilAborted = (async (_: RequestInfo | URL, init?: RequestInit) =>
+  new Promise<Response>((_resolve, reject) => {
+    const signal = init?.signal;
+    if (signal?.aborted) return reject(signal.reason);
+    signal?.addEventListener("abort", () => reject(signal.reason));
+  })) as typeof fetch;
+
 function setup(respond: (req: Request) => Response | Promise<Response>, extra: { getToken?: () => string } = {}) {
   const calls: Request[] = [];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -264,27 +272,43 @@ describe("errors", () => {
     expect(err).toMatchObject({ code: "conflict", idempotencyKey: "caller-key-002" });
   });
 
-  it("passes caller cancellation and timeouts through unchanged", async () => {
+  it("reports caller cancellation as `aborted` and a timeout as `timeout`, keeping the cause", async () => {
     const controller = new AbortController();
-    const hang = (async (_: RequestInfo | URL, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal;
-        if (signal?.aborted) return reject(signal.reason);
-        signal?.addEventListener("abort", () => reject(signal.reason));
-      })) as typeof fetch;
-    const client = createFinanceClient({ baseUrl: "https://api.example.test", getToken: () => "t", fetch: hang });
+    const client = createFinanceClient({ baseUrl: "https://api.example.test", getToken: () => "t", fetch: hangUntilAborted });
 
     const pending = client.accounts.list(undefined, { signal: controller.signal }).catch((e: unknown) => e);
     controller.abort();
     const aborted = await pending;
-    expect(aborted).not.toBeInstanceOf(FinanceApiError);
-    expect((aborted as Error).name).toBe("AbortError");
+    expect(aborted).toBeInstanceOf(FinanceApiError);
+    expect(aborted).toMatchObject({ code: "aborted", status: null, details: { causeName: "AbortError" } });
+    expect(((aborted as FinanceApiError).cause as Error).name).toBe("AbortError");
 
     const timedOut = await client.accounts
       .list(undefined, { signal: AbortSignal.timeout(10) })
       .catch((e: unknown) => e);
-    expect(timedOut).not.toBeInstanceOf(FinanceApiError);
-    expect((timedOut as Error).name).toBe("TimeoutError");
+    expect(timedOut).toBeInstanceOf(FinanceApiError);
+    expect(timedOut).toMatchObject({ code: "timeout", status: null, details: { causeName: "TimeoutError" } });
+    expect(((timedOut as FinanceApiError).cause as Error).name).toBe("TimeoutError");
+  });
+
+  it("tells abort, timeout and network failure apart", async () => {
+    const networkDown = createFinanceClient({
+      baseUrl: "https://api.example.test",
+      getToken: () => "t",
+      fetch: (async () => {
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+    const codes = [
+      ((await networkDown.accounts.list().catch((e: unknown) => e)) as FinanceApiError).code,
+      ((await createFinanceClient({ baseUrl: "https://x.test", getToken: () => "t", fetch: hangUntilAborted }).accounts
+        .list(undefined, { signal: AbortSignal.abort() })
+        .catch((e: unknown) => e)) as FinanceApiError).code,
+      ((await createFinanceClient({ baseUrl: "https://x.test", getToken: () => "t", fetch: hangUntilAborted }).accounts
+        .list(undefined, { signal: AbortSignal.timeout(5) })
+        .catch((e: unknown) => e)) as FinanceApiError).code,
+    ];
+    expect(codes).toEqual(["network_error", "aborted", "timeout"]);
   });
 
   it("wraps network failures", async () => {
@@ -334,23 +358,68 @@ describe("edge cases", () => {
   const input = { type: "expense", amount: usd(100), accountId: "a", date: "2026-04-05" } as const;
 
   it("keeps the idempotency key on an aborted or timed-out write", async () => {
-    const hang = (async (_: RequestInfo | URL, init?: RequestInit) =>
-      new Promise<Response>((_resolve, reject) => {
-        const signal = init?.signal;
-        if (signal?.aborted) return reject(signal.reason);
-        signal?.addEventListener("abort", () => reject(signal.reason));
-      })) as typeof fetch;
     const client = createFinanceClient({
       baseUrl: "https://api.example.test",
       getToken: () => "t",
-      fetch: hang,
+      fetch: hangUntilAborted,
       generateIdempotencyKey: () => "generated-key-2",
     });
     const err = await client.transactions
       .create(input, { signal: AbortSignal.timeout(10) })
       .catch((e: unknown) => e);
-    expect((err as Error).name).toBe("TimeoutError");
-    expect(err).toMatchObject({ idempotencyKey: "generated-key-2" });
+    expect(err).toBeInstanceOf(FinanceApiError);
+    expect(err).toMatchObject({ code: "timeout", idempotencyKey: "generated-key-2" });
+  });
+
+  it("gives concurrent writes on one shared aborted signal their own error and key", async () => {
+    let n = 0;
+    const client = createFinanceClient({
+      baseUrl: "https://api.example.test",
+      getToken: async () => "t",
+      fetch: hangUntilAborted,
+      generateIdempotencyKey: () => `generated-key-${++n}`,
+    });
+    const controller = new AbortController();
+    const calls = [
+      client.transactions.create(input, { signal: controller.signal }),
+      client.transactions.create({ ...input, note: "second" }, { signal: controller.signal }),
+      client.transactions.delete({ id: "t1" }, { signal: controller.signal, idempotencyKey: "caller-key-003" }),
+    ].map((p) => p.then(() => undefined, (e: unknown) => e as FinanceApiError));
+    controller.abort();
+    const [a, b, c] = await Promise.all(calls);
+
+    expect([a?.idempotencyKey, b?.idempotencyKey, c?.idempotencyKey]).toEqual([
+      "generated-key-1",
+      "generated-key-2",
+      "caller-key-003",
+    ]);
+    expect(new Set([a, b, c]).size).toBe(3);
+    // all three wrap the very same reason, which is left untouched
+    expect(a?.cause).toBe(controller.signal.reason);
+    expect(b?.cause).toBe(controller.signal.reason);
+    expect(Object.keys(controller.signal.reason as object)).not.toContain("idempotencyKey");
+  });
+
+  it("still reports the key when the abort reason is frozen or not an Error", async () => {
+    const client = createFinanceClient({
+      baseUrl: "https://api.example.test",
+      getToken: () => "t",
+      fetch: hangUntilAborted,
+      generateIdempotencyKey: () => "generated-key-9",
+    });
+
+    const frozen = new AbortController();
+    frozen.abort(Object.freeze(new Error("stop")));
+    const a = await client.transactions.create(input, { signal: frozen.signal }).catch((e: unknown) => e);
+    expect(a).toBeInstanceOf(FinanceApiError);
+    expect(a).toMatchObject({ code: "aborted", idempotencyKey: "generated-key-9", details: { causeName: "Error" } });
+    expect((a as FinanceApiError).cause).toBe(frozen.signal.reason);
+    expect(Object.isFrozen(frozen.signal.reason)).toBe(true);
+
+    const primitive = new AbortController();
+    primitive.abort("because");
+    const b = await client.transactions.create(input, { signal: primitive.signal }).catch((e: unknown) => e);
+    expect(b).toMatchObject({ code: "aborted", idempotencyKey: "generated-key-9", cause: "because" });
   });
 
   it("reports a token that cannot be sent as a header as a FinanceApiError", async () => {

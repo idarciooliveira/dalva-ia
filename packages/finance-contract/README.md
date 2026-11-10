@@ -12,7 +12,7 @@ await finance.transactions.create({ type: "expense", amount: moneyFromDecimal("1
 
 ## Conventions
 
-- `Authorization: Bearer <user-scoped token>` on every call. `Idempotency-Key` on every write (POST/PATCH/DELETE); the client generates one unless given, and puts it on `FinanceApiError.idempotencyKey` (also for aborts/timeouts) so an ambiguous write can be retried with the same key.
+- `Authorization: Bearer <user-scoped token>` on every call. `Idempotency-Key` on every write (POST/PATCH/DELETE); the client generates one unless given, and puts it on `FinanceApiError.idempotencyKey` (also for `aborted`, `timeout` and `network_error`, which the client reports as separate codes; the caught error is kept as `cause` and never mutated) so an ambiguous write can be retried with the same key.
 - Success: `{ ok: true, data }`. Error: `{ ok: false, error: { code, message, details? } }` with codes `unauthorized | forbidden | not_found | validation_failed | conflict | rate_limited | internal` (HTTP statuses in `ERROR_STATUS`).
 - Amounts are `{ amountMinor, currency }`: an integer in the ISO 4217 minor unit (JPY 0 decimals, USD 2, KWD 3). Convert with `parseDecimalAmount` / `formatMinorAmount`; both are BigInt/string based.
 - Branded ids (`AccountId`, ...) are an output-side type: call inputs accept plain strings and are validated at runtime (URL-safe `[A-Za-z0-9_-]`).

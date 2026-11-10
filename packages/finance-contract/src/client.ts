@@ -14,8 +14,12 @@ import type { ErrorCode } from "./envelope";
 import { buildRequestParts, isWriteRoute, routes } from "./routes";
 import type { RouteDef, RouteInput, RouteOutput, Routes } from "./routes";
 
-/** Server error codes plus two raised locally by the client. */
-export type FinanceApiErrorCode = ErrorCode | "invalid_response" | "network_error";
+/**
+ * Server error codes plus the ones raised locally by the client:
+ * `invalid_response` (reply broke the contract), `network_error` (no reply),
+ * `aborted` (the caller's signal was aborted) and `timeout` (the signal's reason was a `TimeoutError`).
+ */
+export type FinanceApiErrorCode = ErrorCode | "invalid_response" | "network_error" | "aborted" | "timeout";
 
 export class FinanceApiError extends Error {
   override name = "FinanceApiError";
@@ -29,13 +33,19 @@ export class FinanceApiError extends Error {
     readonly details?: unknown,
     options?: {
       cause?: unknown;
-      /** Key sent with a write. Reuse it to retry safely after a `network_error`. */
+      /** Key sent with a write. Reuse it to retry safely after `network_error`, `aborted` or `timeout`. */
       idempotencyKey?: string;
     },
   ) {
     super(message, { cause: options?.cause });
     this.idempotencyKey = options?.idempotencyKey;
   }
+}
+
+function nameOf(value: unknown): string | undefined {
+  return typeof value === "object" && value !== null && typeof (value as { name?: unknown }).name === "string"
+    ? (value as { name: string }).name
+    : undefined;
 }
 
 /** Looser than `errorEnvelopeSchema`: lets the client keep the message of codes it does not know yet. */
@@ -126,13 +136,19 @@ export function createFinanceClient(options: FinanceClientOptions): FinanceClien
       });
       text = await response.text();
     } catch (error) {
-      // Caller-initiated cancellation (AbortController or AbortSignal.timeout) is not a network failure.
-      // The key is attached to it so an ambiguous write (timed out after the server committed) can be retried.
-      if (callOptions.signal?.aborted) {
-        if (idempotencyKey !== undefined && typeof error === "object" && error !== null) {
-          Object.assign(error, { idempotencyKey });
-        }
-        throw error;
+      // Never touch the caught error: it can be shared (one `signal.reason` for many calls) or frozen.
+      // Each call gets its own FinanceApiError carrying its own key, with the original as `cause`.
+      const signal = callOptions.signal;
+      if (signal?.aborted) {
+        const causeName = nameOf(error) ?? nameOf(signal.reason);
+        const timedOut = causeName === "TimeoutError" || nameOf(signal.reason) === "TimeoutError";
+        throw apiError(
+          timedOut ? "timeout" : "aborted",
+          timedOut ? "Request timed out" : "Request aborted",
+          null,
+          { causeName },
+          error,
+        );
       }
       throw apiError("network_error", "Request failed", null, undefined, error);
     }
