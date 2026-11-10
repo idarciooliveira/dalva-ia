@@ -312,7 +312,8 @@ export const debtSummaryResponseSchema = z.object({
       creditor: z.string(),
       originalAmount: moneySchema,
       currentBalance: moneySchema,
-      percentPaid: z.number().int().min(0).max(100),
+      /** Rounded percentage; the server clamps to 0..100 but clients should not fail on drift. */
+      percentPaid: z.number().int(),
     }),
   ),
 });

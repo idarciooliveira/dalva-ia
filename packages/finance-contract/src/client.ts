@@ -69,10 +69,16 @@ export type FinanceClient = {
   [G in keyof Routes]: { [O in keyof Routes[G]]: Routes[G][O] extends RouteDef ? OperationFn<Routes[G][O]> : never };
 };
 
+/** `crypto.randomUUID()` where available; random hex otherwise (e.g. insecure browser contexts). */
+function defaultIdempotencyKey(): string {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 export function createFinanceClient(options: FinanceClientOptions): FinanceClient {
   const baseUrl = options.baseUrl.replace(/\/+$/, "") + API_BASE_PATH;
   const doFetch: typeof fetch = options.fetch ?? ((...args) => globalThis.fetch(...args));
-  const newKey = options.generateIdempotencyKey ?? (() => crypto.randomUUID());
+  const newKey = options.generateIdempotencyKey ?? defaultIdempotencyKey;
 
   async function call(route: RouteDef, rawInput: unknown, callOptions: CallOptions = {}): Promise<unknown> {
     const parsed = route.request.safeParse(rawInput ?? {});
@@ -90,7 +96,12 @@ export function createFinanceClient(options: FinanceClientOptions): FinanceClien
     ) => new FinanceApiError(code, message, status, details, { cause, idempotencyKey });
 
     const headers = new Headers({ Accept: "application/json" });
-    headers.set(AUTHORIZATION_HEADER, bearerAuthorization(await options.getToken()));
+    const token = await options.getToken();
+    try {
+      headers.set(AUTHORIZATION_HEADER, bearerAuthorization(token));
+    } catch (error) {
+      throw apiError("validation_failed", "Token is not a valid header value", null, undefined, error);
+    }
 
     const { path, query, body } = buildRequestParts(route, parsed.data as Record<string, unknown>);
     if (isWriteRoute(route)) {
@@ -116,7 +127,13 @@ export function createFinanceClient(options: FinanceClientOptions): FinanceClien
       text = await response.text();
     } catch (error) {
       // Caller-initiated cancellation (AbortController or AbortSignal.timeout) is not a network failure.
-      if (callOptions.signal?.aborted) throw error;
+      // The key is attached to it so an ambiguous write (timed out after the server committed) can be retried.
+      if (callOptions.signal?.aborted) {
+        if (idempotencyKey !== undefined && typeof error === "object" && error !== null) {
+          Object.assign(error, { idempotencyKey });
+        }
+        throw error;
+      }
       throw apiError("network_error", "Request failed", null, undefined, error);
     }
 

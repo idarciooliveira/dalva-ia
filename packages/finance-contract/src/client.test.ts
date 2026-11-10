@@ -329,3 +329,47 @@ describe("types", () => {
     expect(typeof typeChecks).toBe("function");
   });
 });
+
+describe("edge cases", () => {
+  const input = { type: "expense", amount: usd(100), accountId: "a", date: "2026-04-05" } as const;
+
+  it("keeps the idempotency key on an aborted or timed-out write", async () => {
+    const hang = (async (_: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) return reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason));
+      })) as typeof fetch;
+    const client = createFinanceClient({
+      baseUrl: "https://api.example.test",
+      getToken: () => "t",
+      fetch: hang,
+      generateIdempotencyKey: () => "generated-key-2",
+    });
+    const err = await client.transactions
+      .create(input, { signal: AbortSignal.timeout(10) })
+      .catch((e: unknown) => e);
+    expect((err as Error).name).toBe("TimeoutError");
+    expect(err).toMatchObject({ idempotencyKey: "generated-key-2" });
+  });
+
+  it("reports a token that cannot be sent as a header as a FinanceApiError", async () => {
+    const client = createFinanceClient({
+      baseUrl: "https://api.example.test",
+      getToken: () => "bad\ntoken",
+      fetch: (async () => json({})) as typeof fetch,
+    });
+    await expect(client.accounts.list()).rejects.toBeInstanceOf(FinanceApiError);
+  });
+
+  it("falls back to random hex keys when crypto.randomUUID is unavailable", async () => {
+    vi.stubGlobal("crypto", { getRandomValues: globalThis.crypto.getRandomValues.bind(globalThis.crypto) });
+    try {
+      const { client, calls } = setup(() => json({ ok: true, data: { transaction: transactionJson } }));
+      await client.transactions.create(input);
+      expect(calls[0]!.headers.get("idempotency-key")).toMatch(/^[0-9a-f]{32}$/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

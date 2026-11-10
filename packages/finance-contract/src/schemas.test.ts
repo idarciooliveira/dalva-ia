@@ -268,7 +268,7 @@ describe("report response models", () => {
     ).toBe(true);
   });
 
-  it("bounds debt summary percentPaid to 0..100", () => {
+  it("accepts any integer percentPaid", () => {
     const row = { id: "d", name: "Loan", creditor: "Bank", originalAmount: usd(10), currentBalance: usd(5) };
     const parse = (percentPaid: number) =>
       debtSummaryResponseSchema.safeParse({
@@ -278,8 +278,10 @@ describe("report response models", () => {
         debts: [{ ...row, percentPaid }],
       }).success;
     expect(parse(50)).toBe(true);
-    expect(parse(101)).toBe(false);
-    expect(parse(-1)).toBe(false);
+    // The domain doesn't clamp (e.g. original amount lowered after payments), so drift must not fail a whole response.
+    expect(parse(-67)).toBe(true);
+    expect(parse(101)).toBe(true);
+    expect(parse(1.5)).toBe(false);
   });
 
   it("tolerates non-ISO legacy dates and extra fields in responses", () => {
