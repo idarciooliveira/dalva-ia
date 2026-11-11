@@ -1,4 +1,4 @@
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 export type TransactionType = "income" | "expense" | "adjustment" | "transfer";
@@ -466,3 +466,167 @@ export async function getCashflow(
   };
 }
 
+
+/* -------------------------------------------------------------------------- */
+/*  Search (cursor-paginated)                                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Rows read per page at most, matching or not. Bounds the cost of sparse filters and `q`. */
+export const SEARCH_SCAN_LIMIT = 1000;
+
+/**
+ * Last row read: its `date` and `_creationTime`, plus how many rows sharing
+ * exactly that position were already read (`_creationTime` is not unique).
+ */
+export type SearchPosition = { date: string; creationTime: number; tie: number };
+
+function encodeSearchCursor(position: SearchPosition): string {
+  return btoa(JSON.stringify([position.date, position.creationTime, position.tie]))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+export function decodeSearchCursor(cursor: string): SearchPosition {
+  try {
+    const value: unknown = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
+    if (
+      Array.isArray(value) &&
+      value.length === 3 &&
+      typeof value[0] === "string" &&
+      typeof value[1] === "number" &&
+      Number.isFinite(value[1]) &&
+      Number.isSafeInteger(value[2]) &&
+      value[2] >= 1
+    ) {
+      return { date: value[0], creationTime: value[1], tie: value[2] };
+    }
+  } catch {
+    // fall through
+  }
+  throw new Error("Invalid cursor");
+}
+
+/**
+ * Search a user's transactions, newest first (`date` desc, then creation
+ * order desc), with an opaque keyset cursor.
+ *
+ * - Uses the most selective index for the filters (account > category >
+ *   type > user); the date range is always part of the index range, and the
+ *   remaining filters and the `q` text match (case-insensitive substring of
+ *   description, note or payee) run on the scanned rows.
+ * - Each page reads at most `SEARCH_SCAN_LIMIT` rows. When filters are sparse
+ *   the page can come back short (even empty) with a non-null `nextCursor`;
+ *   the cursor always resumes right after the last row read, so no row is
+ *   skipped or repeated. Rows sharing a `_creationTime` are told apart by a
+ *   tie count in the cursor; the index orders them deterministically. `nextCursor` is null only when the range is exhausted.
+ */
+export async function searchTransactions(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  args: {
+    dateFrom?: string;
+    dateTo?: string;
+    accountId?: Id<"accounts">;
+    categoryId?: Id<"categories">;
+    type?: TransactionType;
+    q?: string;
+    cursor?: string;
+    limit: number;
+    scanLimit?: number;
+  },
+) {
+  const after = args.cursor ? decodeSearchCursor(args.cursor) : null;
+  const scanLimit = args.scanLimit ?? SEARCH_SCAN_LIMIT;
+  const needle = args.q?.toLowerCase();
+
+  // Index range for one date segment: `eqDate` (rows on the cursor's date
+  // created at or before it) or `[dateFrom, below)` / `[dateFrom, dateTo]`.
+  type Segment = { eqDate: string; atOrBefore: number } | { below?: string };
+  const query = (segment: Segment) => {
+    // The four indexes share the shape [userId, <filter>?, date, _creationTime];
+    // the builder type differs per index, so the range is applied untyped.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const range = (q: any) => {
+      if ("eqDate" in segment) return q.eq("date", segment.eqDate).lte("_creationTime", segment.atOrBefore);
+      let r = q;
+      if (args.dateFrom) r = r.gte("date", args.dateFrom);
+      if (segment.below !== undefined) r = r.lt("date", segment.below);
+      else if (args.dateTo) r = r.lte("date", args.dateTo);
+      return r;
+    };
+    const table = ctx.db.query("transactions");
+    if (args.accountId) {
+      const accountId = args.accountId;
+      return table.withIndex("by_userId_and_accountId_and_date", (q) => range(q.eq("userId", userId).eq("accountId", accountId))).order("desc");
+    }
+    if (args.categoryId) {
+      const categoryId = args.categoryId;
+      return table.withIndex("by_userId_and_categoryId_and_date", (q) => range(q.eq("userId", userId).eq("categoryId", categoryId))).order("desc");
+    }
+    if (args.type) {
+      const type = args.type;
+      return table.withIndex("by_userId_and_type_and_date", (q) => range(q.eq("userId", userId).eq("type", type))).order("desc");
+    }
+    return table.withIndex("by_userId_and_date", (q) => range(q.eq("userId", userId))).order("desc");
+  };
+
+  const segments: Segment[] = [];
+  if (after) {
+    const inRange =
+      (!args.dateFrom || after.date >= args.dateFrom) && (!args.dateTo || after.date <= args.dateTo);
+    if (inRange) segments.push({ eqDate: after.date, atOrBefore: after.creationTime });
+    // Rows strictly older than the cursor date, clipped to dateTo.
+    const below = args.dateTo && args.dateTo < after.date ? undefined : after.date;
+    segments.push(below === undefined ? {} : { below });
+  } else {
+    segments.push({});
+  }
+
+  const matches = (tx: Doc<"transactions">) =>
+    tx.userId === userId &&
+    (!args.accountId || tx.accountId === args.accountId) &&
+    (!args.categoryId || tx.categoryId === args.categoryId) &&
+    (!args.type || tx.type === args.type) &&
+    (!needle ||
+      [tx.description, tx.note, tx.payee].some((field) => field?.toLowerCase().includes(needle)));
+
+  return await collectSearchPage(
+    segments.map((segment) => () => query(segment)),
+    after,
+    { limit: args.limit, scanLimit, matches },
+  );
+}
+
+/**
+ * Read rows in index order from consecutive sources and build one page.
+ * Pure over its inputs (exported for tests): the cursor encodes the last row
+ * read, and rows already read at the cursor's exact position are skipped.
+ */
+export async function collectSearchPage<R extends { date: string; _creationTime: number }>(
+  sources: Array<() => AsyncIterable<R>>,
+  after: SearchPosition | null,
+  options: { limit: number; scanLimit: number; matches: (row: R) => boolean },
+): Promise<{ items: R[]; nextCursor: string | null }> {
+  const { limit, scanLimit, matches } = options;
+  const items: R[] = [];
+  let last: SearchPosition | null = after;
+  let toSkip = after?.tie ?? 0;
+  let scanned = 0;
+  for (const source of sources) {
+    for await (const row of source()) {
+      if (toSkip > 0 && after && row.date === after.date && row._creationTime === after.creationTime) {
+        toSkip--;
+        continue;
+      }
+      if (scanned >= scanLimit || (items.length === limit && matches(row))) {
+        return { items, nextCursor: encodeSearchCursor(last!) };
+      }
+      scanned++;
+      if (matches(row)) items.push(row);
+      const tie = last && row.date === last.date && row._creationTime === last.creationTime ? last.tie + 1 : 1;
+      last = { date: row.date, creationTime: row._creationTime, tie };
+    }
+  }
+  return { items, nextCursor: null };
+}
