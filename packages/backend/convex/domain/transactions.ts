@@ -637,10 +637,10 @@ export async function collectSearchPage<R extends { _id: string; date: string; _
       }
       scanned++;
       if (matches(row)) items.push(row);
-      const sameSpot = last && row.date === last.date && row._creationTime === last.creationTime;
+      const prior = last && row.date === last.date && row._creationTime === last.creationTime ? last.seen : null;
       let seen: string[] | number = [row._id];
-      if (sameSpot && typeof last!.seen === "number") seen = last!.seen + 1;
-      else if (sameSpot) seen = last!.seen.length < MAX_TIE_IDS ? [...(last!.seen as string[]), row._id] : last!.seen.length + 1;
+      if (typeof prior === "number") seen = prior + 1;
+      else if (prior) seen = prior.length < MAX_TIE_IDS ? [...prior, row._id] : prior.length + 1;
       last = { date: row.date, creationTime: row._creationTime, seen };
     }
   }
