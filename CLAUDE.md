@@ -91,6 +91,7 @@ bun run test:e2e     # Run Playwright E2E tests
 | `apps/web/src/routes/_authenticated/transactions.tsx` | Transactions page with filters and transfer edit flow |
 | `apps/web/src/routes/_authenticated/categories.tsx` | Categories and subcategories management |
 | `apps/web/src/routes/_authenticated/goals.tsx` | Savings goals page |
+| `apps/web/src/routes/_authenticated/settings.tsx` | Settings (Telegram linking) |
 | `apps/web/src/components/dashboard/app-sidebar.tsx` | Authenticated sidebar navigation |
 | `apps/web/src/components/accounts/account-form-dialog.tsx` | Canonical product form pattern |
 | `apps/web/src/components/transactions/transaction-form-dialog.tsx` | Income/expense dialog |
@@ -116,7 +117,8 @@ apps/web/src/routes/
    |- accounts.tsx
    |- transactions.tsx
    |- categories.tsx
-   `- goals.tsx
+   |- goals.tsx
+   `- settings.tsx
 ```
 
 ### Convex Integration
@@ -141,6 +143,7 @@ Tests currently live in `apps/web/e2e/` and cover:
 - `transactions.spec.ts`
 - `transfers.spec.ts`
 - `goals.spec.ts`
+- `settings.spec.ts` (the link/unlink test needs `E2E_CONVEX_SITE_URL` and `E2E_FINANCE_API_SERVICE_KEY`)
 
 #### Commands
 
@@ -204,6 +207,7 @@ bunx playwright test --project=chromium
 | `packages/backend/convex/transfers.ts` | Paired transfer creation, update, and deletion |
 | `packages/backend/convex/savingsGoals.ts` | Savings goal CRUD |
 | `packages/backend/convex/goalContributions.ts` | Goal contribution history |
+| `packages/backend/convex/channelLinks.ts` | Telegram link codes, linked identities, read-only, unlink |
 | `packages/backend/convex/test.setup.ts` | Shared convex-test helpers |
 | `packages/backend/convex/*.test.ts` | Backend unit tests |
 
