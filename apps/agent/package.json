@@ -11,9 +11,9 @@
     "lint": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "test": "vitest",
     "test:once": "vitest run",
-    "telegram:webhook:set": "bun src/tools/telegram-webhook-cli.ts set",
-    "telegram:webhook:info": "bun src/tools/telegram-webhook-cli.ts info",
-    "telegram:webhook:delete": "bun src/tools/telegram-webhook-cli.ts delete"
+    "telegram:webhook:set": "bun src/scripts/telegram-webhook-cli.ts set",
+    "telegram:webhook:info": "bun src/scripts/telegram-webhook-cli.ts info",
+    "telegram:webhook:delete": "bun src/scripts/telegram-webhook-cli.ts delete"
   },
   "dependencies": {
     "@mpf/finance-contract": "workspace:*",

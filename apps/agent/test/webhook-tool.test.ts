@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 
-import { buildDeleteWebhook, buildGetWebhookInfo, buildSetWebhook, runWebhookCommand, webhookUrl } from "../src/tools/telegram-webhook";
+import { buildDeleteWebhook, buildGetWebhookInfo, buildSetWebhook, runWebhookCommand, webhookUrl } from "../src/scripts/telegram-webhook";
 import { BOT_TOKEN, WEBHOOK_SECRET } from "./helpers";
 
 const env = {
