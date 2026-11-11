@@ -1,5 +1,5 @@
 import { FinanceApiError } from "@mpf/finance-contract";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { api, internal } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
@@ -160,6 +160,16 @@ describe("channelLinks.redeem", () => {
     await expectApiError(serviceClientFor(t).channelLinks.redeem({ ...chat("1001"), code }), "conflict", 409);
   });
 
+  it("refuses a code sent from a group chat and leaves it usable", async () => {
+    const t = setupApi();
+    const userId = await seedUser(t);
+    const { code } = await createCode(t, userId);
+    const service = serviceClientFor(t);
+    await expectApiError(service.channelLinks.redeem({ ...chat("1001", { chatId: "-1005551234" }), code }), "validation_failed", 400);
+    expect(await t.run((ctx) => ctx.db.query("channelIdentities").collect())).toHaveLength(0);
+    await service.channelLinks.redeem({ ...chat("1001"), code });
+  });
+
   it("never takes a userId from the request", async () => {
     const t = setupApi();
     const userId = await seedUser(t);
@@ -226,6 +236,18 @@ describe("channelIdentities.resolve", () => {
     await expectApiError(finance.accounts.adjust({ id: account, amount: { amountMinor: 1, currency: "USD" } }), "forbidden", 403);
   });
 
+  it("a revoked token can't replay a write through its Idempotency-Key", async () => {
+    const t = setupApi();
+    const { userId, service } = await linkedUser(t, "1001");
+    const account = await seedAccount(t, userId, { balance: 100 });
+    const { token } = await service.channelIdentities.resolve(chat("1001"));
+    const finance = clientFor(t, token);
+    const input = { id: account, amount: { amountMinor: 1, currency: "USD" } };
+    await finance.accounts.adjust(input, { idempotencyKey: "replay-key-0001" });
+    await service.channelIdentities.unlink({ channel: TG, externalUserId: "1001" });
+    await expectApiError(finance.accounts.adjust(input, { idempotencyKey: "replay-key-0001" }), "unauthorized", 401);
+  });
+
   it("returns not_found for unknown senders and for another chat (e.g. a group)", async () => {
     const t = setupApi();
     const { service } = await linkedUser(t, "1001");
@@ -284,5 +306,29 @@ describe("link code cleanup", () => {
     const later = Date.now() + 11 * 60 * 1000;
     expect(await t.mutation(internal.channelLinks.purgeExpiredCodes, { now: later })).toBe(2);
     expect(await t.run((ctx) => ctx.db.query("channelLinkCodes").collect())).toHaveLength(0);
+  });
+
+  it("reschedules itself while a batch is full", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setupApi();
+      const userId = await seedUser(t);
+      await t.run(async (ctx) => {
+        for (let i = 0; i < 501; i++) {
+          await ctx.db.insert("channelLinkCodes", {
+            userId,
+            channel: TG,
+            codeHash: `hash-${i}`,
+            expiresAt: 1,
+            consentAt: 1,
+          });
+        }
+      });
+      expect(await t.mutation(internal.channelLinks.purgeExpiredCodes, {})).toBe(500);
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await t.run((ctx) => ctx.db.query("channelLinkCodes").collect())).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

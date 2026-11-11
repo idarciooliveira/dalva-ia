@@ -14,10 +14,11 @@ export const READ_ONLY_SCOPES: ChannelScope[] = ["finance:read"];
  * caller can't tell which case it hit.
  */
 export const INVALID_LINK_CODE = "Link code is invalid or expired";
-export const EXTERNAL_ALREADY_LINKED = "This chat account is already linked to another DALVA account";
+export const EXTERNAL_ALREADY_LINKED = "This chat account is already linked to a DALVA account";
 export const USER_ALREADY_LINKED = "This DALVA account is already linked to another chat account";
 export const CHANNEL_ALREADY_LINKED = "Channel is already linked. Unlink it first";
 export const IDENTITY_NOT_FOUND = "Channel identity not found";
+export const PRIVATE_CHAT_REQUIRED = "Link codes must be sent in a private chat with the bot";
 
 const MAX_PENDING_CODES = 50;
 
@@ -98,20 +99,16 @@ export async function redeemLinkCode(
   if (!code || code.usedAt !== undefined || code.expiresAt <= args.now || code.channel !== args.channel) {
     throw new Error(INVALID_LINK_CODE);
   }
+  // Telegram private chats share the user's id; anything else is a group or channel,
+  // where the bot would later answer finance questions in front of other members.
+  if (args.channel === "telegram" && args.chatId !== args.externalUserId) throw new Error(PRIVATE_CHAT_REQUIRED);
   const userId = code.userId; // the only source of userId: the server-side code row
 
   const byExternal = await findActiveByExternal(ctx, args.channel, args.externalUserId);
-  if (byExternal && byExternal.userId !== userId) throw new Error(EXTERNAL_ALREADY_LINKED);
-  const byUser = await findActiveByUser(ctx, userId, args.channel);
-  if (byUser && byUser.externalUserId !== args.externalUserId) throw new Error(USER_ALREADY_LINKED);
+  if (byExternal) throw new Error(EXTERNAL_ALREADY_LINKED);
+  if (await findActiveByUser(ctx, userId, args.channel)) throw new Error(USER_ALREADY_LINKED);
 
   await ctx.db.patch(code._id, { usedAt: args.now });
-
-  if (byExternal) {
-    // Same user and chat account relinking (e.g. after a lost reply): refresh in place.
-    await ctx.db.patch(byExternal._id, { chatId: args.chatId, username: args.username, consentAt: code.consentAt });
-    return (await ctx.db.get(byExternal._id))!;
-  }
 
   const id = await ctx.db.insert("channelIdentities", {
     userId,

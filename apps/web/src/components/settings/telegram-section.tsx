@@ -195,7 +195,9 @@ function PendingLink({
     <div className="space-y-3 border-t border-border pt-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-foreground">
-          {bot ? "Open the bot in Telegram and press Start." : "Send this message to the DALVA bot in Telegram."}
+          {bot
+            ? "Open the bot in Telegram and press Start."
+            : "Send this message to the DALVA bot in a private chat on Telegram."}
         </p>
         <p className="text-xs text-muted-foreground tabular-nums" aria-live="polite">
           Expires in {minutes}:{seconds}
@@ -215,7 +217,7 @@ function PendingLink({
         <p className="mb-1.5 text-xs text-muted-foreground">
           {bot ? (
             <>
-              Link not working? Send this message to <span className="font-medium">@{bot}</span>:
+              Link not working? Send this message to <span className="font-medium">@{bot}</span> in a private chat:
             </>
           ) : (
             "Message to send:"
@@ -232,7 +234,8 @@ function PendingLink({
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
-        This link works once. This page updates when the bot confirms the connection.
+        This link works once, and creating a new one cancels it. This page updates when the bot confirms the
+        connection.
       </p>
     </div>
   );
@@ -319,7 +322,7 @@ function LinkedTelegram({ link }: { link: TelegramLink }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Unlink Telegram?</AlertDialogTitle>
             <AlertDialogDescription>
-              The bot stops answering and loses access to your finances right away. You can connect again later.
+              The bot loses access to your finances right away. You can connect again later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

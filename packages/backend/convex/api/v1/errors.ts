@@ -6,6 +6,7 @@ import {
   EXTERNAL_ALREADY_LINKED,
   IDENTITY_NOT_FOUND,
   INVALID_LINK_CODE,
+  PRIVATE_CHAT_REQUIRED,
   USER_ALREADY_LINKED,
 } from "../../domain/channelLinks";
 
@@ -88,6 +89,7 @@ const DOMAIN_ERRORS: Readonly<Record<string, ErrorCode>> = {
   [EXTERNAL_ALREADY_LINKED]: "conflict",
   [USER_ALREADY_LINKED]: "conflict",
   [CHANNEL_ALREADY_LINKED]: "conflict",
+  [PRIVATE_CHAT_REQUIRED]: "validation_failed",
 };
 
 export async function mapDomainErrors<T>(fn: () => Promise<T>): Promise<T> {
