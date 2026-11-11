@@ -27,18 +27,18 @@ const clampBudget = (budget: number | undefined) =>
   Math.max(1, Math.min(budget ?? agentStore.HISTORY_DELETE_BUDGET, agentStore.HISTORY_DELETE_BUDGET));
 
 export const purgeUserHistory = internalMutation({
-  args: { userId: v.string(), budget: budgetArg },
+  args: { userId: v.string(), before: v.number(), budget: budgetArg },
   handler: async (ctx, args): Promise<number> => {
-    const { used, more } = await agentStore.deleteHistoryBatch(ctx, { userId: args.userId }, clampBudget(args.budget));
+    const { used, more } = await agentStore.deleteHistoryBatch(ctx, { userId: args.userId }, args.before, clampBudget(args.budget));
     if (more) await ctx.scheduler.runAfter(0, internal.agentStore.purgeUserHistory, args);
     return used;
   },
 });
 
 export const purgeIdentityHistory = internalMutation({
-  args: { identityId: v.id("channelIdentities"), budget: budgetArg },
+  args: { identityId: v.id("channelIdentities"), before: v.number(), budget: budgetArg },
   handler: async (ctx, args): Promise<number> => {
-    const { used, more } = await agentStore.deleteHistoryBatch(ctx, { identityId: args.identityId }, clampBudget(args.budget));
+    const { used, more } = await agentStore.deleteHistoryBatch(ctx, { identityId: args.identityId }, args.before, clampBudget(args.budget));
     if (more) await ctx.scheduler.runAfter(0, internal.agentStore.purgeIdentityHistory, args);
     return used;
   },

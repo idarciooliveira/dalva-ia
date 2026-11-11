@@ -30,6 +30,13 @@ export const MAX_SESSION_MESSAGES = AGENT_SESSION_MAX_MESSAGES;
 export const HISTORY_DELETE_BUDGET = 500;
 /** Rows one cron run may delete or update. */
 export const PURGE_BATCH = 200;
+/**
+ * `_creationTime` is monotonic and can sit a fraction above `Date.now()` when
+ * several documents land in the same millisecond. The deletion cutoff gets this
+ * margin so history written just before the request is never left behind
+ * (the cost: something created within 1 ms after the request would go too).
+ */
+const CUTOFF_MARGIN_MS = 1;
 /** Rows read per `listRecoverable` call before filtering by attempts. */
 const RECOVERABLE_SCAN = 100;
 
@@ -381,20 +388,52 @@ async function deleteSessionCascade(ctx: MutationCtx, sessionId: Id<"agentSessio
 }
 
 /**
- * Delete up to `budget` rows of a user's or an identity's history. `more` is
- * true when rows may remain, so the caller can schedule another batch.
+ * End every session of the scope that still accepts writes. Deleting history
+ * can take several transactions; in the meantime a session that is about to be
+ * deleted must refuse new messages and actions (`SESSION_ENDED`), and
+ * `currentSession` must start a fresh one instead of reusing it.
+ */
+async function endActiveSessions(ctx: MutationCtx, scope: HistoryScope, now: number) {
+  for (;;) {
+    const active =
+      "userId" in scope
+        ? await ctx.db
+            .query("agentSessions")
+            .withIndex("by_userId_and_endedAt", (q) => q.eq("userId", scope.userId).eq("endedAt", undefined))
+            .take(20)
+        : await ctx.db
+            .query("agentSessions")
+            .withIndex("by_identityId_and_endedAt", (q) => q.eq("identityId", scope.identityId).eq("endedAt", undefined))
+            .take(20);
+    for (const session of active) await ctx.db.patch(session._id, { endedAt: now });
+    if (active.length < 20) return;
+  }
+}
+
+/**
+ * Delete up to `budget` rows of a user's or an identity's history, limited to
+ * rows created at or before `before` (when the deletion was requested), so
+ * whatever the user does afterwards is never touched. `more` is true when
+ * rows may remain, so the caller can schedule another batch.
  */
 export async function deleteHistoryBatch(
   ctx: MutationCtx,
   scope: HistoryScope,
+  before: number,
   budget: number,
 ): Promise<{ used: number; more: boolean }> {
   let left = budget;
   for (;;) {
     const sessions =
       "userId" in scope
-        ? await ctx.db.query("agentSessions").withIndex("by_userId", (q) => q.eq("userId", scope.userId)).take(20)
-        : await ctx.db.query("agentSessions").withIndex("by_identityId", (q) => q.eq("identityId", scope.identityId)).take(20);
+        ? await ctx.db
+            .query("agentSessions")
+            .withIndex("by_userId", (q) => q.eq("userId", scope.userId).lte("_creationTime", before))
+            .take(20)
+        : await ctx.db
+            .query("agentSessions")
+            .withIndex("by_identityId", (q) => q.eq("identityId", scope.identityId).lte("_creationTime", before))
+            .take(20);
     if (sessions.length === 0) break;
     for (const session of sessions) {
       const result = await deleteSessionCascade(ctx, session._id, left);
@@ -408,7 +447,10 @@ export async function deleteHistoryBatch(
     for (;;) {
       const take = Math.min(CHILD_PAGE, left);
       if (take <= 0) return { used: budget - left, more: true };
-      const rows = await ctx.db.query("agentPendingActions").withIndex("by_userId", (q) => q.eq("userId", scope.userId)).take(take);
+      const rows = await ctx.db
+        .query("agentPendingActions")
+        .withIndex("by_userId", (q) => q.eq("userId", scope.userId).lte("_creationTime", before))
+        .take(take);
       for (const row of rows) await ctx.db.delete(row._id);
       left -= rows.length;
       if (rows.length < take) break;
@@ -417,16 +459,26 @@ export async function deleteHistoryBatch(
   return { used: budget - left, more: false };
 }
 
-/** Delete a user's history (every channel): the first batch now, the rest through the scheduler. */
+/**
+ * Delete a user's history (every channel): sessions are ended now, the first
+ * batch is deleted now, the rest through the scheduler. Only history that
+ * exists at this moment is deleted.
+ */
 export async function deleteUserHistory(ctx: MutationCtx, userId: string): Promise<void> {
-  const { more } = await deleteHistoryBatch(ctx, { userId }, HISTORY_DELETE_BUDGET);
-  if (more) await ctx.scheduler.runAfter(0, internal.agentStore.purgeUserHistory, { userId });
+  const requestedAt = Date.now();
+  await endActiveSessions(ctx, { userId }, requestedAt);
+  const before = requestedAt + CUTOFF_MARGIN_MS;
+  const { more } = await deleteHistoryBatch(ctx, { userId }, before, HISTORY_DELETE_BUDGET);
+  if (more) await ctx.scheduler.runAfter(0, internal.agentStore.purgeUserHistory, { userId, before });
 }
 
-/** Delete an identity's history, e.g. when it is unlinked. */
+/** Delete an identity's history, e.g. when it is unlinked. Same rules as `deleteUserHistory`. */
 export async function deleteIdentityHistory(ctx: MutationCtx, identityId: Id<"channelIdentities">): Promise<void> {
-  const { more } = await deleteHistoryBatch(ctx, { identityId }, HISTORY_DELETE_BUDGET);
-  if (more) await ctx.scheduler.runAfter(0, internal.agentStore.purgeIdentityHistory, { identityId });
+  const requestedAt = Date.now();
+  await endActiveSessions(ctx, { identityId }, requestedAt);
+  const before = requestedAt + CUTOFF_MARGIN_MS;
+  const { more } = await deleteHistoryBatch(ctx, { identityId }, before, HISTORY_DELETE_BUDGET);
+  if (more) await ctx.scheduler.runAfter(0, internal.agentStore.purgeIdentityHistory, { identityId, before });
 }
 
 /**

@@ -1,5 +1,5 @@
 import { routes, type ErrorCode } from "@mpf/finance-contract";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { api } from "../../_generated/api";
 import type { Id } from "../../_generated/dataModel";
@@ -922,6 +922,73 @@ describe("history deleted while an action is confirmed", () => {
     await chat.agent.agentHistory.delete();
     await expectApiError(chat.agent.agentPendingActions.complete({ id: action.id, status: "executed", result: {} }), "not_found", 404);
     await expectApiError(chat.agent.agentPendingActions.get({ id: action.id }), "not_found", 404);
+  });
+});
+
+describe("history deletion that outlasts one transaction", () => {
+  it("keeps what the user does after asking: new session, messages and actions survive, old ones go", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t, { withAccount: true });
+    const { session: old, action: oldAction } = await newAction(chat);
+    await t.run(async (ctx) => {
+      for (let seq = 1; seq <= 700; seq++) {
+        await ctx.db.insert("agentMessages", {
+          sessionId: old.id as unknown as Id<"agentSessions">,
+          userId: chat.userId,
+          role: "user",
+          content: "{}",
+          seq,
+          createdAt: Date.now(),
+        });
+      }
+      await ctx.db.patch(old.id as unknown as Id<"agentSessions">, { messageCount: 700 });
+    });
+
+    // Set up above with real timers; from here the scheduled batches wait until the test runs them.
+    vi.useFakeTimers();
+    try {
+      expect(await chat.agent.agentHistory.delete()).toEqual({ deleted: true });
+      expect(await t.run((ctx) => ctx.db.query("agentMessages").collect())).not.toHaveLength(0); // batch 1 was not enough
+
+      // The old session is marked for deletion: it takes nothing new and `current` starts a fresh one.
+      await expectApiError(
+        chat.agent.agentMessages.append({ sessionId: old.id, messages: [{ role: "user", content: json({ text: "late" }) }] }),
+        "conflict",
+        409,
+      );
+      await expectApiError(
+        chat.agent.agentPendingActions.create({
+          sessionId: old.id,
+          operation: "transactions.create",
+          input: expenseInput(chat.accountId!),
+          summary: "late",
+        }),
+        "conflict",
+        409,
+      );
+      vi.advanceTimersByTime(5_000);
+      const fresh = await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30 });
+      expect(fresh).toMatchObject({ created: true });
+      expect(fresh.session.id).not.toBe(old.id);
+      await chat.agent.agentMessages.append({ sessionId: fresh.session.id, messages: [{ role: "user", content: json({ text: "new" }) }] });
+      const { action: newOne } = await chat.agent.agentPendingActions.create({
+        sessionId: fresh.session.id,
+        operation: "transactions.create",
+        input: expenseInput(chat.accountId!),
+        summary: "new",
+      });
+
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      await expectApiError(chat.agent.agentMessages.list({ sessionId: old.id }), "not_found", 404);
+      await expectApiError(chat.agent.agentPendingActions.get({ id: oldAction.id }), "not_found", 404);
+      expect((await chat.agent.agentMessages.list({ sessionId: fresh.session.id })).items.map((m) => JSON.parse(m.content).text)).toEqual(["new"]);
+      expect((await chat.agent.agentPendingActions.get({ id: newOne.id })).action.status).toBe("pending");
+      expect(await t.run((ctx) => ctx.db.query("agentSessions").collect())).toHaveLength(1);
+      expect(await t.run((ctx) => ctx.db.query("agentMessages").collect())).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -134,13 +134,13 @@ describe("agentStore.deleteMyHistory (web)", () => {
     for (let i = 0; i < 4; i++) await seedSession(t, alice.userId, identity, { messages: 5 });
 
     // 4 sessions x (5 messages + 1 action + 1 session) = 28 rows; budget 10 leaves most of them.
-    await t.mutation(internal.agentStore.purgeUserHistory, { userId: alice.userId, budget: 10 });
+    await t.mutation(internal.agentStore.purgeUserHistory, { userId: alice.userId, before: Date.now() + 1, budget: 10 });
     const after = await counts(t);
     expect(after.messages + after.actions + after.sessions).toBeGreaterThan(0);
     expect(after.messages + after.actions + after.sessions).toBeLessThanOrEqual(28 - 10);
     expect((await scheduled(t)).length).toBe(1);
 
-    for (let i = 0; i < 10; i++) await t.mutation(internal.agentStore.purgeUserHistory, { userId: alice.userId, budget: 10 });
+    for (let i = 0; i < 10; i++) await t.mutation(internal.agentStore.purgeUserHistory, { userId: alice.userId, before: Date.now() + 1, budget: 10 });
     expect(await counts(t)).toEqual({ sessions: 0, messages: 0, actions: 0 });
   });
 });
@@ -153,7 +153,7 @@ describe("agentStore.purgeIdentityHistory", () => {
     const second = await seedIdentity(t, alice.userId, "2");
     await seedSession(t, alice.userId, first, { messages: 3 });
     await seedSession(t, alice.userId, second, { messages: 2 });
-    await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: first });
+    await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: first, before: Date.now() + 1 });
     expect(await counts(t)).toEqual({ sessions: 1, messages: 2, actions: 1 });
     expect((await t.run((ctx) => ctx.db.query("agentSessions").collect()))[0]!.identityId).toBe(second);
   });
@@ -163,10 +163,10 @@ describe("agentStore.purgeIdentityHistory", () => {
     const alice = await newUser(t);
     const identity = await seedIdentity(t, alice.userId, "1");
     for (let i = 0; i < 3; i++) await seedSession(t, alice.userId, identity, { messages: 6 });
-    await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: identity, budget: 8 });
+    await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: identity, before: Date.now() + 1, budget: 8 });
     expect((await counts(t)).messages).toBeGreaterThan(0);
     expect((await scheduled(t)).length).toBe(1);
-    for (let i = 0; i < 10; i++) await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: identity, budget: 8 });
+    for (let i = 0; i < 10; i++) await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: identity, before: Date.now() + 1, budget: 8 });
     expect(await counts(t)).toEqual({ sessions: 0, messages: 0, actions: 0 });
   });
 });
@@ -300,9 +300,69 @@ describe("unlink with a large history", () => {
     expect(first.messages).toBeLessThan(703);
     expect((await scheduled(t)).length).toBe(1);
 
-    await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: aliceIdentity });
+    await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: aliceIdentity, before: Date.now() + 1 });
     expect(await counts(t)).toEqual({ sessions: 1, messages: 3, actions: 1 });
     const left = await t.run((ctx) => ctx.db.query("agentSessions").collect());
     expect(left[0]!.userId).toBe(bob.userId);
+  });
+});
+
+describe("batched deletion only touches history that existed at request time", () => {
+  it("ends the user's active sessions at once and keeps sessions created after the request", async () => {
+    const t = setupTest();
+    const alice = await newUser(t);
+    const identity = await seedIdentity(t, alice.userId, "1");
+    const old = await seedSession(t, alice.userId, identity, { messages: 700 });
+
+    await alice.as.mutation(api.agentStore.deleteMyHistory, {});
+    const marked = await t.run((ctx) => ctx.db.get(old));
+    expect(marked).not.toBeNull(); // still being deleted by the scheduled batches
+    expect(marked!.endedAt).toBeGreaterThan(0); // but no longer active
+    expect((await scheduled(t)).length).toBe(1);
+
+    // The user keeps chatting before the batches ran.
+    vi.advanceTimersByTime(5_000);
+    const fresh = await seedSession(t, alice.userId, identity, { messages: 2 });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect((await t.run((ctx) => ctx.db.get(old)))).toBeNull();
+    const rows = await t.run(async (ctx) => ({
+      sessions: (await ctx.db.query("agentSessions").collect()).map((s) => s._id),
+      messages: (await ctx.db.query("agentMessages").collect()).map((m) => m.sessionId),
+      actions: (await ctx.db.query("agentPendingActions").collect()).map((a) => a.sessionId),
+    }));
+    expect(rows).toEqual({ sessions: [fresh], messages: [fresh, fresh], actions: [fresh] });
+  });
+
+  it("the same rule applies to unlink: only the identity's history from before the unlink goes", async () => {
+    const t = setupTest();
+    const alice = await newUser(t);
+    const identity = await seedIdentity(t, alice.userId, "1");
+    const old = await seedSession(t, alice.userId, identity, { messages: 700 });
+
+    await alice.as.mutation(api.channelLinks.unlink, { identityId: identity });
+    expect((await t.run((ctx) => ctx.db.get(old)))!.endedAt).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(5_000);
+    const relinked = await seedIdentity(t, alice.userId, "1");
+    const fresh = await seedSession(t, alice.userId, relinked, { messages: 1 });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    expect(await t.run((ctx) => ctx.db.get(old))).toBeNull();
+    expect((await t.run((ctx) => ctx.db.query("agentSessions").collect())).map((s) => s._id)).toEqual([fresh]);
+    expect(await counts(t)).toEqual({ sessions: 1, messages: 1, actions: 1 });
+  });
+
+  it("purgeUserHistory leaves sessions newer than its cutoff alone, however many batches it takes", async () => {
+    const t = setupTest();
+    const alice = await newUser(t);
+    const identity = await seedIdentity(t, alice.userId, "1");
+    await seedSession(t, alice.userId, identity, { messages: 3 });
+    const cutoff = Date.now() + 1;
+    vi.advanceTimersByTime(1_000);
+    const newer = await seedSession(t, alice.userId, identity, { messages: 3 });
+    for (let i = 0; i < 5; i++) await t.mutation(internal.agentStore.purgeUserHistory, { userId: alice.userId, before: cutoff, budget: 4 });
+    expect((await t.run((ctx) => ctx.db.query("agentSessions").collect())).map((s) => s._id)).toEqual([newer]);
+    expect(await counts(t)).toEqual({ sessions: 1, messages: 3, actions: 1 });
   });
 });

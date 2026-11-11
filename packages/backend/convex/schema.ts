@@ -287,7 +287,9 @@ export default defineSchema({
   })
     .index("by_userId_and_channel_and_chatId_and_endedAt", ["userId", "channel", "chatId", "endedAt"])
     .index("by_userId", ["userId"])
+    .index("by_userId_and_endedAt", ["userId", "endedAt"])
     .index("by_identityId", ["identityId"])
+    .index("by_identityId_and_endedAt", ["identityId", "endedAt"])
     .index("by_lastActivityAt", ["lastActivityAt"]),
 
   agentMessages: defineTable({
