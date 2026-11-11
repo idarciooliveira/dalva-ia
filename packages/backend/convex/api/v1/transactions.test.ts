@@ -137,6 +137,26 @@ describe("api/v1 transactions: writes", () => {
     expect(transaction.amount).toEqual({ amountMinor: 90, currency: "EUR" });
   });
 
+  it("rejects 3-decimal amounts the app can't store exactly (precision), on every write", async () => {
+    const t = setupApi();
+    const user = await seedUser(t, { baseCurrency: "KWD" });
+    const kwd = await seedAccount(t, user, { currency: "KWD" });
+    const kwd2 = await seedAccount(t, user, { currency: "KWD", name: "Second" });
+    const client = clientFor(t, await tokenFor(user));
+    const odd = { amountMinor: 12_345, currency: "KWD" }; // 12.345 would be stored as 12.35
+    const precision = async (promise: Promise<unknown>) => {
+      const error = await expectApiError(promise, "validation_failed", 400);
+      expect(error.details).toMatchObject({ reason: "precision" });
+    };
+    await precision(client.transactions.create({ type: "expense", amount: odd, accountId: kwd, date: "2026-01-01" }));
+    await precision(client.accounts.adjust({ id: kwd, amount: odd }));
+    await precision(client.transfers.create({ amount: odd, fromAccountId: kwd, toAccountId: kwd2, date: "2026-01-01" }));
+    const { transaction } = await client.transactions.create({ type: "expense", amount: { amountMinor: 12_340, currency: "KWD" }, accountId: kwd, date: "2026-01-01" });
+    expect(transaction.amount).toEqual({ amountMinor: 12_340, currency: "KWD" });
+    await precision(client.transactions.update({ id: transaction.id, amount: odd }));
+    expect(await t.run((ctx) => ctx.db.query("transactions").collect())).toHaveLength(1);
+  });
+
   it("rejects amounts that round to zero in storage (3-decimal currencies)", async () => {
     const t = setupApi();
     const user = await seedUser(t, { baseCurrency: "KWD" });
@@ -148,7 +168,7 @@ describe("api/v1 transactions: writes", () => {
     await expectApiError(client.accounts.adjust({ id: kwd, amount: { amountMinor: -4, currency: "KWD" } }), "validation_failed");
     const { transfer } = await client.transfers.create({ amount: { amountMinor: 10, currency: "KWD" }, fromAccountId: kwd, toAccountId: kwd2, date: "2026-01-01" });
     await expectApiError(client.transfers.update({ id: transfer.outgoingId, amount: { amountMinor: 3, currency: "KWD" } }), "validation_failed");
-    expect((await client.accounts.adjust({ id: kwd, amount: { amountMinor: 5, currency: "KWD" } })).account.balance).toEqual({ amountMinor: 0, currency: "KWD" });
+    await expectApiError(client.accounts.adjust({ id: kwd, amount: { amountMinor: 5, currency: "KWD" } }), "validation_failed");
   });
 
   it("drops the old subcategory when only the category changes", async () => {

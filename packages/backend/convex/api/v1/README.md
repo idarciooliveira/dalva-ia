@@ -59,7 +59,7 @@ Why `confirm` is not idempotent: a second call is a `conflict` by design (it is 
 
 ## Money
 
-- The app stores every currency as value × 100. `money.ts` converts to and from ISO 4217 minor units: exact for 2-decimal currencies, round half away from zero when scaling down (JPY out, KWD in).
+- The app stores every currency as value × 100. `money.ts` converts to and from ISO 4217 minor units: exact for 2-decimal currencies, round half away from zero when scaling down responses (JPY out). Request amounts are never rounded: one the × 100 storage can't hold exactly (`12.345 KWD`) is `validation_failed` with `details: { reason: "precision", issues }`; `12.340 KWD` is stored as is.
 - Account data uses the account currency; goals, debts and reports use `userProfiles.baseCurrency` (no profile: `conflict`). Request currency must match; cross-currency transfers are rejected.
 - No FX: a report that would sum amounts outside the base currency returns `conflict` with `details: { reason: "mixed_currencies", currencies }`.
 - Rows left behind by a deleted account have no known currency: reports that would sum them return `conflict` with `details: { reason: "unknown_currency" }`. Listings still label such rows with the base currency.

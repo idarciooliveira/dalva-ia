@@ -4,7 +4,7 @@ import type { Doc, Id, TableNames } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import { getProfile } from "../../domain/userProfiles";
 import { apiError, notFound, validationError } from "./errors";
-import { minorToApp, MoneyRangeError, toMoney } from "./money";
+import { minorToAppExact, MoneyPrecisionError, MoneyRangeError, toMoney } from "./money";
 
 type Ctx = QueryCtx | MutationCtx;
 
@@ -101,14 +101,17 @@ export function appAmount(money: Money, expected: string, field: string): number
   assertCurrency(money, expected, field);
   let amount: number;
   try {
-    amount = minorToApp(money.amountMinor, money.currency);
+    amount = minorToAppExact(money.amountMinor, money.currency);
   } catch (error) {
     if (error instanceof MoneyRangeError) throw validationError(`${field}.amountMinor`, error.message);
+    if (error instanceof MoneyPrecisionError) {
+      // Never rounded: the stored amount must be the one the client sent (and the user confirmed).
+      throw apiError("validation_failed", error.message, {
+        reason: "precision",
+        issues: [{ path: `${field}.amountMinor`, message: error.message }],
+      });
+    }
     throw error;
-  }
-  // 3-decimal currencies: 1-4 minor units round to 0 in the app's x100 storage.
-  if (amount === 0 && money.amountMinor !== 0) {
-    throw validationError(`${field}.amountMinor`, `Amount is below the smallest storable unit of ${money.currency}`);
   }
   return amount;
 }
