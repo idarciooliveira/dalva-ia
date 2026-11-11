@@ -37,11 +37,14 @@ test.describe("Settings → Telegram", () => {
     await page.getByLabel(/I understand and agree/i).check();
     await connect.click();
 
+    // The /start fallback is always shown; the deep link only when VITE_TELEGRAM_BOT_USERNAME is set.
+    const command = page.getByTestId("telegram-start-command");
+    await expect(command).toHaveText(/^\/start [A-Za-z0-9_-]{43}$/);
+    const code = (await command.textContent())!.replace("/start ", "");
     const deepLink = page.getByRole("link", { name: /open telegram/i });
-    await expect(deepLink).toHaveAttribute("href", /^https:\/\/t\.me\/dalva_test_bot\?start=[A-Za-z0-9_-]{43}$/);
-    const href = (await deepLink.getAttribute("href"))!;
-    const code = new URL(href).searchParams.get("start");
-    await expect(page.getByTestId("telegram-start-command")).toHaveText(`/start ${code}`);
+    if ((await deepLink.count()) > 0) {
+      await expect(deepLink).toHaveAttribute("href", new RegExp(`^https://t\\.me/[A-Za-z0-9_]{5,32}\\?start=${code}$`));
+    }
     await expect(page.getByText(/expires in (10:00|9:\d\d)/i)).toBeVisible();
   });
 

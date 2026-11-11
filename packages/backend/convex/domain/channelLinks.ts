@@ -28,7 +28,7 @@ export async function findActiveByExternal(ctx: QueryCtx, channel: Channel, exte
     .withIndex("by_channel_and_externalUserId_and_unlinkedAt", (q) =>
       q.eq("channel", channel).eq("externalUserId", externalUserId).eq("unlinkedAt", undefined),
     )
-    .first();
+    .unique();
 }
 
 export async function findActiveByUser(ctx: QueryCtx, userId: string, channel: Channel) {
@@ -37,7 +37,7 @@ export async function findActiveByUser(ctx: QueryCtx, userId: string, channel: C
     .withIndex("by_userId_and_channel_and_unlinkedAt", (q) =>
       q.eq("userId", userId).eq("channel", channel).eq("unlinkedAt", undefined),
     )
-    .first();
+    .unique();
 }
 
 /** Active links of a user (at most one per channel). */
@@ -49,8 +49,9 @@ export async function listActiveForUser(ctx: QueryCtx, userId: string) {
 }
 
 /**
- * Store a new code for the user. Previous unused codes for the channel are
- * deleted, so only the latest one shown in the UI works.
+ * Store a new code for the user. Every previous code for the channel is
+ * deleted (used ones too: a deleted code fails redeem exactly like a used one),
+ * so only the latest code works and at most one row per user and channel exists.
  */
 export async function storeLinkCode(
   ctx: MutationCtx,
@@ -62,9 +63,7 @@ export async function storeLinkCode(
     .query("channelLinkCodes")
     .withIndex("by_userId_and_channel", (q) => q.eq("userId", userId).eq("channel", args.channel))
     .take(MAX_PENDING_CODES);
-  for (const code of previous) {
-    if (code.usedAt === undefined) await ctx.db.delete(code._id);
-  }
+  for (const code of previous) await ctx.db.delete(code._id);
   const expiresAt = args.now + LINK_CODE_TTL_MS;
   await ctx.db.insert("channelLinkCodes", {
     userId,
@@ -95,7 +94,7 @@ export async function redeemLinkCode(
   const code = await ctx.db
     .query("channelLinkCodes")
     .withIndex("by_codeHash", (q) => q.eq("codeHash", args.codeHash))
-    .first();
+    .unique();
   if (!code || code.usedAt !== undefined || code.expiresAt <= args.now || code.channel !== args.channel) {
     throw new Error(INVALID_LINK_CODE);
   }

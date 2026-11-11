@@ -57,6 +57,27 @@ describe("channelLinks (web)", () => {
     expect(rows[0]!.consentAt).toBeGreaterThan(0);
   });
 
+  it("replaces used codes too, so old rows never pile up", async () => {
+    const t = setupTest();
+    const { userId, as } = await newUser(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 60; i++) {
+        await ctx.db.insert("channelLinkCodes", {
+          userId,
+          channel: TG,
+          codeHash: `used-${i}`,
+          expiresAt: Date.now() + 60_000,
+          usedAt: Date.now(),
+          consentAt: Date.now(),
+        });
+      }
+    });
+    await as.action(api.channelLinks.createLinkCode, { channel: TG, consent: true });
+    await as.action(api.channelLinks.createLinkCode, { channel: TG, consent: true });
+    const rows = await t.run((ctx) => ctx.db.query("channelLinkCodes").collect());
+    expect(rows.filter((r) => r.usedAt === undefined)).toHaveLength(1);
+  });
+
   it("refuses a new code while the channel is linked", async () => {
     const t = setupTest();
     const { userId, as } = await newUser(t);
