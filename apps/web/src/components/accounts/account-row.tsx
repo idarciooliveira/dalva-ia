@@ -44,6 +44,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
 
   const { mutate: archiveAccount } = useMutation({
     mutationFn: useConvexMutation(api.accounts.archiveAccount),
+    onMutate: () => setDeleteError(null),
     onError: () => {
       setDeleteError("Couldn't archive the account. Try again.");
       setCanArchive(false);
@@ -179,10 +180,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
             variant="outline"
             size="sm"
             onClick={() => {
-              archiveAccount(
-                { id: account._id },
-                { onSuccess: () => setDeleteError(null) },
-              );
+              archiveAccount({ id: account._id });
             }}
           >
             Archive instead
