@@ -27,6 +27,7 @@ const chat = (id: string, extra: { chatId?: string; username?: string } = {}) =>
   ...(extra.username ? { username: extra.username } : {}),
 });
 
+const identityId = (id: string) => id as Id<"channelIdentities">;
 const asWebUser = (t: T, userId: string) => t.withIdentity({ subject: `${userId}|session-${userId}` });
 
 async function createCode(t: T, userId: string) {
@@ -136,7 +137,7 @@ describe("channelLinks.redeem", () => {
     // The code was not consumed: once alice unlinks, bob can use it.
     await service.channelIdentities.unlink({ channel: TG, externalUserId: "1001" });
     const { identity } = await service.channelLinks.redeem({ ...chat("1001"), code });
-    const stored = await t.run((ctx) => ctx.db.get(identity.id as Id<"channelIdentities">));
+    const stored = await t.run((ctx) => ctx.db.get(identityId(identity.id)));
     expect(stored!.userId).toBe(bob);
   });
 
@@ -200,7 +201,7 @@ describe("channelIdentities.resolve", () => {
     const { userId, identity, service } = await linkedUser(t, "1001");
     const account = await seedAccount(t, userId, { balance: 100 });
     await asWebUser(t, userId).mutation(api.channelLinks.setReadOnly, {
-      identityId: identity.id as Id<"channelIdentities">,
+      identityId: identityId(identity.id),
       readOnly: true,
     });
 
@@ -217,7 +218,7 @@ describe("channelIdentities.resolve", () => {
     const account = await seedAccount(t, userId, { balance: 100 });
     const { token } = await service.channelIdentities.resolve(chat("1001"));
     await asWebUser(t, userId).mutation(api.channelLinks.setReadOnly, {
-      identityId: identity.id as Id<"channelIdentities">,
+      identityId: identityId(identity.id),
       readOnly: true,
     });
     const finance = clientFor(t, token);
@@ -246,7 +247,7 @@ describe("channelIdentities.resolve", () => {
   it("returns not_found after the user unlinks from the web app", async () => {
     const t = setupApi();
     const { userId, identity, service } = await linkedUser(t, "1001");
-    await asWebUser(t, userId).mutation(api.channelLinks.unlink, { identityId: identity.id as Id<"channelIdentities"> });
+    await asWebUser(t, userId).mutation(api.channelLinks.unlink, { identityId: identityId(identity.id) });
     await expectApiError(service.channelIdentities.resolve(chat("1001")), "not_found", 404);
   });
 
