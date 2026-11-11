@@ -3,7 +3,10 @@
  * in the default Convex runtime, no Node APIs).
  *
  * Claims: `sub` (userId), `scope` (space-separated), `aud` ("finance-api"),
- * `iat`, `exp`. Secret: Convex env var `FINANCE_API_TOKEN_SECRET` (>= 32 bytes).
+ * `iat`, `exp`, and `cid` (channel identity id) for tokens minted by
+ * `channelIdentities.resolve`: those are re-checked against the identity on
+ * every request, so unlinking or switching to read-only applies at once.
+ * Secret: Convex env var `FINANCE_API_TOKEN_SECRET` (>= 32 bytes).
  */
 
 export const FINANCE_API_AUDIENCE = "finance-api";
@@ -22,6 +25,8 @@ export interface UserTokenClaims {
   scopes: FinanceScope[];
   exp: number;
   iat?: number;
+  /** Channel identity the token was minted for. */
+  cid?: string;
 }
 
 export type VerifyResult =
@@ -92,7 +97,7 @@ export async function mintUserToken(
   userId: string,
   scopes: readonly FinanceScope[],
   ttlSeconds: number,
-  options: { now?: number } = {},
+  options: { now?: number; channelIdentityId?: string } = {},
 ): Promise<string> {
   if (typeof userId !== "string" || userId.length === 0) throw new Error("mintUserToken: userId is required");
   if (scopes.length === 0 || scopes.some((s) => !FINANCE_SCOPES.includes(s))) {
@@ -108,7 +113,14 @@ export async function mintUserToken(
   const header = base64UrlEncode(encoder.encode(JSON.stringify({ alg: "HS256", typ: "JWT" })));
   const payload = base64UrlEncode(
     encoder.encode(
-      JSON.stringify({ sub: userId, scope: [...new Set(scopes)].join(" "), aud: FINANCE_API_AUDIENCE, iat, exp: iat + ttlSeconds }),
+      JSON.stringify({
+        sub: userId,
+        scope: [...new Set(scopes)].join(" "),
+        aud: FINANCE_API_AUDIENCE,
+        iat,
+        exp: iat + ttlSeconds,
+        ...(options.channelIdentityId ? { cid: options.channelIdentityId } : {}),
+      }),
     ),
   );
   const signingInput = `${header}.${payload}`;
@@ -147,7 +159,7 @@ export async function verifyUserToken(token: string, options: { now?: number } =
 
   const payload = decodeJsonSegment(payloadSegment);
   if (!payload) return { ok: false, reason: "invalid" };
-  const { sub, scope, aud, exp, iat, nbf } = payload;
+  const { sub, scope, aud, exp, iat, nbf, cid } = payload;
   const now = options.now ?? nowSeconds();
 
   if (typeof sub !== "string" || sub.length === 0 || sub.length > 256) return { ok: false, reason: "invalid" };
@@ -160,8 +172,14 @@ export async function verifyUserToken(token: string, options: { now?: number } =
   if (nbf !== undefined && (typeof nbf !== "number" || nbf > now + CLOCK_SKEW_SECONDS)) {
     return { ok: false, reason: "invalid" };
   }
+  if (cid !== undefined && (typeof cid !== "string" || cid.length === 0 || cid.length > 256)) {
+    return { ok: false, reason: "invalid" };
+  }
   if (now >= exp) return { ok: false, reason: "expired" };
 
   const scopes = FINANCE_SCOPES.filter((s) => scope.split(" ").includes(s));
-  return { ok: true, claims: { sub, scopes, exp, ...(typeof iat === "number" ? { iat } : {}) } };
+  return {
+    ok: true,
+    claims: { sub, scopes, exp, ...(typeof iat === "number" ? { iat } : {}), ...(cid !== undefined ? { cid } : {}) },
+  };
 }

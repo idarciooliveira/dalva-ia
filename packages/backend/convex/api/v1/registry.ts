@@ -1,4 +1,4 @@
-import type { Routes } from "@mpf/finance-contract";
+import type { UserRoutes } from "@mpf/finance-contract";
 import type { FunctionReference } from "convex/server";
 
 import { internal } from "../../_generated/api";
@@ -11,11 +11,11 @@ import { internal } from "../../_generated/api";
 type Implementation = FunctionReference<"query" | "mutation", "internal">;
 
 /**
- * Contract operation -> Convex implementation. Typed against the contract's
+ * User-route operation -> Convex implementation. Typed against the contract's
  * route map: a missing or extra entry is a compile error, so this cannot
- * drift from `routes`.
+ * drift from `routes`. Service routes live in `serviceRegistry.ts`.
  */
-export type Implementations = { [G in keyof Routes]: { [O in keyof Routes[G]]: Implementation } };
+export type Implementations = { [G in keyof UserRoutes]: { [O in keyof UserRoutes[G]]: Implementation } };
 
 // Annotated, not `satisfies`: this module is part of `internal`'s own type, so
 // an inferred type here would be circular.

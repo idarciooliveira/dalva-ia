@@ -1,6 +1,6 @@
 import { getAuthUserId } from "@convex-dev/auth/server";
 
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { ActionCtx, MutationCtx, QueryCtx } from "../_generated/server";
 
 /**
  * Resolve the current user from the Convex Auth session.
@@ -11,7 +11,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
  * `userId` string to the domain layer.
  */
 export async function getOptionalUserId(
-  ctx: QueryCtx | MutationCtx,
+  ctx: QueryCtx | MutationCtx | ActionCtx,
 ): Promise<string | null> {
   return await getAuthUserId(ctx);
 }
@@ -20,7 +20,7 @@ export async function getOptionalUserId(
  * Resolve the current user or throw "Not authenticated".
  */
 export async function requireUserId(
-  ctx: QueryCtx | MutationCtx,
+  ctx: QueryCtx | MutationCtx | ActionCtx,
 ): Promise<string> {
   const userId = await getOptionalUserId(ctx);
   if (!userId) throw new Error("Not authenticated");

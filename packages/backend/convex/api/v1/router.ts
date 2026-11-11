@@ -7,18 +7,22 @@ import {
   idempotencyKeySchema,
   isWriteRoute,
   matchRoute,
+  requiresIdempotencyKey,
   mergeRequestInput,
   ok,
   parseBearerToken,
   validationIssues,
   type ErrorCode,
   type HttpMethod,
+  type RouteMatch,
 } from "@mpf/finance-contract";
 import type { FunctionReference } from "convex/server";
 
 import { httpAction, type ActionCtx } from "../../_generated/server";
 import { readApiErrorData } from "./errors";
 import { implementationFor } from "./registry";
+import { verifyServiceKey } from "./serviceAuth";
+import { serviceImplementationFor } from "./serviceRegistry";
 import { verifyUserToken, type FinanceScope } from "./tokens";
 
 /** Every method used by the contract; `http.ts` mounts the router for each. */
@@ -49,9 +53,15 @@ function errorResponse(code: ErrorCode, message: string, details?: unknown) {
   return json(ERROR_STATUS[code], fail(code, message, details), headers);
 }
 
-async function authenticate(request: Request) {
+function bearer(request: Request) {
   const token = parseBearerToken(request.headers.get(AUTHORIZATION_HEADER));
   if (!token) throw new HttpError("unauthorized", "Missing bearer token");
+  return token;
+}
+
+/** User routes: a valid user token. The service key is not a JWT, so it fails here. */
+async function authenticateUser(request: Request) {
+  const token = bearer(request);
   const result = await verifyUserToken(token);
   if (!result.ok) {
     if (result.reason === "misconfigured") {
@@ -61,6 +71,18 @@ async function authenticate(request: Request) {
     throw new HttpError("unauthorized", result.reason === "expired" ? "Token expired" : "Invalid token");
   }
   return result.claims;
+}
+
+/** Service routes: the service key only. A user token never equals it, so it fails here. */
+async function authenticateService(request: Request) {
+  const result = await verifyServiceKey(bearer(request));
+  if (!result.ok) {
+    if (result.reason === "misconfigured") {
+      console.error("Finance API: FINANCE_API_SERVICE_KEY is missing, too short or equal to the token secret");
+      throw new HttpError("internal", "Internal error");
+    }
+    throw new HttpError("unauthorized", "Invalid service credentials");
+  }
 }
 
 export class BodyTooLargeError extends Error {
@@ -136,20 +158,40 @@ async function sha256Hex(text: string): Promise<string> {
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-async function handle(ctx: ActionCtx, request: Request): Promise<Response> {
-  const claims = await authenticate(request);
+function parseInput(match: RouteMatch, source: URLSearchParams | Record<string, unknown> | undefined) {
+  const parsed = match.route.request.safeParse(mergeRequestInput(match, source));
+  if (!parsed.success) {
+    throw new HttpError("validation_failed", "Request validation failed", validationIssues(parsed.error));
+  }
+  return parsed.data as unknown;
+}
 
+async function handleService(ctx: ActionCtx, request: Request, match: RouteMatch): Promise<Response> {
+  await authenticateService(request);
+  const implementation = serviceImplementationFor(match.group, match.op);
+  if (!implementation) throw new HttpError("not_found", "Route not found");
+  const input = parseInput(match, isWriteRoute(match.route) ? await readJsonBody(request) : new URL(request.url).searchParams);
+  return json(200, ok(await implementation(ctx, input)));
+}
+
+async function handle(ctx: ActionCtx, request: Request): Promise<Response> {
   const url = new URL(request.url);
   const match = matchRoute(request.method, url.pathname);
-  const implementation = match && implementationFor(match.group, match.op);
-  if (!match || !implementation) throw new HttpError("not_found", "Route not found");
+  if (!match) throw new HttpError("not_found", "Route not found");
+  // The route decides the credential: service and user routes never share one.
+  if (match.route.auth === "service") return await handleService(ctx, request, match);
+  if (match.route.auth !== "user") throw new HttpError("not_found", "Route not found");
+
+  const claims = await authenticateUser(request);
+  const implementation = implementationFor(match.group, match.op);
+  if (!implementation) throw new HttpError("not_found", "Route not found");
 
   const write = isWriteRoute(match.route);
   const required: FinanceScope = write ? "finance:write" : "finance:read";
   if (!claims.scopes.includes(required)) throw new HttpError("forbidden", `Token lacks the ${required} scope`);
 
   let idempotencyKey: string | undefined;
-  if (write) {
+  if (requiresIdempotencyKey(match.route)) {
     const parsedKey = idempotencyKeySchema.safeParse(request.headers.get(IDEMPOTENCY_KEY_HEADER) ?? undefined);
     if (!parsedKey.success) {
       throw new HttpError("validation_failed", `Missing or invalid ${IDEMPOTENCY_KEY_HEADER} header`, {
@@ -159,27 +201,25 @@ async function handle(ctx: ActionCtx, request: Request): Promise<Response> {
     idempotencyKey = parsedKey.data;
   }
 
-  const source = write ? await readJsonBody(request) : url.searchParams;
-  const parsed = match.route.request.safeParse(mergeRequestInput(match, source));
-  if (!parsed.success) {
-    throw new HttpError("validation_failed", "Request validation failed", validationIssues(parsed.error));
-  }
-
+  const input = parseInput(match, write ? await readJsonBody(request) : url.searchParams);
   const userId = claims.sub;
+  const channelIdentityId = claims.cid;
   if (!write) {
     const data: unknown = await ctx.runQuery(implementation as FunctionReference<"query", "internal">, {
       userId,
-      input: parsed.data,
+      input,
+      channelIdentityId,
     });
     return json(200, ok(data));
   }
 
-  const requestHash = await sha256Hex(canonicalJson({ operation: match.name, input: parsed.data }));
+  const requestHash = await sha256Hex(canonicalJson({ operation: match.name, input }));
   const result = (await ctx.runMutation(implementation as FunctionReference<"mutation", "internal">, {
     userId,
-    input: parsed.data,
+    input,
     idempotencyKey,
     requestHash,
+    channelIdentityId,
   })) as { replayed: boolean; data: unknown };
   return json(200, ok(result.data), result.replayed ? { [REPLAYED_HEADER]: "true" } : {});
 }

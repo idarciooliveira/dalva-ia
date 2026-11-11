@@ -5,6 +5,7 @@
 import {
   API_BASE_PATH,
   createFinanceClient,
+  createFinanceServiceClient,
   FinanceApiError,
   successEnvelope,
   type ErrorCode,
@@ -14,15 +15,18 @@ import { expect, vi } from "vitest";
 
 import type { Doc, Id } from "../../_generated/dataModel";
 import { setupTest } from "../../test.setup";
+import { SERVICE_KEY_ENV } from "./serviceAuth";
 import { mintUserToken, TOKEN_SECRET_ENV, type FinanceScope } from "./tokens";
 
 export const TEST_SECRET = "finance-api-test-secret-0123456789abcdef";
+export const TEST_SERVICE_KEY = "finance-api-test-service-key-fedcba9876543210";
 export const ALL_SCOPES: FinanceScope[] = ["finance:read", "finance:write"];
 
 export type T = ReturnType<typeof setupTest>;
 
 export function setupApi(): T {
   vi.stubEnv(TOKEN_SECRET_ENV, TEST_SECRET);
+  vi.stubEnv(SERVICE_KEY_ENV, TEST_SERVICE_KEY);
   return setupTest();
 }
 
@@ -80,6 +84,18 @@ export function clientFor(t: T, token: string) {
   return createFinanceClient({
     baseUrl: "https://finance.test",
     getToken: () => token,
+    fetch: async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return await t.fetch(`${url.pathname}${url.search}`, init);
+    },
+  });
+}
+
+/** The contract's service client over `t.fetch`, with the given (default: valid) service key. */
+export function serviceClientFor(t: T, serviceKey = TEST_SERVICE_KEY) {
+  return createFinanceServiceClient({
+    baseUrl: "https://finance.test",
+    getServiceKey: () => serviceKey,
     fetch: async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       return await t.fetch(`${url.pathname}${url.search}`, init);

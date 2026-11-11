@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { z } from "zod";
 
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "../../_generated/server";
+import { channelTokenProblem } from "../../domain/channelLinks";
 import { apiError, mapDomainErrors } from "./errors";
 import { IDEMPOTENCY_TTL_MS } from "./idempotency";
 
@@ -27,14 +28,33 @@ export interface WriteResult<T> {
 }
 
 /**
+ * Tokens minted for a chat channel carry its identity id. Check it inside the
+ * same transaction as the read or write, so an unlinked or read-only identity
+ * stops working immediately instead of when the token expires.
+ */
+async function assertChannelIdentity(
+  ctx: QueryCtx,
+  userId: string,
+  channelIdentityId: string | undefined,
+  required: "finance:read" | "finance:write",
+) {
+  if (channelIdentityId === undefined) return;
+  const problem = await channelTokenProblem(ctx, userId, channelIdentityId, required);
+  if (problem === "revoked") throw apiError("unauthorized", "Channel link revoked");
+  if (problem === "scope") throw apiError("forbidden", `Channel link lacks the ${required} scope`);
+}
+
+/**
  * Internal query for a GET route. `userId` comes from the verified token
  * (the httpAction is the only caller); `input` is already contract-validated.
  */
 export function apiQuery<R extends RouteDef>(_route: R, handler: ReadHandler<R>) {
   return internalQuery({
-    args: { userId: v.string(), input: v.any() },
-    handler: (ctx, args): Promise<RouteResponse<R>> =>
-      mapDomainErrors(() => handler(ctx, args.userId, args.input as RouteParsedInput<R>)),
+    args: { userId: v.string(), input: v.any(), channelIdentityId: v.optional(v.string()) },
+    handler: async (ctx, args): Promise<RouteResponse<R>> => {
+      await assertChannelIdentity(ctx, args.userId, args.channelIdentityId, "finance:read");
+      return await mapDomainErrors(() => handler(ctx, args.userId, args.input as RouteParsedInput<R>));
+    },
   });
 }
 
@@ -55,8 +75,10 @@ export function apiMutation<R extends RouteDef>(_route: R, handler: WriteHandler
       input: v.any(),
       idempotencyKey: v.string(),
       requestHash: v.string(),
+      channelIdentityId: v.optional(v.string()),
     },
     handler: async (ctx, args): Promise<WriteResult<RouteResponse<R>>> => {
+      await assertChannelIdentity(ctx, args.userId, args.channelIdentityId, "finance:write");
       const existing = await ctx.db
         .query("apiIdempotencyKeys")
         .withIndex("by_userId_and_key", (q) => q.eq("userId", args.userId).eq("key", args.idempotencyKey))
@@ -83,3 +105,4 @@ export function apiMutation<R extends RouteDef>(_route: R, handler: WriteHandler
     },
   });
 }
+
