@@ -13,10 +13,14 @@
     "test:once": "vitest run",
     "telegram:webhook:set": "bun src/scripts/telegram-webhook-cli.ts set",
     "telegram:webhook:info": "bun src/scripts/telegram-webhook-cli.ts info",
-    "telegram:webhook:delete": "bun src/scripts/telegram-webhook-cli.ts delete"
+    "telegram:webhook:delete": "bun src/scripts/telegram-webhook-cli.ts delete",
+    "eval": "bun eval/run.ts"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "^4.0.142",
     "@mpf/finance-contract": "workspace:*",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "ai": "^7.0.169",
     "grammy": "^1.46.0",
     "hono": "^4.13.17",
     "zod": "^4.3.6"

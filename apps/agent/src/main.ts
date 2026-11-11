@@ -1,10 +1,13 @@
 import { createTelegramAdapter } from "./channels/telegram/adapter";
-import { ConfigError, loadConfig } from "./config";
+import { ConfigError, loadConfig, modelSettings } from "./config";
+import { createAgent } from "./core/agent";
 import { createFinanceClients } from "./core/finance";
 import { createHandler } from "./core/handler";
 import { createFinanceProbe } from "./core/health";
 import { createPipeline } from "./core/pipeline";
+import { createRateLimiter } from "./core/rate-limit";
 import { createApp } from "./http";
+import { getModel } from "./llm/model";
 import { createLogger, errorFields } from "./log";
 
 /** Below Docker's default 10s stop timeout (SIGKILL after). */
@@ -25,7 +28,13 @@ async function main() {
 
   const logger = createLogger({
     level: config.LOG_LEVEL,
-    secrets: [config.TELEGRAM_BOT_TOKEN, config.FINANCE_API_SERVICE_KEY, config.TELEGRAM_WEBHOOK_SECRET ?? ""],
+    secrets: [
+      config.TELEGRAM_BOT_TOKEN,
+      config.FINANCE_API_SERVICE_KEY,
+      config.TELEGRAM_WEBHOOK_SECRET ?? "",
+      config.AI_GATEWAY_API_KEY ?? "",
+      config.OPENROUTER_API_KEY ?? "",
+    ],
   });
 
   const adapter = createTelegramAdapter({
@@ -36,11 +45,26 @@ async function main() {
     logger,
   });
   const clients = createFinanceClients({ baseUrl: config.FINANCE_API_URL, serviceKey: config.FINANCE_API_SERVICE_KEY });
+  const agent = createAgent({
+    model: getModel(modelSettings(config)),
+    maxSteps: config.AGENT_MAX_STEPS,
+    maxOutputTokens: config.AGENT_MAX_OUTPUT_TOKENS,
+    turnTimeoutMs: config.AGENT_TURN_TIMEOUT_SECONDS * 1000,
+    timezone: config.DEFAULT_TIMEZONE,
+    logger,
+  });
   const { handle, onFailure, accept } = createHandler({
     adapter,
     clients,
     logger,
     sessionIdleMinutes: config.SESSION_IDLE_MINUTES,
+    chat: {
+      agent,
+      limiter: createRateLimiter({
+        limit: config.AGENT_RATE_LIMIT_TURNS,
+        windowMs: config.AGENT_RATE_LIMIT_WINDOW_MINUTES * 60_000,
+      }),
+    },
   });
   const pipeline = createPipeline({
     adapter,
@@ -81,7 +105,7 @@ async function main() {
   });
   // Up for /health during recovery; the webhook route refuses until `accepting`.
   server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
-  logger.info("server_started", { port: config.PORT, mode: config.TELEGRAM_MODE });
+  logger.info("server_started", { port: config.PORT, mode: config.TELEGRAM_MODE, aiProvider: config.AI_PROVIDER, model: config.AGENT_MODEL });
 
   // Events a dead process left unfinished run to completion, in arrival order, before anything new.
   // Without the backend nothing can be claimed either, so a failed recovery is fatal: the orchestrator restarts us.

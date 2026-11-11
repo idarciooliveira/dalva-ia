@@ -8,5 +8,5 @@
     "declarationMap": false,
     "sourceMap": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "eval/**/*.ts", "vitest.config.ts"]
 }

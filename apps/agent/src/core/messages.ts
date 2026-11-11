@@ -11,6 +11,13 @@ const COMMANDS: RichPart[] = [
   " show this list",
 ];
 
+const ASK: RichPart[] = [
+  "Or just ask me about your money, like ",
+  { italic: "how much did I spend on food this month?" },
+  " or ",
+  { italic: "quanto devo?" },
+];
+
 const HOW_TO_LINK: RichPart[] = [
   "To connect, open DALVA → ",
   { bold: "Settings → Telegram" },
@@ -25,11 +32,19 @@ export const texts = {
     { bold: name ? `Welcome back, ${name}.` : "Welcome back." },
     "\n\nThis chat is connected to DALVA. Commands:\n",
     ...COMMANDS,
+    "\n\n",
+    ...ASK,
   ],
   notLinked: (): RichText => ["This chat isn't connected to DALVA yet.\n\n", ...HOW_TO_LINK],
-  help: (): RichText => [{ bold: "Commands" }, "\n", ...COMMANDS],
+  help: (): RichText => [{ bold: "Commands" }, "\n", ...COMMANDS, "\n\n", ...ASK],
   helpUnlinked: (): RichText => [{ bold: "Commands" }, "\n", ...COMMANDS, "\n\n", ...HOW_TO_LINK],
-  linked: (): RichText => [{ bold: "Connected." }, " This chat is now linked to your DALVA account.\n\n", ...COMMANDS],
+  linked: (): RichText => [
+    { bold: "Connected." },
+    " This chat is now linked to your DALVA account.\n\n",
+    ...COMMANDS,
+    "\n\n",
+    ...ASK,
+  ],
   linkInvalid: (): RichText => [
     "That link code is invalid or has expired. Create a new one in DALVA → ",
     { bold: "Settings → Telegram" },
@@ -47,6 +62,9 @@ export const texts = {
   ],
   privateOnly: (): RichText => "I only work in a private chat. Message me directly.",
   comingSoon: (): RichText => ["Chat is coming soon. For now I understand these commands:\n", ...COMMANDS],
+  photosNotSupported: (): RichText => "I can't read photos yet. Send me a text message instead.",
+  messageTooLong: (max: number): RichText => `That message is too long for me. Please keep it under ${max} characters.`,
+  chatRateLimited: (): RichText => "You've sent me a lot of messages in a short time. Please wait a few minutes and try again.",
   unknownCommand: (): RichText => ["I don't know that command.\n\n", ...COMMANDS],
   unlinked: (): RichText => "Disconnected. This chat is no longer linked to DALVA and its history was deleted.",
   forgotten: (): RichText => "Done. Your chat history with DALVA was deleted.",

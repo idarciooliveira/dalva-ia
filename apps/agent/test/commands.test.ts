@@ -299,9 +299,9 @@ describe("commands", () => {
       idleTimeoutMinutes: 30,
     });
     const stored = finance.messages.map((m) => ({ role: m.role, content: JSON.parse(m.content) }));
-    expect(stored[0]).toEqual({ role: "user", content: { kind: "text", text: "spent 12 on lunch" } });
-    expect(stored[1]).toMatchObject({ role: "assistant", content: { text: expect.stringContaining("coming soon") } });
-    expect(stored[2]).toEqual({ role: "user", content: { kind: "command", command: "start" } });
+    expect(stored[0]).toEqual({ role: "user", content: { v: 1, kind: "text", text: "spent 12 on lunch" } });
+    expect(stored[1]).toMatchObject({ role: "assistant", content: { v: 1, text: expect.stringContaining("coming soon") } });
+    expect(stored[2]).toEqual({ role: "user", content: { v: 1, kind: "command", command: "start" } });
     expect(new Set(finance.messages.map((m) => m.sessionId)).size).toBe(1);
   });
 
@@ -396,10 +396,12 @@ describe("userMessageContent", () => {
 
   test("drops /start args (they can hold a link code), keeps other args", () => {
     expect(JSON.parse(userMessageContent({ ...base, kind: "command", command: "start", args: [CODE], text: `/start ${CODE}` }))).toEqual({
+      v: 1,
       kind: "command",
       command: "start",
     });
     expect(JSON.parse(userMessageContent({ ...base, kind: "command", command: "balance", args: ["x"], text: "/balance x" }))).toEqual({
+      v: 1,
       kind: "command",
       command: "balance",
       args: ["x"],
