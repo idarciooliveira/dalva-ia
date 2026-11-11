@@ -495,10 +495,12 @@ describe("service client", () => {
 
   it("exposes only service routes, and the user client only user routes", () => {
     const { service } = serviceSetup(() => json({}));
-    expect(Object.keys(service).sort()).toEqual(["channelIdentities", "channelLinks"]);
+    expect(Object.keys(service).sort()).toEqual(["agentEvents", "channelIdentities", "channelLinks"]);
     const user = createFinanceClient({ baseUrl: "https://x.test", getToken: () => "t" });
     expect(user).not.toHaveProperty("channelLinks");
     expect(user).not.toHaveProperty("channelIdentities");
+    expect(user).not.toHaveProperty("agentEvents");
+    expect(user).toHaveProperty("agentPendingActions");
     expect(user).toHaveProperty("transactions");
   });
 });

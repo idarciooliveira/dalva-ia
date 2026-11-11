@@ -2,6 +2,9 @@ import { z } from "zod";
 
 import {
   accountIdSchema,
+  agentMessageIdSchema,
+  agentPendingActionIdSchema,
+  agentSessionIdSchema,
   categoryIdSchema,
   channelIdentityIdSchema,
   debtIdSchema,
@@ -496,7 +499,17 @@ export const debtPaymentRemoveResponseSchema = deleted(debtPaymentIdSchema);
 /* -------------------------------------------------------------------------- */
 
 export const channelSchema = z.enum(["telegram"]);
+/** Scopes a channel identity stores (the user can switch `finance:write` off). */
 export const channelScopeSchema = z.enum(["finance:read", "finance:write"]);
+
+/**
+ * Scope on user routes for the agent store (sessions, messages, pending
+ * actions, history). `channelIdentities.resolve` always grants it, read-only
+ * identities included, so the bot keeps its conversation state.
+ */
+export const AGENT_STATE_SCOPE = "agent:state" as const;
+/** Every scope a user token can carry. */
+export const tokenScopeSchema = z.enum(["finance:read", "finance:write", AGENT_STATE_SCOPE]);
 
 /** Single-use link code: 43 chars of base64url today, Telegram `start`-param safe. */
 export const linkCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{16,64}$/, "Invalid link code");
@@ -541,7 +554,8 @@ export const channelIdentityResolveResponseSchema = z.object({
   token: z.string(),
   /** ISO 8601; mint a new one on the next message rather than caching past this. */
   expiresAt: z.string(),
-  scopes: z.array(channelScopeSchema),
+  /** Scopes of the token: the identity's finance scopes plus `agent:state`. */
+  scopes: z.array(tokenScopeSchema),
   identity: channelIdentitySchema,
   profile: z.object({
     displayName: z.string().optional(),
@@ -555,6 +569,229 @@ export const channelIdentityUnlinkRequestSchema = z.strictObject({
   externalUserId: externalIdSchema,
 });
 export const channelIdentityUnlinkResponseSchema = deleted(channelIdentityIdSchema);
+
+/* -------------------------------------------------------------------------- */
+/*  Agent store: inbound events (service key) and conversation state (token)  */
+/* -------------------------------------------------------------------------- */
+
+/** Largest stored inbound event payload, in UTF-8 bytes. */
+export const AGENT_EVENT_PAYLOAD_MAX_BYTES = 32 * 1024;
+/** Largest stored message `content`, in UTF-8 bytes. */
+export const AGENT_MESSAGE_CONTENT_MAX_BYTES = 32 * 1024;
+/** Largest pending-action `input` / `result`, as serialized JSON bytes. */
+export const AGENT_ACTION_JSON_MAX_BYTES = 16 * 1024;
+/** A session takes at most this many messages; past it `append` returns `conflict`. */
+export const AGENT_SESSION_MAX_MESSAGES = 500;
+export const AGENT_APPEND_MAX_MESSAGES = 20;
+
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
+
+/** A string holding valid JSON, at most `maxBytes` of UTF-8. */
+const jsonString = (maxBytes: number) =>
+  z
+    .string()
+    .refine((text) => utf8Bytes(text) <= maxBytes, `Must be at most ${maxBytes} bytes`)
+    .refine((text) => {
+      try {
+        JSON.parse(text);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "Must be valid JSON");
+
+/** A JSON value whose serialized form is at most `maxBytes`. */
+const boundedJson = <T extends z.ZodType>(schema: T, maxBytes: number) =>
+  schema.refine((value) => utf8Bytes(JSON.stringify(value) ?? "") <= maxBytes, `Must serialize to at most ${maxBytes} bytes`);
+
+/** Platform event id (Telegram `update_id`). */
+const agentEventIdSchema = z.string().regex(/^[A-Za-z0-9_:-]{1,128}$/, "Invalid event id");
+
+export const agentEventStatusSchema = z.enum(["received", "processing", "done", "failed"]);
+
+const agentEventSchema = z.object({
+  channel: channelSchema,
+  eventId: z.string(),
+  status: agentEventStatusSchema,
+  attempts: z.number().int(),
+  error: z.string().optional(),
+  receivedAt: z.string(),
+  updatedAt: z.string(),
+});
+
+/**
+ * First thing the agent does with a platform event, before resolving the
+ * identity: `new` means process it, `duplicate` means drop it (redelivery).
+ * A duplicate that was never finished is picked up by `listRecoverable` on boot.
+ */
+export const agentEventClaimRequestSchema = z.strictObject({
+  channel: channelSchema,
+  eventId: agentEventIdSchema,
+  /** The raw event as JSON, kept so a crashed event can be re-processed. Dropped when the event is `done`. */
+  payload: jsonString(AGENT_EVENT_PAYLOAD_MAX_BYTES),
+});
+export const agentEventClaimResponseSchema = z.object({ status: z.enum(["new", "duplicate"]) });
+
+/**
+ * `processing` counts one attempt. `done` and `failed` are final (`conflict`
+ * on any later update); an unknown event is `not_found`.
+ */
+export const agentEventUpdateStatusRequestSchema = z.strictObject({
+  channel: channelSchema,
+  eventId: agentEventIdSchema,
+  status: z.enum(["processing", "done", "failed"]),
+  error: z.string().max(500).optional(),
+});
+export const agentEventUpdateStatusResponseSchema = z.object({ event: agentEventSchema });
+
+/** Events stuck in `received`/`processing` with no update for `olderThanSeconds`, oldest first. */
+export const agentEventsRecoverableRequestSchema = z.strictObject({
+  channel: channelSchema,
+  olderThanSeconds: queryInt(0, 86_400).default(60),
+  maxAttempts: queryInt(1, 20).default(3),
+  limit: queryInt(1, 50).default(20),
+});
+export const agentEventsRecoverableResponseSchema = z.object({
+  items: z.array(agentEventSchema.extend({ payload: z.string() })),
+});
+
+export const agentMessageRoleSchema = z.enum(["user", "assistant", "tool", "system"]);
+
+export const agentSessionSchema = z.object({
+  id: agentSessionIdSchema,
+  channel: channelSchema,
+  chatId: z.string(),
+  startedAt: z.string(),
+  lastActivityAt: z.string(),
+  endedAt: z.string().optional(),
+  messageCount: z.number().int(),
+});
+
+/**
+ * The active session of a chat. Idle longer than `idleTimeoutMinutes` ends it
+ * and starts a new one (`created: true`); so does `startNew` (use it after
+ * `append` returned `conflict` because the session is full). `channel` and
+ * `chatId` must be the chat the token was resolved for.
+ */
+export const agentSessionCurrentRequestSchema = z.strictObject({
+  channel: channelSchema,
+  chatId: externalIdSchema,
+  idleTimeoutMinutes: z.number().int().min(1).max(10_080),
+  startNew: z.boolean().optional(),
+});
+export const agentSessionCurrentResponseSchema = z.object({ session: agentSessionSchema, created: z.boolean() });
+
+export const agentMessageSchema = z.object({
+  id: agentMessageIdSchema,
+  sessionId: agentSessionIdSchema,
+  role: agentMessageRoleSchema,
+  /** Provider-agnostic JSON, stored as is. */
+  content: z.string(),
+  /** 1-based position in the session. */
+  seq: z.number().int(),
+  createdAt: z.string(),
+});
+
+/** The latest `limit` messages of a session, oldest first. */
+export const agentMessagesListRequestSchema = z.strictObject({
+  sessionId: agentSessionIdSchema,
+  limit: queryInt(1, 200).default(50),
+});
+export const agentMessagesListResponseSchema = z.object({ items: z.array(agentMessageSchema) });
+
+/**
+ * Append in order and bump the session's `lastActivityAt`. `conflict` when the
+ * session ended or the batch would pass the 500-message cap (nothing is stored).
+ */
+export const agentMessagesAppendRequestSchema = z.strictObject({
+  sessionId: agentSessionIdSchema,
+  messages: z
+    .array(
+      z.strictObject({
+        role: agentMessageRoleSchema,
+        content: jsonString(AGENT_MESSAGE_CONTENT_MAX_BYTES),
+      }),
+    )
+    .min(1)
+    .max(AGENT_APPEND_MAX_MESSAGES),
+});
+export const agentMessagesAppendResponseSchema = z.object({ items: z.array(agentMessageSchema) });
+
+/**
+ * Operations a pending action can carry: the user-route writes on finance data.
+ * `routes.test.ts` checks this list against the route map.
+ */
+export const agentActionOperationSchema = z.enum([
+  "accounts.adjust",
+  "transactions.create",
+  "transactions.update",
+  "transactions.delete",
+  "transfers.create",
+  "transfers.update",
+  "transfers.delete",
+  "goalContributions.add",
+  "goalContributions.remove",
+  "debtPayments.record",
+  "debtPayments.remove",
+]);
+
+export const agentActionStatusSchema = z.enum(["pending", "confirmed", "cancelled", "expired", "executed", "failed"]);
+
+export const agentPendingActionSchema = z.object({
+  id: agentPendingActionIdSchema,
+  sessionId: agentSessionIdSchema,
+  operation: agentActionOperationSchema,
+  /** Flat input of the operation, as the finance client takes it. */
+  input: z.record(z.string(), z.json()),
+  /** Human text for the Confirm/Cancel message. */
+  summary: z.string(),
+  status: agentActionStatusSchema,
+  expiresAt: z.string(),
+  result: z.json().optional(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+const agentPendingActionResponse = z.object({ action: agentPendingActionSchema });
+
+/**
+ * `input` is validated against the operation's own request schema, so a button
+ * never leads to an action that can't run. `ttlSeconds` defaults to 10 minutes.
+ */
+export const agentPendingActionCreateRequestSchema = z.strictObject({
+  sessionId: agentSessionIdSchema,
+  operation: agentActionOperationSchema,
+  input: boundedJson(z.record(z.string(), z.json()), AGENT_ACTION_JSON_MAX_BYTES),
+  summary: z.string().trim().min(1).max(500),
+  ttlSeconds: z.number().int().min(30).max(3600).optional(),
+});
+export const agentPendingActionCreateResponseSchema = agentPendingActionResponse;
+
+export const agentPendingActionGetRequestSchema = z.strictObject({ id: agentPendingActionIdSchema });
+export const agentPendingActionGetResponseSchema = agentPendingActionResponse;
+
+/**
+ * Atomic `pending -> confirmed`. Returns the stored operation and input to
+ * execute (use the action id as the `Idempotency-Key`). `conflict` when the
+ * action is not pending or expired (an expired one is marked `expired`).
+ */
+export const agentPendingActionConfirmRequestSchema = z.strictObject({ id: agentPendingActionIdSchema });
+export const agentPendingActionConfirmResponseSchema = agentPendingActionResponse;
+
+/** `pending -> cancelled`. `conflict` in any other state. */
+export const agentPendingActionCancelRequestSchema = z.strictObject({ id: agentPendingActionIdSchema });
+export const agentPendingActionCancelResponseSchema = agentPendingActionResponse;
+
+/** `confirmed -> executed | failed`, with what the operation returned (or its error). */
+export const agentPendingActionCompleteRequestSchema = z.strictObject({
+  id: agentPendingActionIdSchema,
+  status: z.enum(["executed", "failed"]),
+  result: boundedJson(z.json(), AGENT_ACTION_JSON_MAX_BYTES),
+});
+export const agentPendingActionCompleteResponseSchema = agentPendingActionResponse;
+
+/** Delete the user's sessions, messages and pending actions, for every channel. */
+export const agentHistoryDeleteRequestSchema = z.strictObject({});
+export const agentHistoryDeleteResponseSchema = z.object({ deleted: z.literal(true) });
 
 /* -------------------------------------------------------------------------- */
 /*  Inferred types                                                            */
@@ -574,3 +811,8 @@ export type TransactionType = z.output<typeof transactionTypeSchema>;
 export type DebtType = z.output<typeof debtTypeSchema>;
 export type Channel = z.output<typeof channelSchema>;
 export type ChannelIdentity = z.output<typeof channelIdentitySchema>;
+export type TokenScope = z.output<typeof tokenScopeSchema>;
+export type AgentSession = z.output<typeof agentSessionSchema>;
+export type AgentMessage = z.output<typeof agentMessageSchema>;
+export type AgentPendingAction = z.output<typeof agentPendingActionSchema>;
+export type AgentActionOperation = z.output<typeof agentActionOperationSchema>;
