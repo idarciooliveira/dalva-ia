@@ -604,9 +604,13 @@ const MAX_JSON_DEPTH = 12;
 
 /**
  * Free-form JSON travels through Convex function arguments, which reject
- * object keys that are empty or start with `$` or `_`, and deep nesting.
+ * object keys that are empty, start with `$` or `_`, are longer than 1024
+ * characters or hold anything but printable ASCII, and deep nesting.
  * Refuse those up front so they are `validation_failed`, not an internal error.
  */
+const isStorableKey = (key: string) =>
+  key.length > 0 && key.length <= 1024 && !key.startsWith("$") && !key.startsWith("_") && /^[\x20-\x7E]+$/.test(key);
+
 function isStorableJson(value: unknown, depth = 0): boolean {
   if (depth > MAX_JSON_DEPTH) return false;
   if (Array.isArray(value)) return value.every((item) => isStorableJson(item, depth + 1));
@@ -614,7 +618,7 @@ function isStorableJson(value: unknown, depth = 0): boolean {
     const entries = Object.entries(value);
     return (
       entries.length <= 1024 &&
-      entries.every(([key, item]) => key !== "" && !key.startsWith("$") && !key.startsWith("_") && isStorableJson(item, depth + 1))
+      entries.every(([key, item]) => isStorableKey(key) && isStorableJson(item, depth + 1))
     );
   }
   return true;
@@ -624,7 +628,7 @@ function isStorableJson(value: unknown, depth = 0): boolean {
 const boundedJson = <T extends z.ZodType>(schema: T, maxBytes: number) =>
   schema
     .refine((value) => utf8Bytes(JSON.stringify(value) ?? "") <= maxBytes, `Must serialize to at most ${maxBytes} bytes`)
-    .refine(isStorableJson, "Object keys must not be empty or start with $ or _, and nesting must be at most 12 levels");
+    .refine(isStorableJson, "Object keys must be printable ASCII, not start with $ or _, and nesting must be at most 12 levels");
 
 /** Platform event id (Telegram `update_id`). */
 const agentEventIdSchema = z.string().regex(/^[A-Za-z0-9_:-]{1,128}$/, "Invalid event id");

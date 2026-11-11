@@ -696,6 +696,15 @@ describe("agentPendingActions", () => {
       body: { status: "failed", result: { _bad: true } },
     });
     expect(complete.status).toBe(400);
+    const accented = await raw(t, "POST", `/agent/pending-actions/${action.id}/complete`, {
+      token: chat.token,
+      body: { status: "failed", result: { descrição: "x" } },
+    });
+    expect(accented.status).toBe(400);
+    // Nesting deep enough to overflow the validator's stack is a 400, not a 500.
+    const deep = `{"status":"failed","result":${"[".repeat(30_000)}${"]".repeat(30_000)}}`;
+    const nested = await raw(t, "POST", `/agent/pending-actions/${action.id}/complete`, { token: chat.token, rawBody: deep });
+    expect({ status: nested.status, code: nested.body.error?.code }).toEqual({ status: 400, code: "validation_failed" });
     expect((await chat.agent.agentPendingActions.get({ id: action.id })).action.status).toBe("confirmed");
   });
 

@@ -103,7 +103,15 @@ describe("agent pending actions", () => {
   });
 
   it("rejects JSON keys Convex can't store (leading $ or _, empty) at any depth", () => {
-    for (const input of [{ $set: 1 }, { _id: "x" }, { "": 1 }, { a: { b: [{ $c: 1 }] } }]) {
+    for (const input of [
+      { $set: 1 },
+      { _id: "x" },
+      { "": 1 },
+      { a: { b: [{ $c: 1 }] } },
+      { descrição: 1 }, // Convex field names are printable ASCII
+      { "tab\there": 1 },
+      { ["k".repeat(1025)]: 1 },
+    ]) {
       expect(ok(agentPendingActionCreateRequestSchema, { ...create, input }), JSON.stringify(input)).toBe(false);
     }
     expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: { details: { _x: 1 } } })).toBe(false);

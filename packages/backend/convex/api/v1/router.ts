@@ -160,7 +160,13 @@ async function sha256Hex(text: string): Promise<string> {
 }
 
 function parseInput(match: RouteMatch, source: URLSearchParams | Record<string, unknown> | undefined) {
-  const parsed = match.route.request.safeParse(mergeRequestInput(match, source));
+  let parsed: ReturnType<typeof match.route.request.safeParse>;
+  try {
+    parsed = match.route.request.safeParse(mergeRequestInput(match, source));
+  } catch {
+    // A validator can still throw on pathological input (e.g. nesting deep enough to overflow the stack).
+    throw new HttpError("validation_failed", "Request validation failed");
+  }
   if (!parsed.success) {
     throw new HttpError("validation_failed", "Request validation failed", validationIssues(parsed.error));
   }
