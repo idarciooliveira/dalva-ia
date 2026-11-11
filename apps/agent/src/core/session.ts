@@ -63,20 +63,20 @@ export class SessionRecorder {
    * remainder once in a fresh session, which can split a turn that spans
    * batches (history loading drops the orphaned half).
    */
-  async recordAll(messages: StoredMessage[]): Promise<void> {
+  async recordAll(messages: StoredMessage[], signal?: AbortSignal): Promise<void> {
     if (messages.length === 0) return;
     try {
-      let session = await this.session();
-      if (session.messageCount + messages.length > AGENT_SESSION_MAX_MESSAGES) session = await this.session(true);
+      let session = await this.session(false, signal);
+      if (session.messageCount + messages.length > AGENT_SESSION_MAX_MESSAGES) session = await this.session(true, signal);
       let retried = false;
       for (let start = 0; start < messages.length; ) {
         const batch = messages.slice(start, start + AGENT_APPEND_MAX_MESSAGES);
         try {
-          await this.finance.agentMessages.append({ sessionId: session.id, messages: batch });
+          await this.finance.agentMessages.append({ sessionId: session.id, messages: batch }, { signal });
         } catch (error) {
           if (retried || !isFinanceError(error, "conflict", "not_found")) throw error;
           retried = true;
-          session = await this.session(true);
+          session = await this.session(true, signal);
           continue;
         }
         session.messageCount += batch.length;

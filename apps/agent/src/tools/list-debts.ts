@@ -8,7 +8,7 @@ const MAX_DEBTS = 30;
 export const listDebts = (context: ToolContext) =>
   tool({
     description:
-      "List the user's debts (loans, credit cards, mortgages...) with remaining balance, original amount, minimum payment and due date, plus totals: original, remaining and the most recent payment.",
+      "List the user's debts (loans, credit cards, mortgages...) with remaining balance, original amount, minimum payment and due date, plus `activeSummary`: totals over active (non-archived) debts only, which can differ from the list when archived debts are included.",
     inputSchema: z.object({ includeArchived: includeArchivedInput }),
     execute: ({ includeArchived }) =>
       guarded(context, async () => {
@@ -41,7 +41,8 @@ export const listDebts = (context: ToolContext) =>
               archived: debt.archived || undefined,
             }),
           ),
-          summary,
+          activeSummary: summary,
+          activeSummaryNote: includeArchived ? "Totals cover active debts only; archived debts in the list are not included." : undefined,
           truncated: truncated || undefined,
         });
       }),

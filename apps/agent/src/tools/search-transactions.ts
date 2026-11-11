@@ -2,7 +2,20 @@ import type { Transaction } from "@mpf/finance-contract";
 import { tool } from "ai";
 import { z } from "zod";
 
-import { call, clip, compact, dateInput, guarded, idInput, money, NAME_MAX, type ToolContext } from "./shared";
+import {
+  call,
+  clip,
+  compact,
+  dateInput,
+  FATAL_CODES,
+  guarded,
+  idInput,
+  isFinanceError,
+  money,
+  NAME_MAX,
+  toToolError,
+  type ToolContext,
+} from "./shared";
 
 export const SEARCH_MAX_LIMIT = 20;
 const DEFAULT_LIMIT = 10;
@@ -23,10 +36,15 @@ export const searchTransactions = (context: ToolContext) =>
     execute: (input) =>
       guarded(context, async () => {
         const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_LIMIT), SEARCH_MAX_LIMIT);
-        // Names make the answer readable without extra tool calls; best effort.
+        // Names make the answer readable without extra tool calls; best effort, except
+        // refusals (revoked link, rate limit), which must still end the turn.
+        const lookup = (error: unknown) => {
+          if (isFinanceError(error, ...FATAL_CODES)) toToolError(error, context);
+          return { items: [] };
+        };
         const names = Promise.all([
-          context.finance.accounts.list({ includeArchived: true }, call(context)).catch(() => ({ items: [] })),
-          context.finance.categories.list({ includeArchived: true }, call(context)).catch(() => ({ items: [] })),
+          context.finance.accounts.list({ includeArchived: true }, call(context)).catch(lookup),
+          context.finance.categories.list({ includeArchived: true }, call(context)).catch(lookup),
         ]);
         const { items, nextCursor } = await context.finance.transactions.search(
           compact({

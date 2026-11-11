@@ -120,7 +120,8 @@ describe("read tools", () => {
     const goals = await run("list_goals");
     expect(goals.goals[0]).toMatchObject({ name: "Carro", percent: 31, target: { amount: "4000000.00" } });
     const debts = await run("list_debts");
-    expect(debts.summary).toMatchObject({ totalRemaining: { amount: "2185400.00", currency: "AOA" } });
+    expect(debts.activeSummary).toMatchObject({ totalRemaining: { amount: "2185400.00", currency: "AOA" } });
+    expect(debts.activeSummaryNote).toBeUndefined();
     expect(debts.debts[0]).toMatchObject({ name: "Crédito automóvel", lender: "BFA", balance: { amount: "2000000.00" } });
   });
 
@@ -150,7 +151,7 @@ describe("read tools", () => {
     finance.fail("GET /reports/debt-summary", "conflict", 1, { reason: "mixed_currencies", currencies: ["AOA", "USD"] });
     const result = await run("list_debts");
     expect(result.debts).toHaveLength(2);
-    expect(result.summary).toMatchObject({ error: "mixed_currencies" });
+    expect(result.activeSummary).toMatchObject({ error: "mixed_currencies" });
   });
 
   test("auth and rate-limit errors are fatal: reported to the turn, not to the model", async () => {
@@ -162,6 +163,45 @@ describe("read tools", () => {
       expect(fatal).toHaveLength(1);
       expect(fatal[0]).toMatchObject({ code });
     }
+  });
+
+  test("debt totals are labelled as active-only when archived debts are listed", async () => {
+    const { run, finance } = setup();
+    finance.reads.set("/debts", {
+      items: [
+        { id: "debt_old", name: "Old loan", debtType: "loan", originalAmount: { amountMinor: 100, currency: "AOA" }, currentBalance: { amountMinor: 0, currency: "AOA" }, archived: true, createdAt: "2024-01-01" },
+      ],
+    });
+    const result = await run("list_debts", { includeArchived: true });
+    expect(result.debts).toEqual([expect.objectContaining({ name: "Old loan", archived: true })]);
+    expect(result.summary).toBeUndefined();
+    expect(result.activeSummary).toMatchObject({ totalRemaining: { amount: "2185400.00" } });
+    expect(result.activeSummaryNote).toMatch(/active debts only/);
+  });
+
+  test("search_transactions: a refused name lookup still ends the turn; other lookup failures are tolerated", async () => {
+    const refused = setup();
+    refused.finance.fail("GET /categories", "unauthorized");
+    await refused.run("search_transactions", { type: "expense" });
+    expect(refused.fatal).toEqual([expect.objectContaining({ code: "unauthorized" })]);
+
+    const flaky = setup();
+    flaky.finance.fail("GET /categories", "internal");
+    const result = await flaky.run("search_transactions", { text: "yango" });
+    expect(flaky.fatal).toHaveLength(0);
+    expect(result.transactions[0]).toMatchObject({ account: "Carteira", category: "cat_transport" });
+  });
+
+  test("list_categories flags categories whose subcategories were cut", async () => {
+    const { run, finance } = setup();
+    const many = Array.from({ length: 20 }, (_, i) => ({ id: `sub_x${i}`, categoryId: "cat_fun", name: `Sub ${i}`, archived: false, sortOrder: i }));
+    finance.reads.set("/subcategories", { items: many });
+    const result = await run("list_categories");
+    const fun = result.categories.find((c: any) => c.id === "cat_fun");
+    expect(fun.subcategories).toHaveLength(15);
+    expect(fun.subcategoriesTruncated).toBe(true);
+    expect(result.categories.find((c: any) => c.id === "cat_food").subcategoriesTruncated).toBeUndefined();
+    expect(result.truncated).toBe(true);
   });
 
   test("lists are bounded", async () => {

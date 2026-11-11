@@ -40,6 +40,8 @@ export interface AgentTurnInput {
   finance: FinanceClient;
   /** Shows the typing indicator; called repeatedly while the turn runs. */
   typing?: () => Promise<void>;
+  /** Sends the answer. Called before the turn is stored, so a slow or failed store never delays or loses the reply. */
+  reply?: (text: string) => Promise<void>;
 }
 
 export interface AgentTurnResult {
@@ -173,11 +175,16 @@ export function createAgent(options: AgentOptions): Agent {
         ms: Date.now() - started,
       });
 
-      await input.session.recordAll([
-        encodeUserText(input.text),
-        ...encodeResponseMessages(result.responseMessages),
-        ...(modelText ? [] : [encodeAssistantText(text)]),
-      ]);
+      stopTyping();
+      await input.reply?.(text);
+
+      // Best effort, after the reply: a failed or aborted store only loses this turn's history.
+      // Bounded by shutdown (and the client's per-request timeout), not by the turn deadline,
+      // so a turn that answered close to its limit is still stored.
+      await input.session.recordAll(
+        [encodeUserText(input.text), ...encodeResponseMessages(result.responseMessages), ...(modelText ? [] : [encodeAssistantText(text)])],
+        options.stopSignal,
+      );
 
       return { text, steps: result.steps.length, toolCalls, usage };
     } catch (error) {

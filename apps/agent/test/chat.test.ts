@@ -5,12 +5,12 @@ import { createHandler } from "../src/core/handler";
 import { createPipeline } from "../src/core/pipeline";
 import { createRateLimiter } from "../src/core/rate-limit";
 import { seedFinance } from "./fixtures/finance";
-import { captureLogger, fakeFinance, fixture, telegramAdapter, textUpdate } from "./helpers";
+import { captureLogger, fakeFinance, fixture, telegramAdapter, textUpdate, waitFor } from "./helpers";
 import { scriptedModel, type MockStep } from "./mock-model";
 
 const USER = "424242";
 
-function setup(steps: MockStep[], limits: { turns?: number; maxChars?: number } = {}) {
+function setup(steps: MockStep[], limits: { turns?: number; maxChars?: number; stopSignal?: AbortSignal } = {}) {
   const { logger, lines } = captureLogger();
   const { adapter, telegram } = telegramAdapter(logger);
   const finance = fakeFinance();
@@ -18,7 +18,7 @@ function setup(steps: MockStep[], limits: { turns?: number; maxChars?: number } 
   finance.link(USER, { displayName: "Ana" });
   const model = scriptedModel(steps);
   let clock = 0;
-  const agent = createAgent({ model, maxSteps: 4, turnTimeoutMs: 5_000, timezone: "Africa/Luanda", logger });
+  const agent = createAgent({ model, maxSteps: 4, turnTimeoutMs: 5_000, timezone: "Africa/Luanda", logger, stopSignal: limits.stopSignal });
   const limiter = createRateLimiter({ limit: limits.turns ?? 20, windowMs: 10 * 60_000, now: () => clock });
   const { handle, onFailure, accept } = createHandler({
     adapter,
@@ -53,6 +53,22 @@ describe("chat", () => {
     expect(lastReply()).toBe("Gastaste 42 450,00 AOA em Alimentação &lt;este mês&gt;.");
     expect(telegram.actions.some((a) => a.action === "typing")).toBe(true);
     expect(finance.events.get("5000")!.status).toBe("done");
+  });
+
+  test("the reply goes out before the turn is stored; a store stalled at shutdown is aborted and the event still completes", async () => {
+    const stop = new AbortController();
+    const { run, lastReply, finance, lines } = setup([{ text: "Tens 845 320,50 AOA." }], { stopSignal: stop.signal });
+    const release = finance.hold("POST /agent/sessions/sess_1/messages");
+    const pending = run("saldo?");
+    await waitFor(() => lastReply() === "Tens 845 320,50 AOA.");
+    expect(finance.messages).toHaveLength(0);
+    stop.abort(new Error("shutdown"));
+    await pending;
+    release();
+    expect(finance.events.get("5000")!.status).toBe("done");
+    expect(finance.messages).toHaveLength(0);
+    expect(lines.some((line) => line.includes('"msg":"session_record_failed"'))).toBe(true);
+    expect(lines.some((line) => line.includes('"msg":"event_failed"'))).toBe(false);
   });
 
   test("commands keep working without the model", async () => {

@@ -22,22 +22,24 @@ export const listCategories = (context: ToolContext) =>
         ]);
         const visible = categories.items.filter((c) => (!type || c.type === type) && (archived || !c.archived));
         const { items, truncated } = bounded(visible, MAX_CATEGORIES);
+        let subcategoriesCut = false;
         return compact({
           categories: items.map((category) => {
-            const subs = subcategories.items
+            const all = subcategories.items
               .filter((sub) => sub.categoryId === category.id && (archived || !sub.archived))
-              .sort((a, b) => a.sortOrder - b.sortOrder)
-              .slice(0, MAX_SUBCATEGORIES)
-              .map((sub) => ({ id: sub.id, name: clip(sub.name, NAME_MAX) }));
+              .sort((a, b) => a.sortOrder - b.sortOrder);
+            const subs = all.slice(0, MAX_SUBCATEGORIES).map((sub) => ({ id: sub.id, name: clip(sub.name, NAME_MAX) }));
+            if (all.length > MAX_SUBCATEGORIES) subcategoriesCut = true;
             return compact({
               id: category.id,
               name: clip(category.name, NAME_MAX),
               type: category.type,
               archived: category.archived || undefined,
               subcategories: subs,
+              subcategoriesTruncated: all.length > MAX_SUBCATEGORIES || undefined,
             });
           }),
-          truncated: truncated || undefined,
+          truncated: truncated || subcategoriesCut || undefined,
         });
       }),
   });

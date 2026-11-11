@@ -96,14 +96,14 @@ export function createHandler(options: HandlerOptions): {
       await reply(event, texts.chatRateLimited());
       return;
     }
-    const result = await chat.agent.runAgentTurn({
+    await chat.agent.runAgentTurn({
       text,
       session: new SessionRecorder(user.finance, event, options.sessionIdleMinutes, log),
       userContext: { displayName: user.displayName, baseCurrency: user.baseCurrency },
       finance: user.finance,
       typing: () => adapter.send({ chatId: event.chatId }, { type: "typing" }),
+      reply: (answer) => reply(event, answer),
     });
-    await reply(event, result.text);
   }
 
   /** Commands for a linked user. `record: false` for commands that delete the history they'd be stored in. */

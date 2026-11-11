@@ -67,7 +67,10 @@ export const monthInput = contractMonthSchema.describe("Calendar month YYYY-MM. 
 export const includeArchivedInput = z.boolean().optional().describe("Include archived items. Default false.");
 
 /** Errors that end the whole turn: the handler answers them (relink, wait). */
-const FATAL_CODES = new Set(["unauthorized", "forbidden", "rate_limited"]);
+export const FATAL_CODES = ["unauthorized", "forbidden", "rate_limited"];
+
+export const isFinanceError = (error: unknown, ...codes: string[]): error is FinanceApiError =>
+  error instanceof FinanceApiError && codes.includes(error.code);
 const UNAVAILABLE_CODES = new Set(["network_error", "timeout", "aborted", "internal", "invalid_response"]);
 
 function conflictDetails(error: FinanceApiError): { reason?: string; currencies?: string[] } {
@@ -81,7 +84,7 @@ function conflictDetails(error: FinanceApiError): { reason?: string; currencies?
 /** Finance API error -> a result the model can read and explain. Fixed wording: server messages never reach the model unfiltered. */
 export function toToolError(error: unknown, context: Pick<ToolContext, "onFatal">): ToolError {
   if (!(error instanceof FinanceApiError)) return { error: "internal", message: "Unexpected error while reading the data." };
-  if (FATAL_CODES.has(error.code)) {
+  if (FATAL_CODES.includes(error.code)) {
     context.onFatal(error);
     return { error: error.code, message: "Access to the user's data was refused. Stop and do not retry." };
   }
