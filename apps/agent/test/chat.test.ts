@@ -39,7 +39,7 @@ function setup(steps: MockStep[], limits: { turns?: number; maxChars?: number; s
     await p.shutdown(5000);
   };
   const lastReply = () => telegram.sent[telegram.sent.length - 1]?.html ?? "";
-  return { finance, telegram, model, run, runUpdate, lastReply, lines, advance: (ms: number) => (clock += ms) };
+  return { finance, telegram, model, run, runUpdate, lastReply, lines, handle, adapter, advance: (ms: number) => (clock += ms) };
 }
 
 describe("chat", () => {
@@ -171,3 +171,48 @@ describe("rate limiter", () => {
     expect(limiter.size).toBeLessThanOrEqual(1);
   });
 });
+
+describe("chat: proposing a change", () => {
+  const create = { type: "expense", amount: "5000", accountId: "acc_bai", categoryId: "cat_food", subcategoryId: "sub_rest", language: "pt" };
+  const summary = "Despesa · 5 000,00 AOA · Alimentação › Restaurantes · BAI Conta Ordem · hoje";
+
+  test("the turn ends with a Confirm/Cancel message; pressing Confirm saves it and edits that message", async () => {
+    const { run, runUpdate, telegram, finance } = setup([
+      { tools: [{ name: "create_transaction", input: create }] },
+      { text: "Confirma abaixo para guardar." },
+    ]);
+    await run("gastei 5000 kz no almoço hoje");
+    const confirm = telegram.sent.at(-1)!;
+    expect(confirm.html).toBe(`Confirma abaixo para guardar.\n\n<b>${summary}</b>`);
+    const buttons = (confirm.replyMarkup as { inline_keyboard: Array<Array<{ callback_data: string }>> }).inline_keyboard.flat();
+    expect(buttons.map((b) => b.callback_data)).toEqual(["c:action_1", "x:action_1"]);
+    expect(finance.writes).toHaveLength(0);
+
+    await runUpdate({
+      update_id: 6000,
+      callback_query: {
+        id: "cb1",
+        from: { id: Number(USER), is_bot: false, first_name: "Ana" },
+        message: { message_id: telegram.sent.length, date: 1, chat: { id: Number(USER), type: "private" } },
+        chat_instance: "1",
+        data: "c:action_1",
+      },
+    });
+    expect(finance.writes).toEqual([expect.objectContaining({ operation: "transactions.create", idempotencyKey: "action_1" })]);
+    expect(telegram.edited.at(-1)).toMatchObject({ messageId: telegram.sent.length, html: `<b>✅ Guardado</b>\n${summary}` });
+  });
+
+  test("a replayed turn whose change was already saved shows that, without buttons", async () => {
+    const proposal = { tools: [{ name: "create_transaction", input: create }] };
+    const { telegram, finance, handle, adapter } = setup([proposal, { text: "Confirma." }, proposal, { text: "Pronto." }]);
+    const event = adapter.parse(textUpdate(7000, "gastei 5000 no almoço"))!;
+    await handle(event);
+    expect(telegram.sent.at(-1)!.replyMarkup).toBeDefined();
+    finance.actions[0]!.status = "executed";
+    await handle(event); // boot recovery replays the same event
+    expect(finance.actions).toHaveLength(1);
+    expect(telegram.sent.at(-1)!.replyMarkup).toBeUndefined();
+    expect(telegram.sent.at(-1)!.html).toBe(`Pronto.\n\n<b>✅ Já guardado</b>\n${summary}`);
+  });
+});
+

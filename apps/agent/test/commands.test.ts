@@ -381,13 +381,24 @@ describe("chats and buttons", () => {
     expect(finance.callsTo("/channel-links/redeem")).toHaveLength(0);
   });
 
-  test("button presses are acknowledged only", async () => {
+  test("a press on an unknown action edits the message to say it's gone, and runs nothing", async () => {
     const { finance, runUpdate, telegram } = setup();
     finance.link(USER);
     await runUpdate(fixture("callback-query"));
-    expect(telegram.answered).toEqual([{ id: "4382bfdwdsb323b2d9", text: "This action isn't available yet." }]);
-    expect(telegram.sent).toHaveLength(0);
-    expect(finance.callsTo("/agent/pending-actions")).toHaveLength(0);
+    expect(finance.callsTo("/agent/pending-actions/k17abc_def-123/confirm")).toHaveLength(1);
+    expect(telegram.answered).toEqual([{ id: "4382bfdwdsb323b2d9", text: "This action is no longer available." }]);
+    expect(telegram.edited).toEqual([expect.objectContaining({ messageId: 13, html: "This action is no longer available." })]);
+    expect(finance.writes).toHaveLength(0);
+  });
+
+  test("a press in a group is answered and never resolved", async () => {
+    const { finance, runUpdate, telegram } = setup();
+    finance.link(USER);
+    const update = fixture("callback-query");
+    update.callback_query.message.chat = { id: -100123, type: "supergroup" };
+    await runUpdate(update);
+    expect(finance.callsTo("/channel-identities/resolve")).toHaveLength(0);
+    expect(telegram.answered).toHaveLength(1);
   });
 });
 

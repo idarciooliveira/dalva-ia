@@ -61,22 +61,50 @@ Polling (dev only) takes one update at a time and moves its offset past an updat
 
 **Boot:** before any intake, `listRecoverable` re-processes events a dead process left unfinished, sorted per chat by arrival (`InboundEvent.sequence`, Telegram's `update_id`; the backend lists by last update), and waits for them to finish. Recovered events skip the live queues (intake is closed): one at a time per chat, 4 chats at a time, paging until the list is empty or holds only events this boot already ran. Events older than `RECOVERY_MAX_AGE_SECONDS` are not replayed: they're marked `failed` (`stale`) and each private chat gets one "I restarted and missed your recent message(s). Please send it again." If the backend is unreachable, boot fails and the container restarts. **Shutdown:** SIGTERM closes intake (and stops recovery from starting more events), then waits for running recovery work and the queues, together bounded at 8s, under Docker's default 10s stop timeout.
 
-**Known edge case (accepted):** an event that was already handled but whose final status update failed 3 times stays recoverable. If the bot restarts within `RECOVERY_MAX_AGE_SECONDS`, it is replayed: the user gets a duplicate reply, and if they sent `/forget` in between, the replayed message is recorded again in a fresh session. It needs a backend failure on the status call plus a restart inside the window; commands are read-only or idempotent, and writes (pending actions) carry idempotency keys.
+**Known edge case (accepted):** an event that was already handled but whose final status update failed 3 times stays recoverable. If the bot restarts within `RECOVERY_MAX_AGE_SECONDS`, it is replayed: the user gets a duplicate reply, and if they sent `/forget` in between, the replayed message is recorded again in a fresh session. It needs a backend failure on the status call plus a restart inside the window; commands are read-only or idempotent, a replayed turn finds its pending action by `clientKey` instead of creating a second one, and confirmed writes carry the action id as `Idempotency-Key`.
 
-Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Plain text goes to the agent; photos get a "not supported yet" reply. Confirm/cancel buttons are only acknowledged. Replies over Telegram's 4096-character limit are split at line breaks.
+Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Plain text goes to the agent; photos get a "not supported yet" reply. Button presses run or cancel a proposed change (below). Replies over Telegram's 4096-character limit are split at line breaks.
 
 ## Chat agent
 
-Read-only in this release. `src/core/agent.ts` runs one turn per text message:
+`src/core/agent.ts` runs one turn per text message:
 
 1. Over 2000 characters, or over the per-user rate limit (in memory): a fixed reply, nothing stored, no model call.
-2. Load the last 30 messages of the chat's session (trimmed to 24 KB at turn boundaries, newest turn always kept, with a cache breakpoint at its end), add the user message with a short context block (today in `DEFAULT_TIMEZONE`, base currency, display name), call the model with the read tools and `AGENT_MAX_STEPS`. The last step can't call tools, so a turn always ends with text. Typing indicator while it runs.
-3. Send the reply, then store the turn (user, assistant tool calls, tool results, answer). Storing is best effort and bounded by shutdown, not the turn deadline: a failed or aborted store is logged, the event still completes, and only that turn's history is lost (never a second paid turn from recovery). A turn that won't fit the session's 500 messages starts a new session first.
+2. Load the last 30 messages of the chat's session (trimmed to 24 KB at turn boundaries, newest turn always kept, with a cache breakpoint at its end), add a context message (today in `DEFAULT_TIMEZONE`, access: read-only or may propose changes, base currency, display name) and then the user's message as its own message, call the model with the tools and `AGENT_MAX_STEPS`. The last step can't call tools, so a turn always ends with text. Typing indicator while it runs.
+3. Send the reply (a Confirm/Cancel message when the turn proposed a change), then store the turn (user, assistant tool calls, tool results, answer). Storing is best effort and bounded by shutdown, not the turn deadline: a failed or aborted store is logged, the event still completes, and only that turn's history is lost (never a second paid turn from recovery). A turn that won't fit the session's 500 messages starts a new session first.
 4. Model or provider error, timeout: the event fails and the user gets the generic apology. One abort signal covers the turn (history load, model calls, tool API calls), fired by the timeout, a fatal tool error or shutdown (turns still running 5s into the drain). A revoked link or Finance API rate limit inside a tool ends the turn with the same replies as commands.
 
 **Providers.** `src/llm/` is the only place that imports a provider (`@ai-sdk/gateway`, `@openrouter/ai-sdk-provider`); the rest uses the AI SDK's `LanguageModel` (`ai`). A boundary test enforces it. The system prompt (`src/core/prompts/system.md`, bundled as text) never changes between turns and carries a cache breakpoint, so providers can cache it.
 
-**Tools** (`src/tools/`, one file each): `list_accounts`, `list_categories`, `search_transactions` (max 20 rows), `get_transaction_summary`, `get_spending_by_category`, `get_cashflow`, `get_net_worth`, `list_goals`, `list_debts`. They call the Finance API with the user-scoped token from `resolve`, held inside the client: tokens and user ids never appear in the prompt, tool schemas or tool inputs. Results are compact JSON with amounts as `{ amount: "12.50", currency }`; every list is bounded. `list_debts` reports `activeSummary` (non-archived debts only) and `list_categories` flags cut subcategories. API errors come back as `{ error, message }` with fixed wording (`mixed_currencies` explains that reports across currencies aren't supported yet).
+**Read tools** (`src/tools/`, one file each): `list_accounts`, `list_categories`, `search_transactions` (max 20 rows), `get_transaction_summary`, `get_spending_by_category`, `get_cashflow`, `get_net_worth`, `list_goals`, `list_debts`. They call the Finance API with the user-scoped token from `resolve`, held inside the client: tokens and user ids never appear in the prompt, tool schemas or tool inputs. Results are compact JSON with amounts as `{ amount: "12.50", currency }`; every list is bounded. `list_debts` reports `activeSummary` (non-archived debts only) and `list_categories` flags cut subcategories. API errors come back as `{ error, message }` with fixed wording (`mixed_currencies` explains that reports across currencies aren't supported yet).
+
+### Changes (write tools)
+
+Offered only when the identity has `finance:write` (`resolve` scopes, checked every message); read-only chats get the read tools and a context line telling the model to explain how to allow changes.
+
+`create_transaction` (income/expense), `update_transaction`, `delete_transaction`, `create_transfer`, `delete_transfer`, `add_goal_contribution`, `record_debt_payment`. None of them calls a write route. Each one:
+
+1. Resolves what it needs with the user's token: the account (its currency), category/subcategory (exist, active, matching type, subcategory under its category), the current row for edits and deletes (`transactions.get`; transfer legs, goal-contribution and debt-payment rows are refused with a pointer to the right tool or the app), goal or debt.
+2. Converts the model's decimal string (`"5000"`, `"12.50"`) with `parseDecimalAmount` in that currency. More decimals than the currency has, zero, signs, separators, or a currency the user named that isn't the account's fail here: no rounding, no conversion.
+3. Checks the full request against the contract's request schema, so bad input fails at proposal time, not after Confirm.
+4. Builds the summary in code from the validated input and the looked-up names, in the language the model passes (`pt`/`en`): `Despesa · 5 000,00 AOA · Alimentação › Restaurantes · BAI Conta Ordem · hoje`. The model never writes it.
+5. Calls `agentPendingActions.create` with `clientKey = <eventId>:0` and returns `{ status: "awaiting_confirmation", summary }` (no action id) to the model.
+
+One proposal per turn: the first takes the turn's slot (synchronously, so parallel calls can't both get it), the others get `one_at_a_time`; a proposal that fails validation gives the slot back. After a proposal the next step is forced to answer in text. The reply goes out as one message: the model's line, the summary in bold, Confirm/Cancel buttons (`c:<id>` / `x:<id>`).
+
+**Replays.** Boot recovery can re-run a turn that already sent its buttons. The same `clientKey` returns the existing action: still `pending`, the Confirm message is sent again (either copy works, the second press is a no-op); anything else (`executed`, `cancelled`, `expired`, ...), the chat gets its state and no buttons.
+
+**Button lifecycle** (`src/core/actions.ts`). The press resolves the user from the chat it came from; the backend only finds actions of that token's user and chat identity, so a forged or replayed payload from another chat is `not_found` ("no longer available").
+
+- Confirm: `confirm` (atomic `pending -> confirmed`) → run the stored operation with `Idempotency-Key = action.id` → `complete(executed | failed, result)` → edit the original message to `✅ Saved` / `❌ Not saved` + reason, buttons removed → answer the press.
+- Ambiguous execution (network, timeout, abort, 5xx) is retried with the same key up to 3 times; the API replays a write it already did. Still unknown: `failed` with `uncertain: true`, and the user is told to check DALVA before trying again.
+- `conflict` on confirm: `get`. `confirmed` (an earlier crash or lost reply): run it again with the same key and complete. `executed` / `failed` / `cancelled` / `expired`: edit the message to say so. A double press never runs twice.
+- `forbidden` (read-only switched on since the proposal): "this chat is read-only now"; the action stays pending and expires.
+- Cancel: `cancel` → "Cancelled", buttons removed; on `conflict` the current state.
+- Each outcome is appended to the session as an assistant note (`[Confirm button] ✅ Saved …`), so the model knows on the next turn.
+- The message ref is the callback's own message (kept in the stored payload), so edits survive restarts; when an edit fails, the result is sent as a new message.
+
+Execution isn't bound to the turn timeout or the shutdown signal: once confirmed, it runs to an outcome under the client's per-request timeout.
 
 **History format** (`src/core/history.ts`): provider-agnostic JSON with a version field `v` (text, tool calls, JSON tool results; no provider metadata or reasoning), so switching provider keeps old history usable. Unversioned records from before the agent load as v1; newer versions are skipped; tool calls without results are dropped on load.
 
@@ -89,7 +117,7 @@ AGENT_MODEL=anthropic/claude-sonnet-5-5 AI_GATEWAY_API_KEY=... bun run eval   # 
 bun run eval 3                                                                # one case
 ```
 
-About 20 Portuguese and English messages against the real model, with a fake Finance API serving `test/fixtures/finance.ts`. Checks the tool(s) and key arguments, prints pass/fail and token totals. Not in CI; skipped without a key.
+About 30 Portuguese and English messages against the real model, with a fake Finance API serving `test/fixtures/finance.ts`: reads, 10 writes (expense, salary, transfer, delete after a search, edit, goal, debt payment, an ambiguous account that must be asked about, a cross-currency transfer that must be refused) and a read-only chat. Checks the tool(s) and key arguments, whether a change is left waiting for confirmation, that no turn writes, and prints pass/fail and token totals. Not in CI; skipped without a key.
 
 ## Logs
 

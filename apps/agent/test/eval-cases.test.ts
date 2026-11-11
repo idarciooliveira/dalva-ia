@@ -1,12 +1,14 @@
 import { describe, expect, test } from "vitest";
 
 import { cases, matches } from "../eval/cases";
-import { READ_TOOL_NAMES } from "../src/tools";
+import { READ_TOOL_NAMES, WRITE_TOOL_NAMES } from "../src/tools";
 
 describe("eval cases", () => {
-  test("about 20 cases, every expected tool exists", () => {
-    expect(cases.length).toBeGreaterThanOrEqual(20);
-    const names = new Set<string>(READ_TOOL_NAMES);
+  test("about 30 cases (10 writes), every expected tool exists", () => {
+    expect(cases.length).toBeGreaterThanOrEqual(30);
+    expect(cases.filter((c) => c.proposes !== undefined).length).toBeGreaterThanOrEqual(10);
+    expect(cases.some((c) => c.readOnly)).toBe(true);
+    const names = new Set<string>([...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]);
     for (const testCase of cases) for (const requirement of testCase.expect) for (const alt of requirement) expect(names.has(alt.tool)).toBe(true);
   });
 

@@ -46,6 +46,11 @@ export class SessionRecorder {
     await this.recordAll([encodeAssistantText(plainText(text))]);
   }
 
+  /** Id of the chat's current session (pending actions belong to it). */
+  async sessionId(signal?: AbortSignal): Promise<string> {
+    return (await this.session(false, signal)).id;
+  }
+
   /**
    * The latest `limit` messages of the chat's current session, oldest first.
    * Throws on API errors: the agent can't answer without its context.
