@@ -30,7 +30,7 @@ Transfer legs, goal-contribution transfers and debt-payment transactions show up
 
 ## `transactions.search`
 
-- Newest first (`date`, then creation order). Keyset cursor over the most selective index: account > category > type > user, date range always in the index range.
+- Newest first (`date`, then creation order). Keyset cursor (rows tied on creation time are tracked by id) over the most selective index: account > category > type > user, date range always in the index range.
 - `q`: case-insensitive substring of description, note or payee, checked on scanned rows.
 - Each page reads at most 1000 rows. Sparse filters or `q` can return a short or empty page with a non-null `nextCursor`; keep paging until it is null. No full-text index: it would order by relevance, not date, and cover one field.
 

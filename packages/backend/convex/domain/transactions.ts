@@ -475,13 +475,19 @@ export async function getCashflow(
 export const SEARCH_SCAN_LIMIT = 1000;
 
 /**
- * Last row read: its `date` and `_creationTime`, plus how many rows sharing
- * exactly that position were already read (`_creationTime` is not unique).
+ * Last row read: its `date` and `_creationTime`, plus the rows already read at
+ * exactly that position (`_creationTime` is not guaranteed unique). `seen` holds
+ * their ids, so deleting or moving one of them between pages can't make the
+ * next page skip another; past `MAX_TIE_IDS` (cursor size cap) it degrades to
+ * a count.
  */
-export type SearchPosition = { date: string; creationTime: number; tie: number };
+export type SearchPosition = { date: string; creationTime: number; seen: string[] | number };
+
+const MAX_TIE_IDS = 6;
+const CURSOR_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 
 function encodeSearchCursor(position: SearchPosition): string {
-  return btoa(JSON.stringify([position.date, position.creationTime, position.tie]))
+  return btoa(JSON.stringify([position.date, position.creationTime, position.seen]))
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
@@ -496,10 +502,13 @@ export function decodeSearchCursor(cursor: string): SearchPosition {
       typeof value[0] === "string" &&
       typeof value[1] === "number" &&
       Number.isFinite(value[1]) &&
-      Number.isSafeInteger(value[2]) &&
-      value[2] >= 1
+      ((Number.isSafeInteger(value[2]) && value[2] > MAX_TIE_IDS) ||
+        (Array.isArray(value[2]) &&
+          value[2].length >= 1 &&
+          value[2].length <= MAX_TIE_IDS &&
+          value[2].every((id: unknown) => typeof id === "string" && CURSOR_ID_RE.test(id))))
     ) {
-      return { date: value[0], creationTime: value[1], tie: value[2] };
+      return { date: value[0], creationTime: value[1], seen: value[2] };
     }
   } catch {
     // fall through
@@ -518,8 +527,8 @@ export function decodeSearchCursor(cursor: string): SearchPosition {
  * - Each page reads at most `SEARCH_SCAN_LIMIT` rows. When filters are sparse
  *   the page can come back short (even empty) with a non-null `nextCursor`;
  *   the cursor always resumes right after the last row read, so no row is
- *   skipped or repeated. Rows sharing a `_creationTime` are told apart by a
- *   tie count in the cursor; the index orders them deterministically. `nextCursor` is null only when the range is exhausted.
+ *   skipped or repeated. Rows sharing a `_creationTime` are told apart by
+ *   the ids already read at that position. `nextCursor` is null only when the range is exhausted.
  */
 export async function searchTransactions(
   ctx: QueryCtx | MutationCtx,
@@ -603,7 +612,7 @@ export async function searchTransactions(
  * Pure over its inputs (exported for tests): the cursor encodes the last row
  * read, and rows already read at the cursor's exact position are skipped.
  */
-export async function collectSearchPage<R extends { date: string; _creationTime: number }>(
+export async function collectSearchPage<R extends { _id: string; date: string; _creationTime: number }>(
   sources: Array<() => AsyncIterable<R>>,
   after: SearchPosition | null,
   options: { limit: number; scanLimit: number; matches: (row: R) => boolean },
@@ -611,21 +620,28 @@ export async function collectSearchPage<R extends { date: string; _creationTime:
   const { limit, scanLimit, matches } = options;
   const items: R[] = [];
   let last: SearchPosition | null = after;
-  let toSkip = after?.tie ?? 0;
+  const seenAtCursor = Array.isArray(after?.seen) ? new Set(after.seen) : null;
+  let countToSkip = typeof after?.seen === "number" ? after.seen : 0;
   let scanned = 0;
   for (const source of sources) {
     for await (const row of source()) {
-      if (toSkip > 0 && after && row.date === after.date && row._creationTime === after.creationTime) {
-        toSkip--;
-        continue;
+      if (after && row.date === after.date && row._creationTime === after.creationTime) {
+        if (seenAtCursor?.has(row._id)) continue;
+        if (countToSkip > 0) {
+          countToSkip--;
+          continue;
+        }
       }
       if (scanned >= scanLimit || (items.length === limit && matches(row))) {
         return { items, nextCursor: encodeSearchCursor(last!) };
       }
       scanned++;
       if (matches(row)) items.push(row);
-      const tie = last && row.date === last.date && row._creationTime === last.creationTime ? last.tie + 1 : 1;
-      last = { date: row.date, creationTime: row._creationTime, tie };
+      const sameSpot = last && row.date === last.date && row._creationTime === last.creationTime;
+      let seen: string[] | number = [row._id];
+      if (sameSpot && typeof last!.seen === "number") seen = last!.seen + 1;
+      else if (sameSpot) seen = last!.seen.length < MAX_TIE_IDS ? [...(last!.seen as string[]), row._id] : last!.seen.length + 1;
+      last = { date: row.date, creationTime: row._creationTime, seen };
     }
   }
   return { items, nextCursor: null };
