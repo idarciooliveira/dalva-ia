@@ -20,7 +20,7 @@ Files: `deploy/agent/docker-compose.yml`, `deploy/agent/.env.example`, image `gh
 
 Generate each secret with `openssl rand -base64 48`. Exception: `TELEGRAM_WEBHOOK_SECRET` takes only `A-Za-z0-9_-`, so use `openssl rand -hex 32`.
 
-### Convex (`bunx convex env set NAME value`, add `--prod` for production)
+### Convex (from `packages/backend`: `bunx convex env set NAME value`, add `--prod` for production)
 
 | Var | |
 | --- | --- |
@@ -58,7 +58,13 @@ Compose reads `.env` next to the compose file. Panels that inject variables anot
 
 ## Cloudflare Tunnel
 
-Zero Trust → Networks → Tunnels → your tunnel. The `cloudflared` container must be on the `dalva-agent` network (`docker network connect dalva-agent cloudflared`, or `networks: { dalva-agent: { external: true } }` in its stack). No cloudflared yet: uncomment the service in the compose file and set `CLOUDFLARE_TUNNEL_TOKEN`.
+Zero Trust → Networks → Tunnels → your tunnel. The `cloudflared` container must be on the `dalva-agent` network (`docker network connect dalva-agent cloudflared`, or `networks: { dalva-agent: { external: true } }` in its stack). Caveats:
+
+- The network is created by this stack: deploy it before a stack that declares it `external`.
+- `docker network connect` is lost when the cloudflared container is recreated; prefer the compose form.
+- cloudflared with `network_mode: host` can't resolve `dalva-agent`. Use the container IP, or put it on the network.
+
+No cloudflared yet: put `TUNNEL_TOKEN=<token>` in `tunnel.env` next to the compose file (gitignored; keep it out of `.env`, which the agent loads) and uncomment the service.
 
 ### Only the webhook is public
 
@@ -79,7 +85,7 @@ curl -s -o /dev/null -w '%{http_code}\n' https://agent.example.com/health       
 curl -s -o /dev/null -w '%{http_code}\n' -X POST https://agent.example.com/webhooks/telegram   # 401
 ```
 
-401 means the request reached the agent and was refused for the missing secret. Anything else on the second call: see Common failures.
+401 means the request reached the agent and was refused for the missing secret. 503 means it is still booting (recovery): retry in a few seconds. Anything else: see Common failures.
 
 ### Let Telegram through
 
@@ -92,7 +98,7 @@ Telegram calls from datacenter IPs with no browser. Bot Fight Mode, Super Bot Fi
 
 ### Optional: only Telegram's IPs
 
-Custom rule, action **Block**: hostname equals `agent.example.com` and path equals `/webhooks/telegram` and `ip.src` not in `149.154.160.0/20 91.108.4.0/22`. Confirm the ranges at <https://core.telegram.org/bots/webhooks> first. The secret header is the real auth; this only cuts noise.
+Custom rule, action **Block**: hostname equals `agent.example.com` and path equals `/webhooks/telegram` and `ip.src` not in `{149.154.160.0/20 91.108.4.0/22}`. Confirm the ranges at <https://core.telegram.org/bots/webhooks> first. The secret header is the real auth; this only cuts noise.
 
 ## First deploy
 
@@ -105,13 +111,14 @@ Custom rule, action **Block**: hostname equals `agent.example.com` and path equa
    ```
    `accepting:false` means boot recovery is still running; `financeApi` not `ok` means the backend is unreachable.
 4. **Tunnel route and WAF**: as above, then run the two `curl` checks.
-5. **Register the webhook.** From a dev machine, in `apps/agent/.env` set `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (same value as the stack) and `AGENT_PUBLIC_URL=https://agent.example.com`:
+5. **Register the webhook.** From a dev machine, load the production values into the shell, not into `apps/agent/.env`: that file is for the dev bot, and `bun run dev:agent` with the production token deletes the production webhook.
    ```bash
+   set -a; . deploy/agent/.env; set +a      # TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET, AGENT_PUBLIC_URL=https://agent.example.com
    cd apps/agent
-   bun run telegram:webhook:set    # DROP_PENDING_UPDATES=1 to discard anything queued
-   bun run telegram:webhook:info   # url set, no last error
+   bun run telegram:webhook:set             # DROP_PENDING_UPDATES=1 to discard anything queued
+   bun run telegram:webhook:info            # url set; last error none (or an old timestamp)
    ```
-   `set` sends `allowed_updates: ["message","callback_query"]` and the secret as `secret_token`. `info` never prints the token or secret.
+   `set` sends `allowed_updates: ["message","callback_query"]` and the secret as `secret_token`. `info` never prints the token or secret. Telegram keeps the last error after it is fixed: trust the timestamp, not the presence of the line.
 6. **Smoke test.** Web app → Settings → Telegram → open the link, press Start. The bot confirms and Settings shows the chat as linked. `docker logs dalva-agent` should have no `webhook_unauthorized`.
 
 ## Updating
@@ -143,6 +150,7 @@ JSON lines with ids, kinds and error codes only. Rotation is 5 files of 10 MB.
 | `info` shows `404` | The path rule is wrong. Expect `^/webhooks/telegram$` and the same hostname you passed in `AGENT_PUBLIC_URL`. |
 | `info` shows `502` or Cloudflare `530` | `cloudflared` can't reach `dalva-agent:3000`: not on the `dalva-agent` network, or the container is down. |
 | `info` shows `403`, nothing in agent logs | Cloudflare is blocking Telegram. See Let Telegram through. |
+| `curl` to the webhook returns `503` | Agent is in boot recovery or shutting down. Wait; if it persists, check `/health` and the backend. |
 | `pending_update_count` keeps growing | The agent answers 503: still recovering, or the backend is down. Check `/health`. |
 | Bot silent after `TELEGRAM_MODE=polling` | Polling deletes the webhook at boot. Set `webhook`, redeploy, re-run `set`. |
 | `unauthorized` or `denied` on image pull | GHCR login missing or package private. See First deploy, step 1. |

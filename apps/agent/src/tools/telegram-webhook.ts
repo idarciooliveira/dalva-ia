@@ -17,6 +17,7 @@ export interface BotApiRequest {
   init: { method: "POST"; headers: Record<string, string>; body: string };
 }
 
+const REQUEST_TIMEOUT_MS = 15_000;
 const TOKEN_PATTERN = /^\d{1,20}:[A-Za-z0-9_-]{30,64}$/;
 const SECRET_PATTERN = /^[A-Za-z0-9_-]{32,256}$/;
 
@@ -95,7 +96,7 @@ function scrubber(env: Env) {
 async function call(req: BotApiRequest, fetchFn: typeof fetch, scrub: (text: string) => string): Promise<BotApiResult> {
   let response: Response;
   try {
-    response = await fetchFn(req.url, req.init);
+    response = await fetchFn(req.url, { ...req.init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   } catch (error) {
     // Network errors can carry the request URL, which holds the token.
     throw new WebhookToolError(`request failed: ${scrub(error instanceof Error ? error.message : "unknown error")}`);

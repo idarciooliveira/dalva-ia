@@ -11,6 +11,8 @@ services:
     container_name: dalva-agent
     # The bot exits at boot when the backend is unreachable; this brings it back.
     restart: unless-stopped
+    # Re-pull on every (re)deploy so `latest` really is latest.
+    pull_policy: always
     # The agent drains for 8s on SIGTERM; keep this above that.
     stop_grace_period: 15s
     env_file:
@@ -29,6 +31,12 @@ services:
       timeout: 5s
       start_period: 20s
       retries: 3
+    # Nothing to escalate: non-root, no shell, no writes needed.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
     networks:
       - dalva-agent
     logging:
@@ -39,14 +47,15 @@ services:
     # No `ports:` on purpose. Do not add any.
 
   # Only if you don't already run cloudflared on this host. Create the tunnel in
-  # Cloudflare Zero Trust, put its token in .env as CLOUDFLARE_TUNNEL_TOKEN, then uncomment.
+  # Cloudflare Zero Trust, put TUNNEL_TOKEN=<token> in tunnel.env next to this file (not in .env:
+  # the agent container loads .env and must not see the tunnel token), then uncomment.
   # cloudflared:
-  #   image: cloudflare/cloudflared:latest
+  #   image: cloudflare/cloudflared:latest  # pin a version once it works
   #   container_name: cloudflared
   #   restart: unless-stopped
   #   command: tunnel --no-autoupdate run
-  #   environment:
-  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+  #   env_file:
+  #     - tunnel.env
   #   networks:
   #     - dalva-agent
   #   logging:
