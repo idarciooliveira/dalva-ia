@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { convexErrorMessage, TRANSACTION_MANAGED } from "@/lib/convex-errors";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDate } from "@/lib/format";
 
@@ -64,6 +65,7 @@ const typeConfig = {
 
 export function TransactionRow({ transaction, onEdit, onDelete }: TransactionRowProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const config = typeConfig[transaction.type];
   const Icon = config.icon;
@@ -96,6 +98,13 @@ export function TransactionRow({ transaction, onEdit, onDelete }: TransactionRow
 
   const { mutate: deleteTransaction } = useMutation({
     mutationFn: useConvexMutation(api.transactions.deleteTransaction),
+    onMutate: () => setDeleteError(null),
+    // Debt-payment rows are owned by the debts flow and can't be deleted here.
+    onError: (error) =>
+      setDeleteError(
+        convexErrorMessage(error, TRANSACTION_MANAGED) ??
+          "Couldn't delete the transaction. Try again.",
+      ),
   });
 
   const { mutate: deleteTransfer } = useMutation({
@@ -135,6 +144,7 @@ export function TransactionRow({ transaction, onEdit, onDelete }: TransactionRow
   }
 
   return (
+    <div>
     <div className="flex min-h-20 items-center gap-3 rounded-2xl border border-border/60 bg-card px-3 py-3.5 transition-colors sm:min-h-22 sm:gap-5 sm:px-5 sm:py-4">
       {/* Type icon */}
       <div
@@ -227,6 +237,12 @@ export function TransactionRow({ transaction, onEdit, onDelete }: TransactionRow
         }
         onConfirm={handleDelete}
       />
+    </div>
+    {deleteError && (
+      <p role="alert" className="mt-2 px-3 text-sm text-destructive sm:px-5">
+        {deleteError}
+      </p>
+    )}
     </div>
   );
 }

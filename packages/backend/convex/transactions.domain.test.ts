@@ -3,6 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import * as accounts from "./domain/accounts";
 import * as categories from "./domain/categories";
 import * as transactions from "./domain/transactions";
+import * as transfers from "./domain/transfers";
 import { setupTest } from "./test.setup";
 
 const ALICE = "alice-domain";
@@ -231,6 +232,149 @@ describe("domain/transactions", () => {
     expect(
       await t.run((ctx) => transactions.listTransactions(ctx, BOB, {})),
     ).toMatchObject({ page: [] });
+  });
+
+  describe("amount validation", () => {
+    it("rejects zero, negative and non-integer income/expense amounts on create", async () => {
+      const t = setupTest();
+      const accountId = await seedAccount(t, ALICE);
+      for (const type of ["income", "expense"] as const) {
+        for (const amount of [0, -100, 10.5, Number.NaN]) {
+          await expect(
+            t.run((ctx) =>
+              transactions.createTransaction(ctx, ALICE, {
+                type,
+                amount,
+                accountId,
+                date: "2026-01-01",
+              }),
+            ),
+          ).rejects.toThrow("Amount must be positive");
+        }
+      }
+      expect(await balanceOf(t, accountId)).toBe(10000);
+    });
+
+    it("rejects non-finite adjustment amounts and the transfer type", async () => {
+      const t = setupTest();
+      const accountId = await seedAccount(t, ALICE);
+      await expect(
+        t.run((ctx) =>
+          transactions.createTransaction(ctx, ALICE, {
+            type: "adjustment",
+            amount: Number.NaN,
+            accountId,
+            date: "2026-01-01",
+          }),
+        ),
+      ).rejects.toThrow("finite");
+      await expect(
+        t.run((ctx) =>
+          transactions.createTransaction(ctx, ALICE, {
+            type: "transfer",
+            amount: 100,
+            accountId,
+            date: "2026-01-01",
+          }),
+        ),
+      ).rejects.toThrow("Use the transfer create for transfers");
+      const id = await t.run((ctx) =>
+        transactions.createTransaction(ctx, ALICE, {
+          type: "expense",
+          amount: 100,
+          accountId,
+          date: "2026-01-01",
+        }),
+      );
+      await expect(
+        t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id, type: "transfer" })),
+      ).rejects.toThrow("Use the transfer create for transfers");
+      expect(await balanceOf(t, accountId)).toBe(9900);
+    });
+
+    it("keeps signed amounts for adjustments", async () => {
+      const t = setupTest();
+      const accountId = await seedAccount(t, ALICE);
+      await t.run((ctx) =>
+        transactions.createTransaction(ctx, ALICE, {
+          type: "adjustment",
+          amount: -500,
+          accountId,
+          date: "2026-01-01",
+        }),
+      );
+      expect(await balanceOf(t, accountId)).toBe(9500);
+    });
+
+    it("rejects a non-positive effective amount on update", async () => {
+      const t = setupTest();
+      const accountId = await seedAccount(t, ALICE);
+      const adjId = await t.run((ctx) =>
+        transactions.createTransaction(ctx, ALICE, {
+          type: "adjustment",
+          amount: -500,
+          accountId,
+          date: "2026-01-01",
+        }),
+      );
+      const expenseId = await t.run((ctx) =>
+        transactions.createTransaction(ctx, ALICE, {
+          type: "expense",
+          amount: 1000,
+          accountId,
+          date: "2026-01-01",
+        }),
+      );
+      await expect(
+        t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id: expenseId, amount: 0 })),
+      ).rejects.toThrow("Amount must be positive");
+      await expect(
+        t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id: expenseId, amount: -5 })),
+      ).rejects.toThrow("Amount must be positive");
+      // Switching a negative adjustment to income without a new amount is invalid.
+      await expect(
+        t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id: adjId, type: "income" })),
+      ).rejects.toThrow("Amount must be positive");
+      expect(await balanceOf(t, accountId)).toBe(8500);
+    });
+  });
+
+  describe("transfer legs", () => {
+    async function seedTransfer(t: T) {
+      const from = await seedAccount(t, ALICE, 10000);
+      const to = await seedAccount(t, ALICE, 5000);
+      const result = await t.run((ctx) =>
+        transfers.createTransfer(ctx, ALICE, {
+          amount: 2000,
+          fromAccountId: from,
+          toAccountId: to,
+          date: "2026-01-01",
+        }),
+      );
+      return { from, to, result };
+    }
+
+    it("refuses plain delete and update on either leg", async () => {
+      const t = setupTest();
+      const { from, to, result } = await seedTransfer(t);
+      const legs = await t.run((ctx) =>
+        ctx.db.query("transactions").withIndex("by_accountId", (q) => q.eq("accountId", from)).collect(),
+      );
+      const incoming = await t.run((ctx) =>
+        ctx.db.query("transactions").withIndex("by_accountId", (q) => q.eq("accountId", to)).collect(),
+      );
+      expect(result).toBeTruthy();
+      for (const leg of [...legs, ...incoming]) {
+        await expect(
+          t.run((ctx) => transactions.deleteTransaction(ctx, ALICE, { id: leg._id })),
+        ).rejects.toThrow("Use the transfer delete for transfers");
+        await expect(
+          t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id: leg._id, amount: 1 })),
+        ).rejects.toThrow("Use the transfer");
+      }
+      expect(await balanceOf(t, from)).toBe(8000);
+      expect(await balanceOf(t, to)).toBe(7000);
+    });
   });
 
   describe("cross-user ownership", () => {

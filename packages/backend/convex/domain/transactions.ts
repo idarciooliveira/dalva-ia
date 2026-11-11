@@ -1,11 +1,67 @@
+import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+
+/** `ConvexError` code for edits to rows owned by the transfer or debt-payment flows. */
+export const TRANSACTION_MANAGED = "TRANSACTION_MANAGED";
 
 export type TransactionType = "income" | "expense" | "adjustment" | "transfer";
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * Rows owned by another flow: transfer legs (incl. goal-contribution transfers)
+ * and debt-payment source/liability transactions. Plain create/update/delete
+ * would leave the owning records (or the paired leg) out of sync.
+ */
+export async function managedTransactionKind(
+  ctx: QueryCtx | MutationCtx,
+  tx: Doc<"transactions">,
+): Promise<"transfer" | "debt_payment" | null> {
+  if (tx.type === "transfer" || tx.transferGroupId || tx.linkedTransactionId) {
+    return "transfer";
+  }
+  const payment =
+    (await ctx.db
+      .query("debtPayments")
+      .withIndex("by_sourceTransactionId", (q) => q.eq("sourceTransactionId", tx._id))
+      .first()) ??
+    (await ctx.db
+      .query("debtPayments")
+      .withIndex("by_liabilityTransactionId", (q) => q.eq("liabilityTransactionId", tx._id))
+      .first());
+  return payment ? "debt_payment" : null;
+}
+
+async function assertNotManaged(
+  ctx: QueryCtx | MutationCtx,
+  tx: Doc<"transactions">,
+  action: "update" | "delete",
+) {
+  const kind = await managedTransactionKind(ctx, tx);
+  const message =
+    kind === "transfer"
+      ? `Use the transfer ${action} for transfers`
+      : kind === "debt_payment"
+        ? action === "delete"
+          ? "Use the debt payment delete for debt payments"
+          : "Debt payments can't be edited; delete the payment and record it again"
+        : null;
+  if (message) throw new ConvexError({ code: TRANSACTION_MANAGED, message });
+}
+
+/** Income/expense/transfer amounts are positive integers; only adjustments are signed. */
+function assertAmount(type: TransactionType, amount: number) {
+  if (type === "adjustment") {
+    if (!Number.isFinite(amount)) throw new Error("Amount must be a finite number");
+    return;
+  }
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error("Amount must be positive");
+  }
+}
 
 /** Compute the signed balance delta for a transaction. */
 function balanceDelta(
@@ -67,6 +123,11 @@ export async function createTransaction(
     payee?: string;
   },
 ) {
+  if (args.type === "transfer") {
+    throw new Error("Use the transfer create for transfers");
+  }
+  assertAmount(args.type, args.amount);
+
   // Validate account ownership
   const account = await ctx.db.get(args.accountId);
   if (!account || account.userId !== userId) {
@@ -145,6 +206,10 @@ export async function updateTransaction(
   if (!tx || tx.userId !== userId) {
     throw new Error("Transaction not found");
   }
+  await assertNotManaged(ctx, tx, "update");
+  if (args.type === "transfer") {
+    throw new Error("Use the transfer create for transfers");
+  }
 
   if (args.type === "adjustment") {
     if (args.categoryId) {
@@ -171,6 +236,7 @@ export async function updateTransaction(
 
   const newType = args.type ?? oldType;
   const newAmount = args.amount ?? oldAmount;
+  assertAmount(newType, newAmount);
 
   if (newType === "adjustment") {
     const nextCategoryId = args.categoryId ?? tx.categoryId;
@@ -235,6 +301,7 @@ export async function deleteTransaction(
   if (!tx || tx.userId !== userId) {
     throw new Error("Transaction not found");
   }
+  await assertNotManaged(ctx, tx, "delete");
 
   // Reverse balance effect
   const delta = balanceDelta(tx.type, tx.amount);

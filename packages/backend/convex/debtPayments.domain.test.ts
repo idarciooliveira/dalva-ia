@@ -3,6 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import * as accounts from "./domain/accounts";
 import * as debtPayments from "./domain/debtPayments";
+import * as transactions from "./domain/transactions";
 import * as debts from "./domain/debts";
 import { setupTest } from "./test.setup";
 
@@ -136,5 +137,34 @@ describe("domain/debtPayments", () => {
       expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
       expect(await balanceOf(t, from)).toBe(9900);
     });
+  });
+
+  it("refuses plain delete/update of the debt payment's source and liability transactions", async () => {
+    const t = setupTest();
+    const from = await seedAccount(t, ALICE, 10000);
+    const liability = await seedAccount(t, ALICE, -8000);
+    const debtId = await seedDebt(t, ALICE, liability);
+    const paymentId = await t.run((ctx) =>
+      debtPayments.recordDebtPayment(ctx, ALICE, {
+        debtId,
+        amount: 1000,
+        date: "2026-01-02",
+        fromAccountId: from,
+      }),
+    );
+    const payment = await t.run((ctx) => ctx.db.get(paymentId));
+    const fromBalance = await balanceOf(t, from);
+    const liabilityBalance = await balanceOf(t, liability);
+    for (const id of [payment!.sourceTransactionId, payment!.liabilityTransactionId!]) {
+      await expect(
+        t.run((ctx) => transactions.deleteTransaction(ctx, ALICE, { id })),
+      ).rejects.toThrow("Use the debt payment delete for debt payments");
+      await expect(
+        t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id, note: "x" })),
+      ).rejects.toThrow("Debt payments can't be edited");
+    }
+    expect(await t.run((ctx) => ctx.db.get(paymentId))).not.toBeNull();
+    expect(await balanceOf(t, from)).toBe(fromBalance);
+    expect(await balanceOf(t, liability)).toBe(liabilityBalance);
   });
 });

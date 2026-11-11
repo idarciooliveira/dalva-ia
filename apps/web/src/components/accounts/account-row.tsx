@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { ACCOUNT_IN_USE, convexErrorMessage } from "@/lib/convex-errors";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES } from "@/lib/accounts";
@@ -34,6 +35,8 @@ interface AccountRowProps {
 
 export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [canArchive, setCanArchive] = useState(false);
 
   const accountType = ACCOUNT_TYPES.find((t) => t.value === account.type);
   const Icon = accountType?.icon;
@@ -41,17 +44,33 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
 
   const { mutate: archiveAccount } = useMutation({
     mutationFn: useConvexMutation(api.accounts.archiveAccount),
+    onMutate: () => setDeleteError(null),
+    onError: () => {
+      setDeleteError("Couldn't archive the account. Try again.");
+      setCanArchive(false);
+    },
   });
   const { mutate: restoreAccount } = useMutation({
     mutationFn: useConvexMutation(api.accounts.restoreAccount),
   });
   const { mutate: deleteAccount } = useMutation({
     mutationFn: useConvexMutation(api.accounts.deleteAccount),
+    onMutate: () => setDeleteError(null),
+    // Accounts with transactions, goals or debts can't be deleted; archive instead.
+    onError: (error) => {
+      setDeleteError(
+        convexErrorMessage(error, ACCOUNT_IN_USE)
+          ? "This account has transactions, goals or debts linked to it, so it can't be deleted."
+          : "Couldn't delete the account. Try again.",
+      );
+      setCanArchive(convexErrorMessage(error, ACCOUNT_IN_USE) !== null);
+    },
   });
 
   const isNegative = account.balance < 0;
 
   return (
+    <div>
     <div
       className={cn(
         "flex min-h-20 items-center gap-3 rounded-2xl border border-border/60 bg-card px-3 py-3.5 transition-colors sm:min-h-22 sm:gap-5 sm:px-5 sm:py-4",
@@ -149,6 +168,26 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
         description="Delete this account? This cannot be undone."
         onConfirm={() => deleteAccount({ id: account._id })}
       />
+    </div>
+    {deleteError && (
+      <p
+        role="alert"
+        className="mt-2 flex flex-wrap items-center gap-2 px-3 text-sm text-destructive sm:px-5"
+      >
+        {deleteError}
+        {canArchive && !account.archived && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              archiveAccount({ id: account._id });
+            }}
+          >
+            Archive instead
+          </Button>
+        )}
+      </p>
+    )}
     </div>
   );
 }

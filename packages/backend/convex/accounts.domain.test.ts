@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import * as accounts from "./domain/accounts";
+import * as transactions from "./domain/transactions";
 import { setupTest } from "./test.setup";
 
 const ALICE = "alice-domain";
@@ -99,6 +100,55 @@ describe("domain/accounts", () => {
     const id = await seedAccount(t, ALICE);
     await t.run((ctx) => accounts.deleteAccount(ctx, ALICE, { id }));
     expect(await t.run((ctx) => ctx.db.get(id))).toBeNull();
+  });
+
+  it("refuses to delete an account that transactions reference", async () => {
+    const t = setupTest();
+    const id = await seedAccount(t, ALICE);
+    await t.run((ctx) =>
+      transactions.createTransaction(ctx, ALICE, {
+        type: "expense",
+        amount: 100,
+        accountId: id,
+        date: "2026-01-01",
+      }),
+    );
+    await expect(
+      t.run((ctx) => accounts.deleteAccount(ctx, ALICE, { id })),
+    ).rejects.toThrow(/archive/i);
+    expect(await t.run((ctx) => ctx.db.get(id))).not.toBeNull();
+  });
+
+  it("refuses to delete an account linked to a goal or a debt", async () => {
+    const t = setupTest();
+    const goalAcc = await seedAccount(t, ALICE);
+    const debtAcc = await seedAccount(t, ALICE);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("savingsGoals", {
+        userId: ALICE,
+        name: "g",
+        targetAmount: 100,
+        currentAmount: 0,
+        isVirtual: false,
+        linkedAccountId: goalAcc,
+        createdAt: "2026-01-01",
+      });
+      await ctx.db.insert("debts", {
+        userId: ALICE,
+        name: "d",
+        debtType: "loan",
+        originalAmount: 100,
+        currentBalance: 100,
+        linkedAccountId: debtAcc,
+        createdAt: "2026-01-01",
+      });
+    });
+    await expect(
+      t.run((ctx) => accounts.deleteAccount(ctx, ALICE, { id: goalAcc })),
+    ).rejects.toThrow(/archive/i);
+    await expect(
+      t.run((ctx) => accounts.deleteAccount(ctx, ALICE, { id: debtAcc })),
+    ).rejects.toThrow(/archive/i);
   });
 
   describe("cross-user ownership", () => {
