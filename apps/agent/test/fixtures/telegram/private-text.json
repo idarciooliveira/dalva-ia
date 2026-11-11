@@ -1,0 +1,10 @@
+{
+  "update_id": 900000001,
+  "message": {
+    "message_id": 11,
+    "from": { "id": 424242, "is_bot": false, "first_name": "Ana", "username": "ana_s", "language_code": "pt" },
+    "chat": { "id": 424242, "first_name": "Ana", "username": "ana_s", "type": "private" },
+    "date": 1762860000,
+    "text": "spent 12 on lunch <b>secret-note</b>"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "update_id": 900000003,
+  "callback_query": {
+    "id": "4382bfdwdsb323b2d9",
+    "from": { "id": 424242, "is_bot": false, "first_name": "Ana", "username": "ana_s" },
+    "message": {
+      "message_id": 13,
+      "from": { "id": 7000000001, "is_bot": true, "first_name": "DALVA", "username": "dalva_test_bot" },
+      "chat": { "id": 424242, "first_name": "Ana", "type": "private" },
+      "date": 1762860020,
+      "text": "Add expense of 12.50 USD?"
+    },
+    "chat_instance": "-8123456789012345678",
+    "data": "c:k17abc_def-123"
+  }
+}

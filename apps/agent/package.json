@@ -1,0 +1,26 @@
+{
+  "name": "@mpf/agent",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/main.ts",
+    "start": "bun src/main.ts",
+    "build": "bun build src/main.ts --target bun --outdir dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
+    "test": "vitest",
+    "test:once": "vitest run"
+  },
+  "dependencies": {
+    "@mpf/finance-contract": "workspace:*",
+    "grammy": "^1.46.0",
+    "hono": "^4.13.17",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.2"
+  }
+}

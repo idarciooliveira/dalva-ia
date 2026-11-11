@@ -1,0 +1,11 @@
+{
+  "update_id": 900000004,
+  "message": {
+    "message_id": 14,
+    "from": { "id": 424242, "is_bot": false, "first_name": "Ana", "username": "ana_s" },
+    "chat": { "id": -1001234567890, "title": "Family", "type": "supergroup" },
+    "date": 1762860030,
+    "text": "/balance@dalva_test_bot",
+    "entities": [{ "offset": 0, "length": 23, "type": "bot_command" }]
+  }
+}

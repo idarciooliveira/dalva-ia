@@ -1,0 +1,11 @@
+{
+  "update_id": 900000006,
+  "edited_message": {
+    "message_id": 11,
+    "from": { "id": 424242, "is_bot": false, "first_name": "Ana" },
+    "chat": { "id": 424242, "first_name": "Ana", "type": "private" },
+    "date": 1762860000,
+    "edit_date": 1762860100,
+    "text": "edited"
+  }
+}

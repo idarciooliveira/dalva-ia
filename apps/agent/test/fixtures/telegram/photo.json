@@ -1,0 +1,14 @@
+{
+  "update_id": 900000005,
+  "message": {
+    "message_id": 15,
+    "from": { "id": 424242, "is_bot": false, "first_name": "Ana", "username": "ana_s" },
+    "chat": { "id": 424242, "first_name": "Ana", "type": "private" },
+    "date": 1762860040,
+    "photo": [
+      { "file_id": "AgACAgQAAxkBAAIBsmall", "file_unique_id": "AQADsmall", "file_size": 1234, "width": 90, "height": 67 },
+      { "file_id": "AgACAgQAAxkBAAIBlarge", "file_unique_id": "AQADlarge", "file_size": 45678, "width": 1280, "height": 960 }
+    ],
+    "caption": "receipt from the market"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "update_id": 900000002,
+  "message": {
+    "message_id": 12,
+    "from": { "id": 424242, "is_bot": false, "first_name": "Ana", "username": "ana_s" },
+    "chat": { "id": 424242, "first_name": "Ana", "username": "ana_s", "type": "private" },
+    "date": 1762860010,
+    "text": "/start@dalva_test_bot AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde",
+    "entities": [{ "offset": 0, "length": 21, "type": "bot_command" }]
+  }
+}
