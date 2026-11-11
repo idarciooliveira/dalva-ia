@@ -1,20 +1,24 @@
 import { routes } from "@mpf/finance-contract";
 
-import { getNetWorth } from "../../domain/dashboard";
-import { getDebtSummary } from "../../domain/debts";
+import { getNetWorth, netWorthAssetAccounts } from "../../domain/dashboard";
+import { getDebtSummary, getMostRecentDebtPayment } from "../../domain/debts";
 import * as transactions from "../../domain/transactions";
 import { apiQuery } from "./define";
 import { toMoney } from "./money";
-import { monthsEndingAt, requireBaseCurrency, transactionDtos } from "./shared";
+import { monthsEndingAt, requireBaseCurrency, requireBaseCurrencyOnly, transactionDtos } from "./shared";
 
 /*
  * Aggregates are labelled with the user's base currency. The domain sums
- * amounts across accounts without conversion, so a user with accounts in
- * several currencies gets mixed totals (no FX in v1).
+ * across accounts without conversion, so each report first checks that every
+ * account it sums is in the base currency (`conflict` otherwise).
  */
+
+const monthRange = (month: string) => ({ dateFrom: `${month}-01`, dateTo: `${month}-31` });
 
 export const transactionSummary = apiQuery(routes.reports.transactionSummary, async (ctx, userId, input) => {
   const currency = await requireBaseCurrency(ctx, userId);
+  const accountIds = await transactions.reportAccountIds(ctx, userId, { report: "summary", ...monthRange(input.month) });
+  await requireBaseCurrencyOnly(ctx, userId, currency, { accountIds });
   const summary = await transactions.getTransactionSummary(ctx, userId, { month: input.month });
   return {
     month: input.month,
@@ -27,6 +31,8 @@ export const transactionSummary = apiQuery(routes.reports.transactionSummary, as
 
 export const spendingByCategory = apiQuery(routes.reports.spendingByCategory, async (ctx, userId, input) => {
   const currency = await requireBaseCurrency(ctx, userId);
+  const accountIds = await transactions.reportAccountIds(ctx, userId, { report: "spending", ...monthRange(input.month) });
+  await requireBaseCurrencyOnly(ctx, userId, currency, { accountIds });
   const spending = await transactions.getSpendingByCategory(ctx, userId, { month: input.month });
   return {
     month: input.month,
@@ -41,10 +47,16 @@ export const spendingByCategory = apiQuery(routes.reports.spendingByCategory, as
 
 export const cashflow = apiQuery(routes.reports.cashflow, async (ctx, userId, input) => {
   const currency = await requireBaseCurrency(ctx, userId);
-  const flow = await transactions.getCashflow(ctx, userId, { month: input.month, trendMonths: input.trendMonths });
   // The domain labels trend entries "Jan".."Dec"; it returns the same
   // consecutive months, oldest first, so the YYYY-MM keys line up by index.
   const months = monthsEndingAt(input.month, input.trendMonths);
+  const accountIds = await transactions.reportAccountIds(ctx, userId, {
+    report: "cashflow",
+    dateFrom: `${months[0]}-01`,
+    dateTo: `${input.month}-31`,
+  });
+  await requireBaseCurrencyOnly(ctx, userId, currency, { accountIds });
+  const flow = await transactions.getCashflow(ctx, userId, { month: input.month, trendMonths: input.trendMonths });
   return {
     currentMonth: {
       income: toMoney(flow.currentMonth.income, currency),
@@ -59,8 +71,11 @@ export const cashflow = apiQuery(routes.reports.cashflow, async (ctx, userId, in
   };
 });
 
+/** Assets are summed account balances; debts carry no currency and are in the base currency. */
 export const netWorth = apiQuery(routes.reports.netWorth, async (ctx, userId) => {
   const currency = await requireBaseCurrency(ctx, userId);
+  const assets = await netWorthAssetAccounts(ctx, userId);
+  await requireBaseCurrencyOnly(ctx, userId, currency, { currencies: assets.map((a) => a.currency) });
   const worth = await getNetWorth(ctx, userId);
   return {
     hasData: worth.hasData,
@@ -70,8 +85,11 @@ export const netWorth = apiQuery(routes.reports.netWorth, async (ctx, userId) =>
   };
 });
 
+/** Debt totals are in the base currency; `recentPayment` came out of an account, which must match it. */
 export const debtSummary = apiQuery(routes.reports.debtSummary, async (ctx, userId) => {
   const currency = await requireBaseCurrency(ctx, userId);
+  const recent = await getMostRecentDebtPayment(ctx, userId);
+  await requireBaseCurrencyOnly(ctx, userId, currency, { accountIds: recent ? [recent.fromAccountId] : [] });
   const summary = await getDebtSummary(ctx, userId);
   return {
     totalOriginal: toMoney(summary.totalOriginal, currency),

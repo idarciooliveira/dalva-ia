@@ -2,6 +2,7 @@ import { allRoutes, errorEnvelopeSchema, isWriteRoute } from "@mpf/finance-contr
 import { describe, expect, it, vi } from "vitest";
 
 import { implementationFor } from "./registry";
+import { BodyTooLargeError, readBodyText } from "./router";
 import { raw, seedUser, setupApi, tokenFor, type RawResponse } from "./test.helpers";
 import { mintUserToken, TOKEN_SECRET_ENV } from "./tokens";
 
@@ -108,6 +109,55 @@ describe("api/v1 router", () => {
     expectError(await send("[1,2]"), "validation_failed", 400);
     expectError(await send("null"), "validation_failed", 400);
     expectError(await send(JSON.stringify({ note: "x".repeat(70 * 1024) })), "validation_failed", 400);
+  });
+
+  it("stops reading a chunked body without Content-Length once it passes the limit", async () => {
+    const t = setupApi();
+    const token = await tokenFor(await seedUser(t));
+    let pulled = 0;
+    let cancelled = false;
+    const chunk = new TextEncoder().encode(`"${"x".repeat(16 * 1024)}",`);
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled++;
+        if (pulled === 1) controller.enqueue(new TextEncoder().encode('{"note":['));
+        else if (pulled < 1000) controller.enqueue(chunk);
+        else controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const response = await t.fetch("/api/v1/transfers", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Idempotency-Key": KEY, "Content-Type": "application/json" },
+      body,
+      duplex: "half",
+    } as RequestInit);
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as RawResponse["body"]).error?.message).toBe("Request body too large");
+    expect(pulled).toBeLessThan(20);
+    expect(cancelled).toBe(true);
+  });
+
+  it("readBodyText: reads small bodies and cancels past the limit", async () => {
+    const stream = (parts: string[], onCancel?: () => void) => {
+      const queue = [...parts];
+      return new ReadableStream<Uint8Array>({
+        pull(controller) {
+          const part = queue.shift();
+          if (part === undefined) controller.close();
+          else controller.enqueue(new TextEncoder().encode(part));
+        },
+        cancel: onCancel,
+      });
+    };
+    expect(await readBodyText(null, 10)).toBe("");
+    expect(await readBodyText(stream(["{\"a\":", "\"é\"}"]), 64)).toBe('{"a":"é"}');
+    expect(await readBodyText(stream(["12345", "67890"]), 10)).toBe("1234567890");
+    let cancelled = false;
+    await expect(readBodyText(stream(["12345", "678901"], () => (cancelled = true)), 10)).rejects.toBeInstanceOf(BodyTooLargeError);
+    expect(cancelled).toBe(true);
   });
 
   it("takes path params over body keys and rejects unknown body keys", async () => {

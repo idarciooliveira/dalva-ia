@@ -1,7 +1,9 @@
 import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
-import { clientFor, expectApiError, expectConforms, raw, seedAccount, seedCategory, seedUser, setupApi, tokenFor, twoUsers } from "./test.helpers";
+import { recordDebtPayment } from "../../domain/debtPayments";
+import { MIXED_CURRENCIES_MESSAGE } from "./shared";
+import { clientFor, expectApiError, expectConforms, raw, seedAccount, seedCategory, seedUser, setupApi, tokenFor, twoUsers, type T } from "./test.helpers";
 
 describe("api/v1 reports", () => {
   it("summarises a month in the base currency, with transactions in their account currency", async () => {
@@ -75,6 +77,80 @@ describe("api/v1 reports", () => {
       totalRemaining: { amountMinor: 200, currency: "JPY" },
       recentPayment: { amountMinor: 0, currency: "JPY" },
       debts: [{ name: "Loan", creditor: "Unknown lender", percentPaid: 60 }],
+    });
+  });
+
+  describe("mixed currencies", () => {
+    const MIXED = { reason: "mixed_currencies", currencies: ["EUR", "USD"] };
+
+    async function mixedUser(t: T) {
+      const user = await seedUser(t); // base USD
+      const usd = await seedAccount(t, user, { balance: 10_000 });
+      const eur = await seedAccount(t, user, { currency: "EUR", name: "Euro", balance: 5_000 });
+      return { user, usd, eur, client: clientFor(t, await tokenFor(user)) };
+    }
+
+    it("returns conflict with the currency list instead of an unconverted total", async () => {
+      const t = setupApi();
+      const { user, eur, client } = await mixedUser(t);
+      const token = await tokenFor(user);
+      await client.transactions.create({ type: "expense", amount: { amountMinor: 100, currency: "EUR" }, accountId: eur, date: "2026-04-02" });
+
+      for (const path of [
+        "/reports/net-worth",
+        "/reports/transaction-summary?month=2026-04",
+        "/reports/spending-by-category?month=2026-04",
+        "/reports/cashflow?month=2026-05&trendMonths=2",
+      ]) {
+        const response = await raw(t, "GET", path, { token });
+        expect(response.status, path).toBe(409);
+        expect(response.body.error).toEqual({ code: "conflict", message: MIXED_CURRENCIES_MESSAGE, details: MIXED });
+      }
+      // The same months without EUR rows are single-currency and still work.
+      expect((await client.reports.transactionSummary({ month: "2026-03" })).totalExpenses).toEqual({ amountMinor: 0, currency: "USD" });
+      expect((await client.reports.cashflow({ month: "2026-03", trendMonths: 1 })).trend).toHaveLength(1);
+    });
+
+    it("ignores non-base accounts that don't feed the report", async () => {
+      const t = setupApi();
+      const { user, usd, eur, client } = await mixedUser(t);
+      await client.transactions.create({ type: "income", amount: { amountMinor: 700, currency: "USD" }, accountId: usd, date: "2026-04-02" });
+      // Transfers are excluded from every total, so EUR transfer legs don't make a report mixed.
+      const eur2 = await seedAccount(t, user, { currency: "EUR", name: "Euro 2" });
+      await client.transfers.create({ amount: { amountMinor: 50, currency: "EUR" }, fromAccountId: eur, toAccountId: eur2, date: "2026-04-03" });
+      const summary = await client.reports.transactionSummary({ month: "2026-04" });
+      expect(summary.totalIncome).toEqual({ amountMinor: 700, currency: "USD" });
+      const spending = await client.reports.spendingByCategory({ month: "2026-04" });
+      expect(spending.total).toEqual({ amountMinor: 0, currency: "USD" });
+    });
+
+    it("net worth: a non-base liability account is not summed, a non-base asset is", async () => {
+      const t = setupApi();
+      const user = await seedUser(t);
+      await seedAccount(t, user, { balance: 1_000 });
+      await seedAccount(t, user, { currency: "EUR", type: "credit_card", balance: -300 });
+      const client = clientFor(t, await tokenFor(user));
+      expect((await client.reports.netWorth()).totalAssets).toEqual({ amountMinor: 1_000, currency: "USD" });
+      const archived = await seedAccount(t, user, { currency: "EUR", balance: 1 });
+      await t.run((ctx) => ctx.db.patch(archived, { archived: true }));
+      expect((await client.reports.netWorth()).netWorth.amountMinor).toBe(1_000);
+      await seedAccount(t, user, { currency: "EUR", balance: 1 });
+      const error = await expectApiError(client.reports.netWorth(), "conflict", 409);
+      expect(error.details).toEqual(MIXED);
+    });
+
+    it("debt summary: conflict when the recent payment left a non-base account", async () => {
+      const t = setupApi();
+      const { user, usd, eur, client } = await mixedUser(t);
+      const debtId = await t.run((ctx) =>
+        ctx.db.insert("debts", { userId: user, name: "Loan", debtType: "loan", originalAmount: 50_000, currentBalance: 20_000, createdAt: "2026-01-01" }),
+      );
+      expect((await client.reports.debtSummary()).totalRemaining).toEqual({ amountMinor: 20_000, currency: "USD" });
+      await t.run((ctx) => recordDebtPayment(ctx, user, { debtId, amount: 100, date: "2026-01-02", fromAccountId: usd }));
+      expect((await client.reports.debtSummary()).recentPayment).toEqual({ amountMinor: 100, currency: "USD" });
+      await t.run((ctx) => recordDebtPayment(ctx, user, { debtId, amount: 100, date: "2026-01-03", fromAccountId: eur }));
+      const error = await expectApiError(client.reports.debtSummary(), "conflict");
+      expect(error.details).toEqual(MIXED);
     });
   });
 

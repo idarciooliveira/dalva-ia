@@ -297,6 +297,37 @@ export async function listTransactions(
 }
 
 /**
+ * How each report reads its rows. Shared with `reportAccountIds` so callers
+ * can see exactly which accounts fed a report (for currency checks).
+ */
+export const REPORT_READS = {
+  summary: { order: "desc", take: 200, types: ["income", "expense", "adjustment"] },
+  spending: { order: "asc", take: 500, types: ["expense"] },
+  cashflow: { order: "asc", take: 2000, types: ["income", "expense"] },
+} as const satisfies Record<string, { order: "asc" | "desc"; take: number; types: readonly TransactionType[] }>;
+
+/**
+ * Accounts of the rows a report aggregates: the same index range, order and
+ * bound as the report, restricted to the types it sums.
+ */
+export async function reportAccountIds(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  args: { report: keyof typeof REPORT_READS; dateFrom: string; dateTo: string },
+) {
+  const read = REPORT_READS[args.report];
+  const txs = await ctx.db
+    .query("transactions")
+    .withIndex("by_userId_and_date", (q) =>
+      q.eq("userId", userId).gte("date", args.dateFrom).lte("date", args.dateTo),
+    )
+    .order(read.order)
+    .take(read.take);
+  const types: readonly TransactionType[] = read.types;
+  return [...new Set(txs.filter((tx) => types.includes(tx.type)).map((tx) => tx.accountId))];
+}
+
+/**
  * Get a monthly transaction summary: total income, total expenses,
  * and recent transactions for the given month (format: "YYYY-MM").
  */
@@ -315,7 +346,7 @@ export async function getTransactionSummary(
       q.eq("userId", userId).gte("date", dateFrom).lte("date", dateTo),
     )
     .order("desc")
-    .take(200);
+    .take(REPORT_READS.summary.take);
 
   let totalIncome = 0;
   let totalExpenses = 0;
@@ -352,7 +383,7 @@ export async function getSpendingByCategory(
     .withIndex("by_userId_and_date", (q) =>
       q.eq("userId", userId).gte("date", dateFrom).lte("date", dateTo),
     )
-    .take(500);
+    .take(REPORT_READS.spending.take);
 
   // Aggregate expense amounts by categoryId
   const categoryTotals = new Map<string, number>(); // categoryId → total amount
@@ -425,7 +456,7 @@ export async function getCashflow(
     .withIndex("by_userId_and_date", (q) =>
       q.eq("userId", userId).gte("date", dateFrom).lte("date", dateTo),
     )
-    .take(2000);
+    .take(REPORT_READS.cashflow.take);
 
   // Initialize buckets
   const buckets = new Map<string, { income: number; expenses: number }>();

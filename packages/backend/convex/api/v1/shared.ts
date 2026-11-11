@@ -61,6 +61,27 @@ export function currencyResolver(ctx: Ctx, userId: string) {
   };
 }
 
+export const MIXED_CURRENCIES_MESSAGE = "Reports across multiple currencies are not supported yet";
+
+/**
+ * Aggregates are labelled with the base currency and there is no FX, so a
+ * report is only honest when every contributing account is in that currency.
+ * Otherwise `conflict` with the currencies involved; never an unconverted total.
+ */
+export async function requireBaseCurrencyOnly(
+  ctx: Ctx,
+  userId: string,
+  baseCurrency: string,
+  sources: { accountIds?: Iterable<Id<"accounts">>; currencies?: Iterable<string> },
+) {
+  const currencyOf = currencyResolver(ctx, userId);
+  const currencies = new Set<string>(sources.currencies ?? []);
+  for (const accountId of sources.accountIds ?? []) currencies.add(await currencyOf(accountId));
+  if ([...currencies].every((c) => c === baseCurrency)) return;
+  currencies.add(baseCurrency);
+  throw apiError("conflict", MIXED_CURRENCIES_MESSAGE, { reason: "mixed_currencies", currencies: [...currencies].sort() });
+}
+
 export function assertCurrency(money: Money, expected: string, field: string) {
   if (money.currency !== expected) {
     throw validationError(`${field}.currency`, `Currency must be ${expected}, got ${money.currency}`);

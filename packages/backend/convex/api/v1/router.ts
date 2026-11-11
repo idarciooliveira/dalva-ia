@@ -24,7 +24,7 @@ import { verifyUserToken, type FinanceScope } from "./tokens";
 /** Every method used by the contract; `http.ts` mounts the router for each. */
 export const API_METHODS: HttpMethod[] = [...new Set(allRoutes().map((r) => r.route.method))];
 
-const MAX_BODY_BYTES = 64 * 1024;
+export const MAX_BODY_BYTES = 64 * 1024;
 export const REPLAYED_HEADER = "Idempotent-Replayed";
 
 class HttpError extends Error {
@@ -63,12 +63,48 @@ async function authenticate(request: Request) {
   return result.claims;
 }
 
+export class BodyTooLargeError extends Error {
+  override name = "BodyTooLargeError";
+}
+
+/**
+ * Read a body as UTF-8, stopping (and cancelling the stream) as soon as it
+ * passes `maxBytes`. Chunked bodies have no Content-Length, so the header
+ * check alone would buffer them whole.
+ */
+export async function readBodyText(body: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<string> {
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      throw new BodyTooLargeError(`Body exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
+
 async function readJsonBody(request: Request): Promise<Record<string, unknown> | undefined> {
   const declared = Number(request.headers.get("Content-Length") ?? 0);
   if (declared > MAX_BODY_BYTES) throw new HttpError("validation_failed", "Request body too large");
-  const text = await request.text();
-  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) {
-    throw new HttpError("validation_failed", "Request body too large");
+  let text: string;
+  try {
+    text = await readBodyText(request.body, MAX_BODY_BYTES);
+  } catch (error) {
+    if (error instanceof BodyTooLargeError) throw new HttpError("validation_failed", "Request body too large");
+    throw error;
   }
   if (text.trim() === "") return undefined;
   let body: unknown;

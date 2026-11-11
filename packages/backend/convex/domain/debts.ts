@@ -232,6 +232,15 @@ export async function deleteDebt(
   await ctx.db.delete(args.id);
 }
 
+/** The payment `getDebtSummary` reports as `recentPayment`. */
+export async function getMostRecentDebtPayment(ctx: QueryCtx | MutationCtx, userId: string) {
+  return await ctx.db
+    .query("debtPayments")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .order("desc")
+    .first();
+}
+
 export async function getDebtSummary(
   ctx: QueryCtx | MutationCtx,
   userId: string,

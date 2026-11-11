@@ -14,6 +14,7 @@ Server side of `@mpf/finance-contract`, mounted at `/api/v1/*` on the Convex sit
 
 ## Writes
 
+- Bodies are capped at 64 KiB: `Content-Length` is checked first, then the stream is read and cancelled once it passes the cap.
 - `Idempotency-Key` required. `(userId, key) -> sha256(operation + canonical input) + response` is stored in `apiIdempotencyKeys` inside the write's own mutation. Same key + same request: stored response, `Idempotent-Replayed: true`. Same key + different request: `conflict`. Failed writes store nothing.
 - Daily cron purges keys older than 7 days.
 - Writes return the re-read entity.
@@ -22,7 +23,7 @@ Server side of `@mpf/finance-contract`, mounted at `/api/v1/*` on the Convex sit
 
 - The app stores every currency as value × 100. `money.ts` converts to and from ISO 4217 minor units: exact for 2-decimal currencies, round half away from zero when scaling down (JPY out, KWD in).
 - Account data uses the account currency; goals, debts and reports use `userProfiles.baseCurrency` (no profile: `conflict`). Request currency must match; cross-currency transfers are rejected.
-- Reports sum across accounts without FX, as the domain does.
+- No FX: a report that would sum amounts outside the base currency returns `conflict` with `details: { reason: "mixed_currencies", currencies }`.
 
 ## Managed rows
 
