@@ -6,7 +6,7 @@ import type { InlineKeyboardMarkup, Update } from "grammy/types";
 
 import { errorFields, type Logger } from "../../log";
 import { encodeButtonPayload, isAcknowledgeable } from "../channel";
-import type { ChannelAdapter, ChatAddress, Deliver, OutboundMessage, WebhookIngress } from "../channel";
+import type { ChannelAdapter, ChatAddress, Deliver, OutboundMessage, SentRef, WebhookIngress } from "../channel";
 import { renderHtmlChunks } from "./format";
 import { parseTelegramUpdate, storableUpdate } from "./parse";
 
@@ -26,7 +26,7 @@ const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 /** The Bot API methods the adapter uses (a grammY `Api`, or a fake in tests). */
 export type TelegramApi = Pick<
   Api,
-  "sendMessage" | "sendChatAction" | "answerCallbackQuery" | "getUpdates" | "deleteWebhook"
+  "sendMessage" | "editMessageText" | "sendChatAction" | "answerCallbackQuery" | "getUpdates" | "deleteWebhook"
 >;
 
 export interface TelegramAdapterOptions {
@@ -149,20 +149,39 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
       }
     },
 
-    async send(to: ChatAddress, message: OutboundMessage) {
+    async send(to: ChatAddress, message: OutboundMessage): Promise<SentRef | void> {
       if (message.type === "typing") {
         await api.sendChatAction(to.chatId, "typing");
         return;
       }
       // Telegram caps a message at 4096 characters: long texts go out as several, buttons on the last.
       const chunks = renderHtmlChunks(message.text, MAX_MESSAGE_CHARS);
+      let ref: SentRef | undefined;
       for (const [index, html] of chunks.entries()) {
         const last = index === chunks.length - 1;
-        await api.sendMessage(to.chatId, html, {
+        const sent = await api.sendMessage(to.chatId, html, {
           parse_mode: "HTML",
           link_preview_options: { is_disabled: true },
           ...(last && message.type === "confirm" ? { reply_markup: inlineKeyboard(message.actionId) } : {}),
         });
+        if (sent?.message_id !== undefined) ref = { messageRef: String(sent.message_id) };
+      }
+      return ref;
+    },
+
+    async editMessage(to, messageRef, message) {
+      // An edit is one message: a text past the limit keeps its first chunk.
+      const html = renderHtmlChunks(message.text, MAX_MESSAGE_CHARS)[0] ?? "";
+      try {
+        await api.editMessageText(to.chatId, Number(messageRef), html, {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+          reply_markup: message.type === "confirm" ? inlineKeyboard(message.actionId) : { inline_keyboard: [] },
+        });
+      } catch (error) {
+        // A replayed edit (recovery, double press) lands on a message that already shows it.
+        if (/message is not modified/i.test(String((error as { description?: unknown })?.description ?? ""))) return;
+        throw error;
       }
     },
 

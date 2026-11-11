@@ -45,6 +45,7 @@ export function parseTelegramUpdate(raw: unknown, botUsername: string): InboundE
       kind: "button",
       buttonPayload: query.data,
       buttonId: query.id,
+      ...(query.message?.message_id !== undefined ? { messageRef: String(query.message.message_id) } : {}),
       username: query.from.username,
     };
   }

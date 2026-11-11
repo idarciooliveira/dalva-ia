@@ -30,6 +30,8 @@ export interface InboundEvent {
   buttonPayload?: string;
   /** Platform id of the button press, for `answerButton`. */
   buttonId?: string;
+  /** Button presses: the message that carries the button, for `editMessage`. */
+  messageRef?: string;
   username?: string;
 }
 
@@ -44,6 +46,10 @@ export type OutboundMessage =
 
 export interface ChatAddress {
   chatId: string;
+}
+
+export interface SentRef {
+  messageRef: string;
 }
 
 /**
@@ -74,7 +80,13 @@ export interface ChannelAdapter {
    * `parse` to rebuild the same event, nothing else (no quoted messages).
    */
   storable(raw: unknown): unknown;
-  send(to: ChatAddress, message: OutboundMessage): Promise<void>;
+  /** Returns the ref of the sent message (the last one when it was split), for `editMessage`. */
+  send(to: ChatAddress, message: OutboundMessage): Promise<SentRef | void>;
+  /**
+   * Replace a sent message's text. A `text` message removes its buttons, a
+   * `confirm` sets them. Editing to the same content is not an error.
+   */
+  editMessage(to: ChatAddress, messageRef: string, message: Exclude<OutboundMessage, { type: "typing" }>): Promise<void>;
   /** Acknowledge a button press (stops the client spinner). */
   answerButton(buttonId: string, text?: string): Promise<void>;
   /** Present in webhook mode. */
