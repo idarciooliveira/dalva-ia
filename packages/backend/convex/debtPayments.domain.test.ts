@@ -161,7 +161,7 @@ describe("domain/debtPayments", () => {
       ).rejects.toThrow("Use the debt payment delete for debt payments");
       await expect(
         t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id, note: "x" })),
-      ).rejects.toThrow("Use the debt payment update for debt payments");
+      ).rejects.toThrow("Debt payments can't be edited");
     }
     expect(await t.run((ctx) => ctx.db.get(paymentId))).not.toBeNull();
     expect(await balanceOf(t, from)).toBe(fromBalance);

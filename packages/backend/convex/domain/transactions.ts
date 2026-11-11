@@ -45,7 +45,9 @@ async function assertNotManaged(
     kind === "transfer"
       ? `Use the transfer ${action} for transfers`
       : kind === "debt_payment"
-        ? `Use the debt payment ${action} for debt payments`
+        ? action === "delete"
+          ? "Use the debt payment delete for debt payments"
+          : "Debt payments can't be edited; delete the payment and record it again"
         : null;
   if (message) throw new ConvexError({ code: TRANSACTION_MANAGED, message });
 }
