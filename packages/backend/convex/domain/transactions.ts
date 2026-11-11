@@ -54,7 +54,10 @@ async function assertNotManaged(
 
 /** Income/expense/transfer amounts are positive integers; only adjustments are signed. */
 function assertAmount(type: TransactionType, amount: number) {
-  if (type === "adjustment") return;
+  if (type === "adjustment") {
+    if (!Number.isFinite(amount)) throw new Error("Amount must be a finite number");
+    return;
+  }
   if (!Number.isInteger(amount) || amount <= 0) {
     throw new Error("Amount must be positive");
   }
@@ -120,6 +123,9 @@ export async function createTransaction(
     payee?: string;
   },
 ) {
+  if (args.type === "transfer") {
+    throw new Error("Use the transfer create for transfers");
+  }
   assertAmount(args.type, args.amount);
 
   // Validate account ownership
@@ -201,6 +207,9 @@ export async function updateTransaction(
     throw new Error("Transaction not found");
   }
   await assertNotManaged(ctx, tx, "update");
+  if (args.type === "transfer") {
+    throw new Error("Use the transfer create for transfers");
+  }
 
   if (args.type === "adjustment") {
     if (args.categoryId) {

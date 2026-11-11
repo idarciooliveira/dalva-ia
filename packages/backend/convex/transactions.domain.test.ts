@@ -255,6 +255,43 @@ describe("domain/transactions", () => {
       expect(await balanceOf(t, accountId)).toBe(10000);
     });
 
+    it("rejects non-finite adjustment amounts and the transfer type", async () => {
+      const t = setupTest();
+      const accountId = await seedAccount(t, ALICE);
+      await expect(
+        t.run((ctx) =>
+          transactions.createTransaction(ctx, ALICE, {
+            type: "adjustment",
+            amount: Number.NaN,
+            accountId,
+            date: "2026-01-01",
+          }),
+        ),
+      ).rejects.toThrow("finite");
+      await expect(
+        t.run((ctx) =>
+          transactions.createTransaction(ctx, ALICE, {
+            type: "transfer",
+            amount: 100,
+            accountId,
+            date: "2026-01-01",
+          }),
+        ),
+      ).rejects.toThrow("Use the transfer create for transfers");
+      const id = await t.run((ctx) =>
+        transactions.createTransaction(ctx, ALICE, {
+          type: "expense",
+          amount: 100,
+          accountId,
+          date: "2026-01-01",
+        }),
+      );
+      await expect(
+        t.run((ctx) => transactions.updateTransaction(ctx, ALICE, { id, type: "transfer" })),
+      ).rejects.toThrow("Use the transfer create for transfers");
+      expect(await balanceOf(t, accountId)).toBe(9900);
+    });
+
     it("keeps signed amounts for adjustments", async () => {
       const t = setupTest();
       const accountId = await seedAccount(t, ALICE);
