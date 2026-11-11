@@ -6,11 +6,15 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   e2e:
     name: E2E Tests
     timeout-minutes: 60
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest is 26.04 now and Playwright 1.59 cannot install Chromium there.
+    runs-on: ubuntu-24.04
 
     steps:
       - uses: actions/checkout@v4
