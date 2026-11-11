@@ -87,10 +87,13 @@ interface BotApiResult {
   result?: unknown;
 }
 
+/** Anything shaped like a bot token, configured or not (a webhook URL may carry another bot's). */
+const TOKEN_LIKE = /\d+:[A-Za-z0-9_-]{30,}/g;
+
 /** Strings that must not reach the console, whatever Telegram or the network echoes back. */
 function scrubber(env: Env) {
   const secrets = [clean(env, "TELEGRAM_BOT_TOKEN"), clean(env, "TELEGRAM_WEBHOOK_SECRET")].filter((value): value is string => !!value);
-  return (text: string) => secrets.reduce((acc, secret) => acc.split(secret).join("[redacted]"), text);
+  return (text: string) => secrets.reduce((acc, secret) => acc.split(secret).join("***"), text).replace(TOKEN_LIKE, "***");
 }
 
 async function call(req: BotApiRequest, fetchFn: typeof fetch, scrub: (text: string) => string): Promise<BotApiResult> {
@@ -133,6 +136,7 @@ function describeUrl(value: string | undefined): string {
   }
 }
 
+/** `scrub` runs over the whole text, so no field (URL path included) can print a token. */
 export function formatWebhookInfo(info: WebhookInfo, scrub: (text: string) => string = (text) => text): string {
   const lines = [
     `url:             ${describeUrl(info.url)}`,
@@ -142,11 +146,11 @@ export function formatWebhookInfo(info: WebhookInfo, scrub: (text: string) => st
   ];
   if (info.ip_address) lines.push(`ip address:      ${info.ip_address}`);
   if (info.last_error_date) {
-    lines.push(`last error:      ${new Date(info.last_error_date * 1000).toISOString()} ${scrub(info.last_error_message ?? "")}`.trimEnd());
+    lines.push(`last error:      ${new Date(info.last_error_date * 1000).toISOString()} ${info.last_error_message ?? ""}`.trimEnd());
   } else {
     lines.push("last error:      none");
   }
-  return lines.join("\n");
+  return scrub(lines.join("\n"));
 }
 
 /** Runs one command; returns the process exit code. Output goes through `out`/`err`, never the token. */

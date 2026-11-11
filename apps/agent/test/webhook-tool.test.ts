@@ -121,9 +121,25 @@ describe("runWebhookCommand", () => {
     expect(output).toContain("url:             https://agent.example.com/webhooks/telegram\n");
     expect(output).toContain("pending updates: 3");
     expect(output).toContain("message, callback_query");
-    expect(output).toContain("401 Unauthorized [redacted]");
+    expect(output).toContain("401 Unauthorized ***");
     expect(output).not.toContain(BOT_TOKEN);
     expect(output).not.toContain(WEBHOOK_SECRET);
+  });
+
+  test("info scrubs a bot token that appears in the webhook URL path", async () => {
+    const otherToken = "7999999999:AAH-another-bot-token-0123456789ZZ";
+    const fetchMock = vi.fn(async () => json({ ok: true, result: { url: `https://agent.example.com/bot${BOT_TOKEN}/hook` } }));
+    const configured = run("info", {}, fetchMock as unknown as typeof fetch);
+    expect(await configured.code).toBe(0);
+    expect(configured.out.join("\n")).toContain("url:             https://agent.example.com/bot***/hook");
+    expect(configured.out.join("\n")).not.toContain(BOT_TOKEN);
+
+    // not the configured token: caught by the token pattern
+    const pathFetch = vi.fn(async () => json({ ok: true, result: { url: `https://agent.example.com/bot${otherToken}/hook` } }));
+    const other = run("info", {}, pathFetch as unknown as typeof fetch);
+    expect(await other.code).toBe(0);
+    expect(other.out.join("\n")).not.toContain(otherToken);
+    expect(other.out.join("\n")).toContain("bot***/hook");
   });
 
   test("info works without AGENT_PUBLIC_URL or a webhook secret", async () => {
