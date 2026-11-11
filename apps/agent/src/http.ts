@@ -9,8 +9,8 @@ export interface AppOptions {
   pipeline: Pipeline;
   mode: "webhook" | "polling";
   probeFinance: () => Promise<Reachability>;
-  /** False until boot recovery has queued; the webhook answers 503 until then. */
-  isReady: () => boolean;
+  /** False during boot recovery and shutdown; the webhook answers 503 then, so Telegram retries. */
+  isAccepting: () => boolean;
   startedAt?: number;
 }
 
@@ -24,7 +24,8 @@ export function createApp(options: AppOptions): Hono {
       ok: true,
       uptime: Math.floor((Date.now() - startedAt) / 1000),
       mode: options.mode,
-      ready: options.isReady(),
+      // false while boot recovery runs (and during shutdown)
+      accepting: options.isAccepting(),
       financeApi,
       queued: options.pipeline.size,
     });
@@ -33,7 +34,7 @@ export function createApp(options: AppOptions): Hono {
   const webhook = options.adapter.webhook;
   if (webhook) {
     app.post(webhook.path, async (c) => {
-      if (!options.isReady()) return c.text("starting", 503, { "Retry-After": "5" });
+      if (!options.isAccepting()) return c.text("not accepting", 503, { "Retry-After": "5" });
       return webhook.handle(c.req.raw, options.pipeline.deliver);
     });
   }

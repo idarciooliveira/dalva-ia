@@ -31,7 +31,8 @@ export async function redeemLink(clients: FinanceClients, event: InboundEvent, c
     return "linked";
   } catch (error) {
     if (isFinanceError(error, "validation_failed")) return "invalid"; // e.g. not a private chat
-    const isLinked = async () => (await resolveUser(clients, event).catch(() => null)) !== null;
+    // A lookup that itself fails proves nothing: let its error reach the generic failure reply.
+    const isLinked = async () => (await resolveUser(clients, event)) !== null;
     // The backend checks the code before existing links, so a linked user with a stale code lands here.
     if (isFinanceError(error, "not_found")) return (await isLinked()) ? "already_linked" : "invalid";
     // Either this Telegram account or the code's DALVA account already has a link.
@@ -40,7 +41,7 @@ export async function redeemLink(clients: FinanceClients, event: InboundEvent, c
     if (isFinanceError(error, "network_error", "timeout", "aborted", "internal", "invalid_response")) {
       if (await isLinked()) return "already_linked";
     }
-    throw error;
+    throw error; // includes rate_limited: the handler answers it
   }
 }
 

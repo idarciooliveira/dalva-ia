@@ -5,18 +5,18 @@ import { createPipeline } from "../src/core/pipeline";
 import { createApp } from "../src/http";
 import { captureLogger, fakeFinance, fixture, telegramAdapter, WEBHOOK_SECRET } from "./helpers";
 
-function setup(options: { ready?: boolean } = {}) {
+function setup(options: { accepting?: () => boolean; limits?: { maxPerChat?: number; maxTotal?: number } } = {}) {
   const { logger } = captureLogger();
   const { adapter } = telegramAdapter(logger, "webhook");
   const finance = fakeFinance();
   const handle = vi.fn(async () => {});
-  const pipeline = createPipeline({ adapter, service: finance.clients.service, handle, logger });
+  const pipeline = createPipeline({ adapter, service: finance.clients.service, handle, logger, limits: options.limits, retryDelayMs: 1 });
   const app = createApp({
     adapter,
     pipeline,
     mode: "webhook",
     probeFinance: async () => "ok",
-    isReady: () => options.ready ?? true,
+    isAccepting: options.accepting ?? (() => true),
   });
   const post = (body: unknown, secret?: string) =>
     app.request("/webhooks/telegram", {
@@ -42,18 +42,40 @@ describe("webhook", () => {
     expect(pipeline.size).toBe(0);
   });
 
-  test("200 right away; processing runs in the background", async () => {
-    const { post, finance } = setup();
-    const release = finance.hold("POST /agent/events/claim");
+  test("200 only once the event is stored; handling runs in the background", async () => {
+    const { post, finance, handle, pipeline } = setup();
+    const gate = finance.hold("POST /agent/events/status");
     const response = await post(fixture("private-text"), WEBHOOK_SECRET);
     expect(response.status).toBe(200);
-    release();
+    expect(finance.events.get("900000001")).toMatchObject({ status: "received" });
+    expect(handle).not.toHaveBeenCalled();
+    gate();
+    await pipeline.shutdown(1000);
+    expect(handle).toHaveBeenCalledTimes(1);
   });
 
-  test("413 on an oversized body", async () => {
+  test("a failed claim answers 503 so Telegram redelivers; nothing is handled", async () => {
+    const { post, finance, handle, pipeline } = setup();
+    finance.fail("POST /agent/events/claim", "network", 3);
+    expect((await post(fixture("private-text"), WEBHOOK_SECRET)).status).toBe(503);
+    await pipeline.shutdown(1000);
+    expect(handle).not.toHaveBeenCalled();
+  });
+
+  test("a full queue answers 503 without claiming", async () => {
+    const { post, finance } = setup({ limits: { maxPerChat: 1 } });
+    const gate = finance.hold("POST /agent/events/status");
+    expect((await post(fixture("private-text"), WEBHOOK_SECRET)).status).toBe(200);
+    const second = { ...fixture("private-text"), update_id: 900000099 };
+    expect((await post(second, WEBHOOK_SECRET)).status).toBe(503);
+    expect(finance.callsTo("/agent/events/claim")).toHaveLength(1);
+    gate();
+  });
+
+  test("a redelivered (duplicate) update is acknowledged", async () => {
     const { post } = setup();
-    const response = await post(JSON.stringify({ update_id: 1, pad: "é".repeat(600_000) }), WEBHOOK_SECRET);
-    expect(response.status).toBe(413);
+    expect((await post(fixture("private-text"), WEBHOOK_SECRET)).status).toBe(200);
+    expect((await post(fixture("private-text"), WEBHOOK_SECRET)).status).toBe(200);
   });
 
   test("400 on a body that isn't JSON", async () => {
@@ -67,9 +89,14 @@ describe("webhook", () => {
     expect(pipeline.size).toBe(0);
   });
 
-  test("503 before boot recovery finished, so Telegram retries", async () => {
-    const { post } = setup({ ready: false });
+  test("503 while boot recovery runs, without touching the backend; 200 once intake opens", async () => {
+    let accepting = false;
+    const { post, finance, app } = setup({ accepting: () => accepting });
     expect((await post(fixture("private-text"), WEBHOOK_SECRET)).status).toBe(503);
+    expect(finance.calls).toHaveLength(0);
+    expect(await (await app.request("/health")).json()).toMatchObject({ accepting: false });
+    accepting = true;
+    expect((await post(fixture("private-text"), WEBHOOK_SECRET)).status).toBe(200);
   });
 
   test("health reports mode, uptime and finance reachability without secrets", async () => {
@@ -86,7 +113,7 @@ describe("webhook", () => {
     const { adapter } = telegramAdapter(logger, "polling");
     const finance = fakeFinance();
     const pipeline = createPipeline({ adapter, service: finance.clients.service, handle: async () => {}, logger });
-    const app = createApp({ adapter, pipeline, mode: "polling", probeFinance: async () => "ok", isReady: () => true });
+    const app = createApp({ adapter, pipeline, mode: "polling", probeFinance: async () => "ok", isAccepting: () => true });
     const response = await app.request("/webhooks/telegram", { method: "POST", body: "{}" });
     expect(response.status).toBe(404);
   });

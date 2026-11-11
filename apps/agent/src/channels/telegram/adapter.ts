@@ -5,8 +5,8 @@ import { Api } from "grammy/web";
 import type { InlineKeyboardMarkup, Update } from "grammy/types";
 
 import { errorFields, type Logger } from "../../log";
-import { encodeButtonPayload } from "../channel";
-import type { ChannelAdapter, ChatAddress, Deliver, IntakeCapacity, OutboundMessage, WebhookIngress } from "../channel";
+import { encodeButtonPayload, isAcknowledgeable } from "../channel";
+import type { ChannelAdapter, ChatAddress, Deliver, OutboundMessage, WebhookIngress } from "../channel";
 import { renderHtmlChunks } from "./format";
 import { parseTelegramUpdate, storableUpdate } from "./parse";
 
@@ -67,9 +67,9 @@ function webhookIngress(secret: string, logger: Logger): WebhookIngress {
       } catch {
         return new Response("bad request", { status: 400 });
       }
-      // Telegram retries non-2xx later, which is what we want when we're full.
-      const result = deliver(body);
-      if (result === "overloaded") return new Response("busy", { status: 503, headers: { "Retry-After": "5" } });
+      // 200 only once the event is stored (or needs nothing): anything else, Telegram redelivers later.
+      const result = await deliver(body);
+      if (!isAcknowledgeable(result)) return new Response("retry later", { status: 503, headers: { "Retry-After": "5" } });
       return new Response("ok", { status: 200 });
     },
   };
@@ -103,32 +103,34 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
   let polling: { controller: AbortController; loop: Promise<void> } | null = null;
   let stopped = false;
 
-  async function pollLoop(deliver: Deliver, capacity: IntakeCapacity, signal: AbortSignal) {
+  /**
+   * Dev-only intake: one update at a time. `offset` (which the next
+   * getUpdates confirms to Telegram) only moves past an update once it is
+   * stored; on a full queue or a failed claim we back off and fetch it again.
+   */
+  async function pollLoop(deliver: Deliver, signal: AbortSignal) {
     const aborted = new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+    const backOff = () => Promise.race([new Promise((resolve) => setTimeout(resolve, pollRetryMs)), aborted]);
     let offset = 0;
     while (!signal.aborted) {
       try {
-        await Promise.race([capacity.wait(), aborted]);
-        if (signal.aborted) return;
-        // Never fetch more than the pipeline can queue: fetched updates are confirmed by the next offset.
-        const limit = Math.min(MAX_UPDATES_PER_POLL, capacity.available());
-        if (limit <= 0) continue;
         const updates: Update[] = await api.getUpdates(
-          { offset, limit, timeout: POLL_TIMEOUT_SECONDS, allowed_updates: [...ALLOWED_UPDATES] },
+          { offset, limit: MAX_UPDATES_PER_POLL, timeout: POLL_TIMEOUT_SECONDS, allowed_updates: [...ALLOWED_UPDATES] },
           // grammY types its signal with an old AbortSignal shim; the runtime object is the standard one.
           signal as unknown as Parameters<TelegramApi["getUpdates"]>[1],
         );
         for (const update of updates) {
-          if (deliver(update) === "overloaded") break; // Not confirmed: Telegram hands it out again next poll.
+          if (signal.aborted) return;
+          if (!isAcknowledgeable(await deliver(update))) {
+            await backOff();
+            break;
+          }
           offset = update.update_id + 1;
         }
-        // The next getUpdates confirms everything below `offset`; make sure it's stored first.
-        // Stopping interrupts the wait and returns before that next call, so nothing unstored is confirmed.
-        await Promise.race([capacity.persisted(), aborted]);
       } catch (error) {
         if (signal.aborted) return;
         logger.warn("poll_failed", errorFields(error));
-        await Promise.race([new Promise((resolve) => setTimeout(resolve, pollRetryMs)), aborted]);
+        await backOff();
       }
     }
   }
@@ -168,13 +170,13 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
       await api.answerCallbackQuery(buttonId, text ? { text } : undefined);
     },
 
-    async start(deliver, capacity) {
+    async start(deliver) {
       if (options.mode !== "polling" || polling || stopped) return;
       // getUpdates fails while a webhook is set; keep pending updates so nothing is lost.
       await api.deleteWebhook({ drop_pending_updates: false });
       if (stopped) return; // stop() ran while we were waiting
       const controller = new AbortController();
-      polling = { controller, loop: pollLoop(deliver, capacity, controller.signal) };
+      polling = { controller, loop: pollLoop(deliver, controller.signal) };
       logger.info("polling_started");
     },
 

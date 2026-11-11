@@ -46,23 +46,22 @@ export interface ChatAddress {
   chatId: string;
 }
 
-/** What the transport did with a delivered raw event. */
-export type DeliverResult = "accepted" | "ignored" | "dropped" | "overloaded";
-export type Deliver = (raw: unknown) => DeliverResult;
+/**
+ * What the pipeline did with a raw event. `accepted`, `duplicate` and
+ * `ignored` are safe to acknowledge; `overloaded` (queue full) and `failed`
+ * (not stored) must be redelivered by the platform.
+ */
+export type DeliverResult = "accepted" | "duplicate" | "ignored" | "overloaded" | "failed";
+export type Deliver = (raw: unknown) => Promise<DeliverResult>;
 
-/** Room left in the pipeline, so a pulling transport never fetches more than it can queue. */
-export interface IntakeCapacity {
-  available(): number;
-  /** Resolves when `available() > 0`. */
-  wait(): Promise<void>;
-  /** Resolves when every delivered event is stored; confirm a batch to the platform only after this. */
-  persisted(): Promise<void>;
-}
+/** Whether the platform may consider the event delivered. */
+export const isAcknowledgeable = (result: DeliverResult) =>
+  result === "accepted" || result === "duplicate" || result === "ignored";
 
 export interface WebhookIngress {
   /** HTTP path the platform posts to, e.g. `/webhooks/telegram`. */
   path: string;
-  /** Authenticate and hand the body to `deliver`. Must answer fast. */
+  /** Authenticate, hand the body to `deliver`, and answer 2xx only for an acknowledgeable result. */
   handle(request: Request, deliver: Deliver): Promise<Response>;
 }
 
@@ -81,7 +80,7 @@ export interface ChannelAdapter {
   /** Present in webhook mode. */
   readonly webhook?: WebhookIngress;
   /** Start pulling events (polling mode). Resolves once started. */
-  start(deliver: Deliver, capacity: IntakeCapacity): Promise<void>;
+  start(deliver: Deliver): Promise<void>;
   /** Stop pulling events. */
   stop(): Promise<void>;
 }

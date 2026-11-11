@@ -46,7 +46,6 @@ interface Lane {
 export class ChatQueues {
   private readonly lanes = new Map<string, Lane>();
   private total = 0;
-  private capacityWaiters: Array<() => void> = [];
   private readonly slots: Semaphore;
 
   constructor(
@@ -60,12 +59,8 @@ export class ChatQueues {
     return this.total;
   }
 
-  available(): number {
-    return Math.max(0, this.limits.maxTotal - this.total);
-  }
-
   enqueue(key: string, task: () => Promise<void>): EnqueueResult {
-    if (this.available() === 0) return "full";
+    if (this.total >= this.limits.maxTotal) return "full";
     const lane = this.lanes.get(key) ?? { tail: Promise.resolve(), size: 0 };
     if (lane.size >= this.limits.maxPerChat) return "chat_full";
     lane.size += 1;
@@ -78,27 +73,24 @@ export class ChatQueues {
         lane.size -= 1;
         this.total -= 1;
         if (lane.size === 0 && this.lanes.get(key) === lane) this.lanes.delete(key);
-        this.notifyCapacity();
       });
     return "accepted";
   }
 
-  /** Resolves when there is room for at least one more task (polling waits on this). */
-  waitForCapacity(): Promise<void> {
-    if (this.available() > 0) return Promise.resolve();
-    return new Promise((resolve) => this.capacityWaiters.push(resolve));
-  }
-
-  /** Resolves when every queued task has finished, or after `timeoutMs`. Returns whether it drained. */
+  /** Resolves when every queued task has finished, or after `timeoutMs` (may be Infinity). Returns whether it drained. */
   async drain(timeoutMs: number): Promise<boolean> {
     const deadline = Date.now() + timeoutMs;
     while (this.total > 0) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) return false;
-      const tails = [...this.lanes.values()].map((lane) => lane.tail);
+      const tails = Promise.all([...this.lanes.values()].map((lane) => lane.tail));
+      if (!Number.isFinite(remaining)) {
+        await tails; // setTimeout can't wait forever (Infinity fires at once)
+        continue;
+      }
       let timer: ReturnType<typeof setTimeout> | undefined;
       await Promise.race([
-        Promise.all(tails),
+        tails,
         new Promise((resolve) => {
           timer = setTimeout(resolve, remaining);
         }),
@@ -106,12 +98,5 @@ export class ChatQueues {
       clearTimeout(timer);
     }
     return true;
-  }
-
-  private notifyCapacity() {
-    if (this.available() === 0) return;
-    const waiters = this.capacityWaiters;
-    this.capacityWaiters = [];
-    for (const resolve of waiters) resolve();
   }
 }

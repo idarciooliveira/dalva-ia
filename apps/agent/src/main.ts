@@ -9,8 +9,6 @@ import { createLogger, errorFields } from "./log";
 
 /** Below Docker's default 10s stop timeout (SIGKILL after). */
 const SHUTDOWN_DRAIN_MS = 8_000;
-const RECOVER_INTERVAL_MS = 60_000;
-const RECOVER_OLDER_THAN_SECONDS = 120;
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 async function main() {
@@ -46,17 +44,17 @@ async function main() {
   });
   const pipeline = createPipeline({ adapter, service: clients.service, handle, onFailure, accept, logger });
 
-  let ready = false;
+  /** Intake opens only after boot recovery finished; the webhook answers 503 until then. */
+  let accepting = false;
   let stopping = false;
-  let recoveryTimer: ReturnType<typeof setInterval> | undefined;
   let server: { stop(closeActiveConnections?: boolean): Promise<void> } | undefined;
 
   const shutdown = async (signal: string) => {
     if (stopping) return;
     stopping = true;
     logger.info("shutdown_started", { signal });
-    ready = false;
-    clearInterval(recoveryTimer);
+    // Intake first, then drain everything that was accepted.
+    accepting = false;
     await adapter.stop();
     const drained = await pipeline.shutdown(SHUTDOWN_DRAIN_MS);
     await server?.stop();
@@ -71,39 +69,20 @@ async function main() {
     pipeline,
     mode: config.TELEGRAM_MODE,
     probeFinance: createFinanceProbe({ baseUrl: config.FINANCE_API_URL }),
-    isReady: () => ready,
+    isAccepting: () => accepting,
   });
+  // Up for /health during recovery; the webhook route refuses until `accepting`.
   server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
   logger.info("server_started", { port: config.PORT, mode: config.TELEGRAM_MODE });
 
-  // Boot: everything the previous run left unfinished, before new events can arrive.
-  try {
-    await pipeline.recover({ olderThanSeconds: 0 });
-  } catch (error) {
-    // Backend down at boot: the periodic pass below picks the events up later.
-    logger.error("recover_failed", errorFields(error));
-  }
-  if (stopping) return;
-  ready = true;
-  await adapter.start(pipeline.deliver, {
-    available: pipeline.available,
-    wait: pipeline.waitForCapacity,
-    persisted: pipeline.persisted,
-  });
+  // Events a dead process left unfinished run to completion, in arrival order, before anything new.
+  // Without the backend nothing can be claimed either, so a failed recovery is fatal: the orchestrator restarts us.
+  await pipeline.recover();
   if (stopping) return;
 
-  // Afterwards: events whose status update failed mid-way. Events queued here are skipped.
-  let recovering = false;
-  recoveryTimer = setInterval(() => {
-    if (recovering || stopping) return;
-    recovering = true;
-    pipeline
-      .recover({ olderThanSeconds: RECOVER_OLDER_THAN_SECONDS })
-      .catch((error) => logger.warn("recover_failed", errorFields(error)))
-      .finally(() => {
-        recovering = false;
-      });
-  }, RECOVER_INTERVAL_MS);
+  accepting = true;
+  await adapter.start(pipeline.deliver);
+  logger.info("intake_open");
 }
 
 void main().catch((error) => {

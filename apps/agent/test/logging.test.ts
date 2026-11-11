@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { createHandler } from "../src/core/handler";
 import { createPipeline } from "../src/core/pipeline";
 import { createLogger, errorFields } from "../src/log";
-import { BOT_TOKEN, captureLogger, fakeFinance, fixture, SERVICE_KEY, telegramAdapter, textUpdate, WEBHOOK_SECRET } from "./helpers";
+import { BOT_TOKEN, captureLogger, fakeFinance, fixture, SERVICE_KEY, telegramAdapter, textUpdate, waitFor, WEBHOOK_SECRET } from "./helpers";
 
 const SECRET_TEXT = "my card pin is 9911 and I spent 12 on lunch";
 const CODE = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcde";
@@ -19,12 +19,13 @@ describe("logs", () => {
     const { handle, onFailure } = createHandler({ adapter, clients: finance.clients, logger, sessionIdleMinutes: 30 });
     const pipeline = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, logger });
 
-    pipeline.deliver(textUpdate(1, SECRET_TEXT));
-    pipeline.deliver(textUpdate(2, "/balance"));
-    pipeline.deliver(textUpdate(3, `/start ${CODE}`, 555, 555));
-    pipeline.deliver(fixture("photo"));
+    await pipeline.deliver(textUpdate(1, SECRET_TEXT));
+    await pipeline.deliver(textUpdate(2, "/balance"));
+    await pipeline.deliver(textUpdate(3, `/start ${CODE}`, 555, 555));
+    await pipeline.deliver(fixture("photo"));
+    await waitFor(() => pipeline.size === 0);
     finance.fail("GET /accounts", "internal");
-    pipeline.deliver(textUpdate(4, "/balance"));
+    await pipeline.deliver(textUpdate(4, "/balance"));
     await pipeline.shutdown(2000);
 
     expect(lines.length).toBeGreaterThan(0);

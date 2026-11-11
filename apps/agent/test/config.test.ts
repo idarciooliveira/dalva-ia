@@ -29,6 +29,7 @@ describe("loadConfig", () => {
   });
 
   test("names every missing variable", () => {
+    expect.assertions(5);
     expect(() => loadConfig({})).toThrow(ConfigError);
     try {
       loadConfig({ TELEGRAM_MODE: "polling" });

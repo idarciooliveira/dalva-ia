@@ -29,21 +29,23 @@ Polling calls `deleteWebhook` first (pending updates are kept), so don't point a
 
 ## Webhook
 
-`POST /webhooks/telegram`. Requests without the right `X-Telegram-Bot-Api-Secret-Token` get 401. Valid updates get 200 at once and are processed in the background; 503 while booting or when the queue is full, so Telegram retries. Registering the webhook and exposing the port are part of the deploy setup.
+`POST /webhooks/telegram`. Requests without the right `X-Telegram-Bot-Api-Secret-Token` get 401. An update gets 200 only once it is stored (claimed) or needs nothing; a full queue, a failed claim, boot recovery or shutdown get 503, so Telegram redelivers it later. Registering the webhook and exposing the port are part of the deploy setup.
 
-`GET /health` returns `{ ok, uptime, mode, ready, financeApi, queued }`. `financeApi` is an unauthenticated probe of the API base, cached 15s.
+`GET /health` returns `{ ok, uptime, mode, accepting, financeApi, queued }`. `accepting` is false during boot recovery and shutdown. `financeApi` is an unauthenticated probe of the API base, cached 15s.
 
 ## How an update flows
 
 1. Adapter parses it into a channel-agnostic `InboundEvent` (`src/channels/channel.ts`). Only `src/channels/telegram/` knows grammY. Group messages other than commands are dropped here, before anything is stored.
-2. Per-chat serial queue (bounded: 20 per chat, 1000 total, 32 running at once). Chats run concurrently; a chat's messages run in order. Polling never fetches more than the queue can take.
-3. `agentEvents.claim` runs on delivery, before the event waits for its chat's turn (duplicate: drop; an ambiguous failure is retried). Polling confirms a batch to Telegram only once its claims landed. The stored payload keeps only what parsing needs (no names, no quoted messages). Then `updateStatus processing` → handle → `done` / `failed`.
+2. A slot in the chat's serial queue is reserved (bounded: 20 per chat, 1000 total, 32 running at once), then `agentEvents.claim` stores it (duplicate: acknowledged and dropped; an ambiguous failure is retried). The stored payload keeps only what parsing needs (no names, no quoted messages).
+3. Chats run concurrently; a chat's messages run in order: `updateStatus processing` → handle → `done` / `failed` (with a "something went wrong" reply).
 4. Handle: `/start <code>` redeems; anything else calls `resolve` (with `chatId`) for a 15-minute user token; group chats only get "use a private chat".
 5. User and bot messages are appended to the current session (`/unlink` and `/forget` record nothing).
 
-On boot, `listRecoverable` re-queues events a crashed run left unfinished before the webhook opens; every 60s it picks up events whose status update failed (untouched for 2 minutes, not queued in this process). Recovered events are queued in arrival order (`InboundEvent.sequence`, Telegram's `update_id`), since the backend lists them by last update; live events that arrive while recovery is listing are stored at once and queued after the recovered ones. Order is guaranteed within one recovery page (50 events). SIGTERM stops intake and drains the queues for 8s, under Docker's default 10s stop timeout.
+Polling (dev only) takes one update at a time and moves its offset past an update only once it is stored.
 
-Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Replies over Telegram's 4096-character limit are split at line breaks. Other text and photos get a "coming soon" reply. Confirm/cancel buttons are only acknowledged.
+**Boot:** before any intake, `listRecoverable` re-processes events a dead process left unfinished, sorted per chat by arrival (`InboundEvent.sequence`, Telegram's `update_id`; the backend lists by last update), and waits for them to finish. A page (50) finishes before the next is read. If the backend is unreachable, boot fails and the container restarts. **Shutdown:** SIGTERM closes intake, then drains the queues for 8s, under Docker's default 10s stop timeout.
+
+Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Other text and photos get a "coming soon" reply. Confirm/cancel buttons are only acknowledged. Replies over Telegram's 4096-character limit are split at line breaks.
 
 ## Logs
 

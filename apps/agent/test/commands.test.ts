@@ -18,12 +18,12 @@ function setup() {
   // One pipeline per update: shutdown() drains it, so each call returns once the update is fully handled.
   const run = async (text: string, userId = Number(USER), chatId = userId) => {
     const p = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, accept, logger });
-    p.deliver(textUpdate(nextId++, text, userId, chatId));
+    await p.deliver(textUpdate(nextId++, text, userId, chatId));
     await p.shutdown(2000);
   };
   const runUpdate = async (update: unknown) => {
     const p = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, accept, logger });
-    p.deliver(update);
+    await p.deliver(update);
     await p.shutdown(2000);
   };
   const lastReply = () => telegram.sent[telegram.sent.length - 1]?.html ?? "";
@@ -94,6 +94,23 @@ describe("identity", () => {
     expect(finance.identities.has(USER)).toBe(true);
     expect(lastReply()).toContain("This Telegram account is already connected");
     expect(lastReply()).not.toContain("Connected.");
+  });
+
+  test("a conflict whose link lookup fails gets the generic error, not account-taken instructions", async () => {
+    const { finance, run, lastReply } = setup();
+    finance.codes.set(CODE, "valid");
+    finance.fail("POST /channel-links/redeem", "conflict");
+    finance.fail("POST /channel-identities/resolve", "network");
+    await run(`/start ${CODE}`);
+    expect(lastReply()).toContain("Something went wrong");
+    expect(lastReply()).not.toContain("another Telegram account");
+  });
+
+  test("a not_found whose link lookup is rate limited gets the rate-limit reply, not 'invalid'", async () => {
+    const { finance, run, lastReply } = setup();
+    finance.fail("POST /channel-identities/resolve", "rate_limited");
+    await run(`/start ${CODE}`);
+    expect(lastReply()).toContain("Too many requests");
   });
 
   test("a lost redeem answer without a link fails the event", async () => {

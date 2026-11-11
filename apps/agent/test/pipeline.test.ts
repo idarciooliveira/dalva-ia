@@ -24,114 +24,87 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-describe("pipeline", () => {
-  test("claims, marks processing, handles, marks done", async () => {
+const stored = (finance: ReturnType<typeof fakeFinance>, id: number, text: string, chat = 424242) =>
+  finance.events.set(String(id), { eventId: String(id), status: "received", attempts: 0, payload: JSON.stringify(textUpdate(id, text, chat)) });
+
+describe("pipeline intake", () => {
+  test("deliver resolves accepted only once the claim landed; then processing, handle, done", async () => {
     const handled: string[] = [];
     const { pipeline, finance } = setup(async (event) => {
       expect(finance.events.get(event.eventId)).toMatchObject({ status: "processing", attempts: 1 });
       handled.push(event.eventId);
     });
-    expect(pipeline.deliver(textUpdate(1, "hi"))).toBe("accepted");
+    const release = finance.hold("POST /agent/events/claim");
+    let result: string | undefined;
+    const delivering = pipeline.deliver(textUpdate(1, "hi")).then((r) => (result = r));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(result).toBeUndefined();
+    release();
+    await delivering;
+    expect(result).toBe("accepted");
+    expect(finance.events.has("1")).toBe(true);
     await pipeline.shutdown(1000);
     expect(handled).toEqual(["1"]);
     expect(finance.events.get("1")).toMatchObject({ status: "done" });
-    const claim = finance.callsTo("/agent/events/claim")[0]!;
-    expect(JSON.parse(claim.body!.payload)).toMatchObject({ update_id: 1 });
   });
 
-  test("a duplicate claim is dropped", async () => {
+  test("a duplicate is acknowledged and dropped", async () => {
     const handle = vi.fn(async () => {});
-    const { pipeline, finance, lines } = setup(handle);
-    pipeline.deliver(textUpdate(7, "hi"));
-    await waitFor(() => finance.events.get("7")?.status === "done");
-    pipeline.deliver(textUpdate(7, "hi"));
+    const { pipeline } = setup(handle);
+    expect(await pipeline.deliver(textUpdate(7, "hi"))).toBe("accepted");
+    expect(await pipeline.deliver(textUpdate(7, "hi"))).toBe("duplicate");
     await pipeline.shutdown(1000);
     expect(handle).toHaveBeenCalledTimes(1);
-    expect(lines.some((line) => line.includes("event_duplicate"))).toBe(true);
   });
 
-  test("events of one chat run in order, one at a time", async () => {
-    const order: string[] = [];
-    const gates = new Map([["1", deferred()]]);
-    let running = 0;
-    let maxRunning = 0;
-    const { pipeline } = setup(async (event) => {
-      running += 1;
-      maxRunning = Math.max(maxRunning, running);
-      await gates.get(event.eventId)?.promise;
-      order.push(event.eventId);
-      running -= 1;
-    });
-    for (const id of [1, 2, 3]) pipeline.deliver(textUpdate(id, `m${id}`));
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(order).toEqual([]);
-    gates.get("1")!.resolve();
+  test("a full chat or a full pipeline is overloaded, and nothing is claimed", async () => {
+    const gate = deferred();
+    const { pipeline, finance } = setup(async () => gate.promise, { maxPerChat: 2, maxTotal: 3 });
+    expect(await pipeline.deliver(textUpdate(50, "a", 1))).toBe("accepted");
+    expect(await pipeline.deliver(textUpdate(51, "b", 1))).toBe("accepted");
+    expect(await pipeline.deliver(textUpdate(52, "c", 1))).toBe("overloaded");
+    expect(await pipeline.deliver(textUpdate(53, "d", 2))).toBe("accepted");
+    expect(await pipeline.deliver(textUpdate(54, "e", 3))).toBe("overloaded");
+    expect([...finance.events.keys()].sort()).toEqual(["50", "51", "53"]);
+    gate.resolve();
     await pipeline.shutdown(1000);
-    expect(order).toEqual(["1", "2", "3"]);
-    expect(maxRunning).toBe(1);
   });
 
-  test("different chats run concurrently", async () => {
-    const slow = deferred();
-    const done: string[] = [];
-    const { pipeline } = setup(async (event) => {
-      if (event.chatId === "1") await slow.promise;
-      done.push(event.chatId);
-    });
-    pipeline.deliver(textUpdate(10, "a", 1));
-    pipeline.deliver(textUpdate(11, "b", 2));
-    await waitFor(() => done.includes("2"));
-    expect(done).toEqual(["2"]);
-    slow.resolve();
-    await pipeline.shutdown(1000);
-    expect(done).toEqual(["2", "1"]);
-  });
-
-  test("a failing handler marks the event failed with an error code, notifies, and the chat continues", async () => {
-    const { pipeline, finance, onFailure, lines } = setup(async (event) => {
-      if (event.eventId === "20") throw new Error("boom with user text: spent 12 on lunch");
-    });
-    pipeline.deliver(textUpdate(20, "x"));
-    pipeline.deliver(textUpdate(21, "y"));
-    await pipeline.shutdown(1000);
-    expect(finance.events.get("20")).toMatchObject({ status: "failed", error: "Error" });
-    expect(finance.events.get("21")).toMatchObject({ status: "done" });
-    expect(onFailure).toHaveBeenCalledTimes(1);
-    expect(lines.join("\n")).not.toContain("spent 12 on lunch");
-  });
-
-  test("a claim that keeps failing drops the event and tells the user", async () => {
+  test("a claim that keeps failing is reported failed (for the platform to retry), never handled, no reply", async () => {
     const handle = vi.fn(async () => {});
     const { pipeline, finance, onFailure } = setup(handle);
     finance.fail("POST /agent/events/claim", "network", 3);
-    pipeline.deliver(textUpdate(30, "x"));
+    expect(await pipeline.deliver(textUpdate(30, "x"))).toBe("failed");
     await pipeline.shutdown(1000);
     expect(handle).not.toHaveBeenCalled();
-    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(onFailure).not.toHaveBeenCalled();
+    expect(pipeline.size).toBe(0);
   });
 
   test("a claim that landed but whose reply was lost is retried and processed once", async () => {
     const handle = vi.fn(async () => {});
-    const { pipeline, finance, onFailure } = setup(handle);
+    const { pipeline, finance } = setup(handle);
     finance.fail("POST /agent/events/claim", "network_after");
-    pipeline.deliver(textUpdate(32, "x"));
+    expect(await pipeline.deliver(textUpdate(32, "x"))).toBe("accepted");
     await pipeline.shutdown(1000);
     expect(finance.callsTo("/agent/events/claim")).toHaveLength(2);
     expect(handle).toHaveBeenCalledTimes(1);
-    expect(onFailure).not.toHaveBeenCalled();
     expect(finance.events.get("32")).toMatchObject({ status: "done" });
   });
 
-  test("events are claimed on delivery, not when their chat's turn comes", async () => {
-    const gate = deferred();
-    const { pipeline, finance } = setup(async () => gate.promise);
-    pipeline.deliver(textUpdate(33, "a"));
-    pipeline.deliver(textUpdate(34, "b"));
-    await pipeline.persisted();
-    expect(finance.events.get("33")).toBeDefined();
-    expect(finance.events.get("34")).toMatchObject({ status: "received" });
-    gate.resolve();
+  test("an unstorable event is failed without a claim", async () => {
+    const { pipeline, finance } = setup(async () => {});
+    expect(await pipeline.deliver(textUpdate(84, "x".repeat(40_000)))).toBe("failed");
     await pipeline.shutdown(1000);
+    expect(finance.callsTo("/agent/events/claim")).toHaveLength(0);
+  });
+
+  test("events the accept filter refuses are ignored, never claimed", async () => {
+    const handle = vi.fn(async () => {});
+    const { pipeline, finance } = setup(handle, undefined, (event) => event.chatType === "private");
+    expect(await pipeline.deliver(textUpdate(85, "hi all", 1, -100))).toBe("ignored");
+    await pipeline.shutdown(1000);
+    expect(finance.calls).toHaveLength(0);
   });
 
   test("stores only what recovery needs: no names, no quoted messages", async () => {
@@ -139,227 +112,38 @@ describe("pipeline", () => {
     const update = textUpdate(35, "hi") as Record<string, any>;
     update.message.reply_to_message = { message_id: 1, text: "someone else's secret" };
     update.message.from.first_name = "Ana";
-    pipeline.deliver(update);
+    await pipeline.deliver(update);
     await pipeline.shutdown(1000);
     const payload = finance.callsTo("/agent/events/claim")[0]!.body!.payload as string;
     expect(payload).not.toContain("someone else's secret");
     expect(payload).not.toContain("Ana");
     expect(JSON.parse(payload)).toMatchObject({ update_id: 35, message: { text: "hi", chat: { id: 424242, type: "private" } } });
   });
-
-  test("an event already settled elsewhere (conflict on processing) is skipped", async () => {
-    const handle = vi.fn(async () => {});
-    const { pipeline, finance } = setup(handle);
-    finance.fail("POST /agent/events/status", "conflict");
-    pipeline.deliver(textUpdate(31, "x"));
-    await pipeline.shutdown(1000);
-    expect(handle).not.toHaveBeenCalled();
-  });
-
-  test("boot recovery re-processes unfinished events, in order, without claiming again", async () => {
-    const handled: string[] = [];
-    const { pipeline, finance } = setup(async (event) => {
-      handled.push(event.eventId);
-    });
-    finance.events.set("40", { eventId: "40", status: "processing", attempts: 1, payload: JSON.stringify(textUpdate(40, "a")) });
-    finance.events.set("41", { eventId: "41", status: "received", attempts: 0, payload: JSON.stringify(textUpdate(41, "b")) });
-    finance.events.set("42", { eventId: "42", status: "done", attempts: 1 });
-    finance.events.set("43", { eventId: "43", status: "received", attempts: 0, payload: "{\"nope\":1}" });
-    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(2);
-    await pipeline.shutdown(1000);
-    expect(handled).toEqual(["40", "41"]);
-    expect(finance.callsTo("/agent/events/claim")).toHaveLength(0);
-    expect(finance.events.get("40")).toMatchObject({ status: "done", attempts: 2 });
-    expect(finance.events.get("43")).toMatchObject({ status: "failed", error: "unparseable" });
-    const recoverable = finance.callsTo("/agent/events/recoverable")[0]!;
-    expect(recoverable.body).toMatchObject({ channel: "telegram", olderThanSeconds: "0" });
-  });
-
-  test("a full chat drops its excess; a full pipeline is overloaded", async () => {
-    const gate = deferred();
-    const { pipeline } = setup(async () => gate.promise, { maxPerChat: 2, maxTotal: 3 });
-    expect(pipeline.deliver(textUpdate(50, "a", 1))).toBe("accepted");
-    expect(pipeline.deliver(textUpdate(51, "b", 1))).toBe("accepted");
-    expect(pipeline.deliver(textUpdate(52, "c", 1))).toBe("dropped");
-    expect(pipeline.deliver(textUpdate(53, "d", 2))).toBe("accepted");
-    expect(pipeline.deliver(textUpdate(54, "e", 3))).toBe("overloaded");
-    gate.resolve();
-    await pipeline.shutdown(1000);
-    expect(pipeline.size).toBe(0);
-  });
-
-  test("shutdown drains queued events and then refuses new ones", async () => {
-    const handled: string[] = [];
-    const { pipeline } = setup(async (event) => {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-      handled.push(event.eventId);
-    });
-    pipeline.deliver(textUpdate(60, "a"));
-    pipeline.deliver(textUpdate(61, "b", 2));
-    expect(await pipeline.shutdown(1000)).toBe(true);
-    expect(handled.sort()).toEqual(["60", "61"]);
-    expect(pipeline.deliver(textUpdate(62, "c"))).toBe("overloaded");
-  });
-
-  test("shutdown gives up after the timeout", async () => {
-    const { pipeline } = setup(() => new Promise(() => {}));
-    pipeline.deliver(textUpdate(70, "a"));
-    expect(await pipeline.shutdown(30)).toBe(false);
-  });
 });
 
-describe("pipeline recovery and failures", () => {
-  test("a failed processing update is retried by the next recovery pass", async () => {
-    const handled: string[] = [];
-    const { pipeline, finance } = setup(async (event) => {
-      handled.push(event.eventId);
+describe("pipeline processing", () => {
+  test("events of one chat run in order, one at a time", async () => {
+    const order: string[] = [];
+    const first = deferred();
+    let running = 0;
+    let maxRunning = 0;
+    const { pipeline } = setup(async (event) => {
+      running += 1;
+      maxRunning = Math.max(maxRunning, running);
+      if (event.eventId === "1") await first.promise;
+      order.push(event.eventId);
+      running -= 1;
     });
-    finance.fail("POST /agent/events/status", "network");
-    pipeline.deliver(textUpdate(80, "a"));
-    await waitFor(() => finance.calls.some((call) => call.path === "/agent/events/status"));
-    await waitFor(() => pipeline.size === 0);
-    expect(handled).toEqual([]);
-    expect(finance.events.get("80")).toMatchObject({ status: "received" });
-    expect(await pipeline.recover({ olderThanSeconds: 120 })).toBe(1);
+    for (const id of [1, 2, 3]) await pipeline.deliver(textUpdate(id, `m${id}`));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(order).toEqual([]);
+    first.resolve();
     await pipeline.shutdown(1000);
-    expect(handled).toEqual(["80"]);
-    expect(finance.events.get("80")).toMatchObject({ status: "done" });
+    expect(order).toEqual(["1", "2", "3"]);
+    expect(maxRunning).toBe(1);
   });
 
-  test("recovery skips events still queued in this process", async () => {
-    const gate = deferred();
-    const handled: string[] = [];
-    const { pipeline, finance } = setup(async (event) => {
-      await gate.promise;
-      handled.push(event.eventId);
-    });
-    pipeline.deliver(textUpdate(81, "a"));
-    pipeline.deliver(textUpdate(82, "b"));
-    await waitFor(() => finance.events.has("81"));
-    await pipeline.persisted();
-    // Both are claimed (82 still received, waiting behind 81) and both are queued here.
-    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(0);
-    gate.resolve();
-    await pipeline.shutdown(1000);
-    expect(handled).toEqual(["81", "82"]);
-  });
-
-  test("a failed done update is retried once", async () => {
-    const gate = deferred();
-    const { pipeline, finance } = setup(() => gate.promise);
-    pipeline.deliver(textUpdate(83, "a"));
-    await waitFor(() => finance.events.get("83")?.status === "processing");
-    finance.fail("POST /agent/events/status", "network");
-    gate.resolve();
-    await pipeline.shutdown(1000);
-    expect(finance.events.get("83")).toMatchObject({ status: "done" });
-  });
-
-  test("an oversized event is not claimed and the user is told", async () => {
-    const handle = vi.fn(async () => {});
-    const { pipeline, finance, onFailure } = setup(handle);
-    pipeline.deliver(textUpdate(84, "x".repeat(40_000)));
-    await pipeline.shutdown(1000);
-    expect(finance.callsTo("/agent/events/claim")).toHaveLength(0);
-    expect(handle).not.toHaveBeenCalled();
-    expect(onFailure).toHaveBeenCalledTimes(1);
-  });
-
-  test("events the accept filter refuses are never claimed", async () => {
-    const handle = vi.fn(async () => {});
-    const { pipeline, finance } = setup(handle, undefined, (event) => event.chatType === "private");
-    expect(pipeline.deliver(textUpdate(85, "hi all", 1, -100))).toBe("ignored");
-    await pipeline.shutdown(1000);
-    expect(finance.calls).toHaveLength(0);
-    expect(handle).not.toHaveBeenCalled();
-  });
-
-  test("recovery pages until a page brings nothing new, and later passes pick up the rest", async () => {
-    const gate = deferred();
-    const handled: string[] = [];
-    const { pipeline, finance } = setup(
-      async (event) => {
-        await gate.promise;
-        handled.push(event.eventId);
-      },
-      { maxConcurrent: 100 },
-    );
-    for (let i = 0; i < 60; i++) {
-      const id = String(1000 + i);
-      finance.events.set(id, { eventId: id, status: "received", attempts: 0, payload: JSON.stringify(textUpdate(1000 + i, "x", 5000 + i)) });
-    }
-    // Page 1 queues 50; page 2 returns those 50 again (all running here): stop.
-    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(50);
-    expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(2);
-    gate.resolve();
-    await waitFor(() => pipeline.size === 0);
-    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(10);
-    await pipeline.shutdown(2000);
-    expect(handled).toHaveLength(60);
-  });
-
-  test("recovered events run in arrival (update_id) order per chat, not in last-update order", async () => {
-    const handled: string[] = [];
-    const { pipeline, finance } = setup(async (event) => {
-      handled.push(`${event.chatId}:${event.eventId}`);
-    });
-    // Listed by updatedAt: the backend returns them shuffled relative to arrival.
-    const listed = [
-      [205, 1, "/forget"],
-      [201, 1, "first"],
-      [302, 2, "b"],
-      [203, 1, "third"],
-      [301, 2, "a"],
-      [202, 1, "second"],
-    ] as const;
-    for (const [id, chat, text] of listed) {
-      finance.events.set(String(id), { eventId: String(id), status: "received", attempts: 0, payload: JSON.stringify(textUpdate(id, text, chat)) });
-    }
-    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(6);
-    await pipeline.shutdown(1000);
-    expect(handled.filter((h) => h.startsWith("1:"))).toEqual(["1:201", "1:202", "1:203", "1:205"]);
-    expect(handled.filter((h) => h.startsWith("2:"))).toEqual(["2:301", "2:302"]);
-  });
-
-  test("live events arriving while recovery lists queue after the recovered ones", async () => {
-    const handled: string[] = [];
-    const { pipeline, finance } = setup(async (event) => {
-      handled.push(event.eventId);
-    });
-    finance.events.set("400", { eventId: "400", status: "received", attempts: 0, payload: JSON.stringify(textUpdate(400, "old")) });
-    const release = finance.hold("GET /agent/events/recoverable");
-    const recovering = pipeline.recover({ olderThanSeconds: 0 });
-    await waitFor(() => finance.calls.some((call) => call.path === "/agent/events/recoverable"));
-    expect(pipeline.deliver(textUpdate(401, "new"))).toBe("accepted");
-    await pipeline.persisted();
-    expect(finance.events.get("401")).toMatchObject({ status: "received" }); // stored right away
-    release();
-    await recovering;
-    await pipeline.shutdown(1000);
-    expect(handled).toEqual(["400", "401"]);
-  });
-
-  test("recovery queues nothing once shutdown started", async () => {
-    const { pipeline, finance } = setup(async () => {});
-    finance.events.set("99", { eventId: "99", status: "received", attempts: 0, payload: JSON.stringify(textUpdate(99, "x")) });
-    await pipeline.shutdown(100);
-    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(0);
-    expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(0);
-  });
-
-  test("a non-finance error is stored as its name only", async () => {
-    const { pipeline, finance } = setup(async () => {
-      throw Object.assign(new Error("Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)"), {
-        name: "GrammyError",
-        error_code: 403,
-      });
-    });
-    pipeline.deliver(textUpdate(86, "a"));
-    await pipeline.shutdown(1000);
-    expect(finance.events.get("86")).toMatchObject({ status: "failed", error: "GrammyError" });
-  });
-
-  test("at most maxConcurrent chats run at once", async () => {
+  test("different chats run concurrently, up to maxConcurrent", async () => {
     let running = 0;
     let peak = 0;
     const { pipeline } = setup(
@@ -371,9 +155,146 @@ describe("pipeline recovery and failures", () => {
       },
       { maxConcurrent: 2 },
     );
-    for (let chat = 1; chat <= 6; chat++) pipeline.deliver(textUpdate(90 + chat, "a", chat));
+    for (let chat = 1; chat <= 6; chat++) await pipeline.deliver(textUpdate(90 + chat, "a", chat));
     await pipeline.shutdown(2000);
     expect(peak).toBe(2);
+  });
+
+  test("a failing handler marks the event failed with an error code and notifies; the chat continues", async () => {
+    const { pipeline, finance, onFailure, lines } = setup(async (event) => {
+      if (event.eventId === "20") throw new Error("boom with user text: spent 12 on lunch");
+    });
+    await pipeline.deliver(textUpdate(20, "x"));
+    await pipeline.deliver(textUpdate(21, "y"));
+    await pipeline.shutdown(1000);
+    expect(finance.events.get("20")).toMatchObject({ status: "failed", error: "Error" });
+    expect(finance.events.get("21")).toMatchObject({ status: "done" });
+    expect(onFailure).toHaveBeenCalledTimes(1);
+    expect(lines.join("\n")).not.toContain("spent 12 on lunch");
+  });
+
+  test("a non-finance error is stored as its name only", async () => {
+    const { pipeline, finance } = setup(async () => {
+      throw Object.assign(new Error("Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)"), {
+        name: "GrammyError",
+        error_code: 403,
+      });
+    });
+    await pipeline.deliver(textUpdate(86, "a"));
+    await pipeline.shutdown(1000);
+    expect(finance.events.get("86")).toMatchObject({ status: "failed", error: "GrammyError" });
+  });
+
+  test("an event already settled (conflict on processing) is skipped", async () => {
+    const handle = vi.fn(async () => {});
+    const { pipeline, finance } = setup(handle);
+    finance.fail("POST /agent/events/status", "conflict");
+    await pipeline.deliver(textUpdate(31, "x"));
+    await pipeline.shutdown(1000);
+    expect(handle).not.toHaveBeenCalled();
+  });
+
+  test("a failed done update is retried once", async () => {
+    const gate = deferred();
+    const { pipeline, finance } = setup(() => gate.promise);
+    await pipeline.deliver(textUpdate(83, "a"));
+    await waitFor(() => finance.events.get("83")?.status === "processing");
+    finance.fail("POST /agent/events/status", "network");
+    gate.resolve();
+    await pipeline.shutdown(1000);
+    expect(finance.events.get("83")).toMatchObject({ status: "done" });
+  });
+});
+
+describe("pipeline boot recovery", () => {
+  test("re-processes unfinished events without claiming again, and waits until they are done", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      handled.push(event.eventId);
+    });
+    finance.events.set("40", { eventId: "40", status: "processing", attempts: 1, payload: JSON.stringify(textUpdate(40, "a")) });
+    stored(finance, 41, "b");
+    finance.events.set("42", { eventId: "42", status: "done", attempts: 1 });
+    finance.events.set("43", { eventId: "43", status: "received", attempts: 0, payload: "{\"nope\":1}" });
+    expect(await pipeline.recover()).toBe(2);
+    expect(handled).toEqual(["40", "41"]); // done when recover() resolves
+    expect(finance.callsTo("/agent/events/claim")).toHaveLength(0);
+    expect(finance.events.get("40")).toMatchObject({ status: "done", attempts: 2 });
+    expect(finance.events.get("43")).toMatchObject({ status: "failed", error: "unparseable" });
+    expect(finance.callsTo("/agent/events/recoverable")[0]!.body).toMatchObject({ channel: "telegram", olderThanSeconds: "0" });
+  });
+
+  test("runs each chat's events in arrival (update_id) order, not the backend's last-update order", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      handled.push(`${event.chatId}:${event.eventId}`);
+    });
+    for (const [id, chat, text] of [
+      [205, 1, "/forget"],
+      [201, 1, "first"],
+      [302, 2, "b"],
+      [203, 1, "third"],
+      [301, 2, "a"],
+      [202, 1, "second"],
+    ] as const) {
+      stored(finance, id, text, chat);
+    }
+    expect(await pipeline.recover()).toBe(6);
+    expect(handled.filter((h) => h.startsWith("1:"))).toEqual(["1:201", "1:202", "1:203", "1:205"]);
+    expect(handled.filter((h) => h.startsWith("2:"))).toEqual(["2:301", "2:302"]);
+  });
+
+  test("pages through more than one page, each page finished before the next", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      handled.push(event.eventId);
+    }, { maxConcurrent: 100 });
+    for (let i = 0; i < 60; i++) stored(finance, 1000 + i, "x", 5000 + i);
+    expect(await pipeline.recover()).toBe(60);
+    expect(handled).toHaveLength(60);
+    expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(2);
+  });
+
+  test("stops when a page brings nothing new (events whose status can't be updated)", async () => {
+    const { pipeline, finance } = setup(async () => {});
+    for (let i = 0; i < 50; i++) stored(finance, 2000 + i, "x", 6000 + i);
+    finance.fail("POST /agent/events/status", "network", 1000);
+    expect(await pipeline.recover()).toBe(50);
+    expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(2);
+  });
+
+  test("a backend outage fails recovery (boot is fatal, the container restarts)", async () => {
+    const { pipeline, finance } = setup(async () => {});
+    finance.fail("GET /agent/events/recoverable", "network");
+    await expect(pipeline.recover()).rejects.toThrow();
+  });
+});
+
+describe("pipeline shutdown", () => {
+  test("drains everything accepted, including events still waiting for their claim, then refuses new ones", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      handled.push(event.eventId);
+    });
+    await pipeline.deliver(textUpdate(60, "a"));
+    await pipeline.deliver(textUpdate(61, "b", 2));
+    const release = finance.hold("POST /agent/events/claim");
+    const late = pipeline.deliver(textUpdate(62, "c", 3)); // claim in flight when shutdown starts
+    await waitFor(() => finance.callsTo("/agent/events/claim").length === 3);
+    const draining = pipeline.shutdown(1000);
+    release();
+    expect(await late).toBe("accepted");
+    expect(await draining).toBe(true);
+    expect(handled.sort()).toEqual(["60", "61", "62"]);
+    expect(await pipeline.deliver(textUpdate(63, "d"))).toBe("overloaded");
+  });
+
+  test("gives up after the timeout", async () => {
+    const { pipeline } = setup(() => new Promise(() => {}));
+    await pipeline.deliver(textUpdate(70, "a"));
+    expect(await pipeline.shutdown(30)).toBe(false);
   });
 });
 
@@ -400,18 +321,6 @@ describe("Semaphore", () => {
 });
 
 describe("ChatQueues", () => {
-  test("waitForCapacity resolves once a slot frees up", async () => {
-    const queues = new ChatQueues({ maxPerChat: 5, maxTotal: 1, maxConcurrent: 5 });
-    const gate = deferred();
-    queues.enqueue("a", () => gate.promise);
-    let resolved = false;
-    void queues.waitForCapacity().then(() => (resolved = true));
-    await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(resolved).toBe(false);
-    gate.resolve();
-    await waitFor(() => resolved);
-  });
-
   test("a task that throws doesn't stall its chat", async () => {
     const errors: unknown[] = [];
     const queues = new ChatQueues({ maxPerChat: 5, maxTotal: 5, maxConcurrent: 5 }, (error) => errors.push(error));
@@ -425,5 +334,16 @@ describe("ChatQueues", () => {
     await queues.drain(1000);
     expect(ran).toEqual([2]);
     expect(errors).toHaveLength(1);
+  });
+
+  test("drain(Infinity) waits for the tasks", async () => {
+    const queues = new ChatQueues({ maxPerChat: 5, maxTotal: 5, maxConcurrent: 5 });
+    let done = false;
+    queues.enqueue("a", async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      done = true;
+    });
+    expect(await queues.drain(Number.POSITIVE_INFINITY)).toBe(true);
+    expect(done).toBe(true);
   });
 });
