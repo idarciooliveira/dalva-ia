@@ -7,6 +7,7 @@ import {
   idempotencyKeySchema,
   isWriteRoute,
   matchRoute,
+  requiredScope,
   requiresIdempotencyKey,
   mergeRequestInput,
   ok,
@@ -19,11 +20,11 @@ import {
 import type { FunctionReference } from "convex/server";
 
 import { httpAction, type ActionCtx } from "../../_generated/server";
-import { readApiErrorData } from "./errors";
+import { readApiErrorData, readHandlerFailure } from "./errors";
 import { implementationFor } from "./registry";
 import { verifyServiceKey } from "./serviceAuth";
 import { serviceImplementationFor } from "./serviceRegistry";
-import { verifyUserToken, type FinanceScope } from "./tokens";
+import { verifyUserToken } from "./tokens";
 
 /** Every method used by the contract; `http.ts` mounts the router for each. */
 export const API_METHODS: HttpMethod[] = [...new Set(allRoutes().map((r) => r.route.method))];
@@ -187,7 +188,7 @@ async function handle(ctx: ActionCtx, request: Request): Promise<Response> {
   if (!implementation) throw new HttpError("not_found", "Route not found");
 
   const write = isWriteRoute(match.route);
-  const required: FinanceScope = write ? "finance:write" : "finance:read";
+  const required = requiredScope(match.route);
   if (!claims.scopes.includes(required)) throw new HttpError("forbidden", `Token lacks the ${required} scope`);
 
   let idempotencyKey: string | undefined;
@@ -204,6 +205,15 @@ async function handle(ctx: ActionCtx, request: Request): Promise<Response> {
   const input = parseInput(match, write ? await readJsonBody(request) : url.searchParams);
   const userId = claims.sub;
   const channelIdentityId = claims.cid;
+  if (match.route.scope !== undefined) {
+    // Agent store: no idempotency record. A mutation may report a failure as its result to commit its writes first.
+    const data: unknown = write
+      ? await ctx.runMutation(implementation as FunctionReference<"mutation", "internal">, { userId, input, channelIdentityId })
+      : await ctx.runQuery(implementation as FunctionReference<"query", "internal">, { userId, input, channelIdentityId });
+    const failure = readHandlerFailure(data);
+    if (failure) throw new HttpError(failure.code, failure.message, failure.details);
+    return json(200, ok(data));
+  }
   if (!write) {
     const data: unknown = await ctx.runQuery(implementation as FunctionReference<"query", "internal">, {
       userId,

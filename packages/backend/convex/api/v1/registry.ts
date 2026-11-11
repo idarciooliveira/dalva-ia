@@ -63,6 +63,17 @@ export const implementations: Implementations = {
     record: internal.api.v1.debts.recordPayment,
     remove: internal.api.v1.debts.removePayment,
   },
+  // Agent store: scope `agent:state`, no idempotency record (see define.ts).
+  agentSessions: { current: internal.api.v1.agent.currentSession },
+  agentMessages: { list: internal.api.v1.agent.listMessages, append: internal.api.v1.agent.appendMessages },
+  agentPendingActions: {
+    create: internal.api.v1.agent.createPendingAction,
+    get: internal.api.v1.agent.getPendingAction,
+    confirm: internal.api.v1.agent.confirmPendingAction,
+    cancel: internal.api.v1.agent.cancelPendingAction,
+    complete: internal.api.v1.agent.completePendingAction,
+  },
+  agentHistory: { delete: internal.api.v1.agent.deleteHistory },
 };
 
 export function implementationFor(group: string, op: string) {

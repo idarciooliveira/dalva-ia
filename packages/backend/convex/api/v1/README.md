@@ -9,19 +9,43 @@ Server side of `@mpf/finance-contract`, mounted at `/api/v1/*` on the Convex sit
 
 ## Auth
 
-- `Authorization: Bearer <JWT>`, HS256 only, verified with Web Crypto. Claims: `sub` (userId), `scope` (`finance:read` / `finance:write`, space-separated), `aud: "finance-api"`, `exp`, `iat`.
-- GET needs `finance:read`, writes need `finance:write`. Bad, forged or expired token: `unauthorized`. Missing scope: `forbidden`.
+- `Authorization: Bearer <JWT>`, HS256 only, verified with Web Crypto. Claims: `sub` (userId), `scope` (`finance:read` / `finance:write` / `agent:state`, space-separated), `aud: "finance-api"`, `exp`, `iat`.
+- Finance routes: GET needs `finance:read`, writes need `finance:write`. Agent-store routes (below) need `agent:state` and nothing else; the finance scopes don't open them and `agent:state` doesn't open finance routes. Bad, forged or expired token: `unauthorized`. Missing scope: `forbidden`.
 - `mintUserToken(userId, scopes, ttlSeconds)` in `tokens.ts` issues tokens server-side (TTL up to one year).
 
 ## Service routes (channel linking)
 
-- `POST /channel-links/redeem`, `POST /channel-identities/resolve`, `POST /channel-identities/unlink`. `Authorization: Bearer <FINANCE_API_SERVICE_KEY>`, compared in constant time (both sides SHA-256'd first). User tokens get `unauthorized` here; the service key gets `unauthorized` on user routes. No scopes, no `Idempotency-Key`.
+- `POST /channel-links/redeem`, `POST /channel-identities/resolve`, `POST /channel-identities/unlink`, plus the inbound event routes under `/agent/events/*` (see Agent store). `Authorization: Bearer <FINANCE_API_SERVICE_KEY>`, compared in constant time (both sides SHA-256'd first). User tokens get `unauthorized` here; the service key gets `unauthorized` on user routes. No scopes, no `Idempotency-Key`.
 - Handlers live in `serviceRegistry.ts` and run in the httpAction (hashing, token minting), each calling one internal function in `channels.ts`. No handler takes a userId: it comes from the code row or the linked identity.
 - Link codes: 32 random bytes as base64url (43 chars), created by the web action `channelLinks.createLinkCode` (needs `consent: true`), TTL 10 minutes, one pending code per user and channel. Only the SHA-256 is stored. Unknown, used, expired and superseded codes all return the same `not_found`.
 - Telegram codes must be redeemed from the private chat (`chatId === externalUserId`), else `validation_failed`, so the bot is never linked into a group.
 - One active identity per `(channel, externalUserId)` and per `(user, channel)`; violations return `conflict` and leave the code unused. Redeem is not retry-safe: after an ambiguous failure, call `resolve`. Checks and writes run in one mutation, so concurrent redeems serialize.
 - `resolve` only answers for the chat the identity was linked from (`not_found` otherwise, e.g. in a group). It mints a 15-minute user token with the identity's scopes and a `cid` claim. Every user-route request with `cid` re-checks the identity in the same transaction: unlinked returns `unauthorized`, read-only blocks writes with `forbidden`. Turning read-only off only helps tokens minted afterwards (the token's own scopes still apply), so the agent should resolve on every message.
 - Hourly cron deletes expired codes.
+- `resolve` always adds `agent:state` to the token scopes (`scopes` in the response), also for read-only identities, so the bot keeps its conversation state. `identity.scopes` stays the stored finance scopes.
+- Unlinking (web or `channel-identities/unlink`) deletes the identity's sessions, messages and pending actions.
+
+## Agent store
+
+State for the stateless chat agent (`agent.ts`, `agentEvents.ts`, domain in `domain/agentStore.ts`, crons and the web delete in `../../agentStore.ts`).
+
+**Events (service key)** run before identity resolution, so they know no user:
+
+- `POST /agent/events/claim {channel, eventId, payload}` -> `{status: "new" | "duplicate"}`. Dedupe key is `(channel, eventId)`. `payload` is a JSON string, at most 32 KB (UTF-8).
+- `POST /agent/events/status {channel, eventId, status: processing | done | failed, error?}`. `processing` counts an attempt. `done` and `failed` are final (`conflict` after) and drop the payload. Unknown event: `not_found`.
+- `GET /agent/events/recoverable?channel&olderThanSeconds=60&maxAttempts=3&limit=20`: `received`/`processing` events with no update for that long and `attempts < maxAttempts`, oldest first, with their payload. Reads at most 100 rows per status; events untouched for 24h are deleted, so the head of the queue can't stay blocked.
+
+**Sessions, messages, pending actions, history (user token, `agent:state`)**. The token must carry `cid` (a resolved channel token): without it `forbidden`; once the identity is unlinked `unauthorized`. `userId` and the identity come from the token. Every id in a request is checked against the token's user and identity: someone else's session or action is `not_found`. No `Idempotency-Key`.
+
+- `POST /agent/sessions/current {channel, chatId, idleTimeoutMinutes, startNew?}`: the active session of the chat, or a new one when it was idle longer than the timeout (the old one is ended) or `startNew`. `channel`/`chatId` must be the chat the token was resolved for (`validation_failed` otherwise).
+- `GET /agent/sessions/:sessionId/messages?limit` (default 50, max 200): latest N, oldest first. `POST` same path `{messages: [{role, content}]}` (1-20, `content` is a JSON string up to 32 KB): stored in order with a per-session `seq`, bumps `lastActivityAt`. Past 500 messages per session, or on an ended session: `conflict`, nothing stored; call `current` with `startNew: true`.
+- `POST /agent/pending-actions {sessionId, operation, input, summary, ttlSeconds?}`: `operation` is a finance write (`transactions.create`, ...), `input` is validated against that operation's request schema. TTL default 10 minutes, max 1 hour. At most 20 open actions per session.
+- `GET /agent/pending-actions/:id`. `POST .../confirm`: atomic `pending -> confirmed`, returns the stored operation and input. `conflict` when not pending or expired; an expired action is committed as `expired` first. `POST .../cancel`: only `pending`, else `conflict`. `POST .../complete {status: executed | failed, result}`: only `confirmed`, else `conflict`.
+- `DELETE /agent/history`: the user's sessions, messages and pending actions, every channel. First 500 rows now, the rest through the scheduler.
+
+Why `confirm` is not idempotent: a second call is a `conflict` by design (it is the double-execution guard). After an ambiguous failure, `get` the action: `confirmed` means go on and execute with the action id as `Idempotency-Key` (finance routes replay a stored response for the same key), then `complete`.
+
+**Retention (crons)**: inbound events are deleted 24h after their last update (done, failed or abandoned; the payload is already dropped when finished); pending actions past `expiresAt` become `expired` (every 15 minutes; `confirm` checks the time itself); sessions with no activity for 30 days are deleted with their messages and actions, and so are finished actions of that age (daily). Every job is bounded (200 rows, 500 for history) and reschedules itself while full.
 
 ## Writes
 

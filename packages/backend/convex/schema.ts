@@ -4,6 +4,26 @@ import { v } from "convex/values";
 
 /** Chat channels a user can link. Add a literal to support another one. */
 export const channelValidator = v.literal("telegram");
+export const agentEventStatusValidator = v.union(
+  v.literal("received"),
+  v.literal("processing"),
+  v.literal("done"),
+  v.literal("failed"),
+);
+export const agentMessageRoleValidator = v.union(
+  v.literal("user"),
+  v.literal("assistant"),
+  v.literal("tool"),
+  v.literal("system"),
+);
+export const agentActionStatusValidator = v.union(
+  v.literal("pending"),
+  v.literal("confirmed"),
+  v.literal("cancelled"),
+  v.literal("expired"),
+  v.literal("executed"),
+  v.literal("failed"),
+);
 export const channelScopeValidator = v.union(v.literal("finance:read"), v.literal("finance:write"));
 
 export default defineSchema({
@@ -231,4 +251,69 @@ export default defineSchema({
     .index("by_channel_and_externalUserId_and_unlinkedAt", ["channel", "externalUserId", "unlinkedAt"])
     .index("by_userId_and_channel_and_unlinkedAt", ["userId", "channel", "unlinkedAt"])
     .index("by_userId_and_unlinkedAt", ["userId", "unlinkedAt"]),
+
+  /* ------------------------------------------------------------------ */
+  /*  Agent store (state for the chat agent, which is stateless)         */
+  /* ------------------------------------------------------------------ */
+  // Raw inbound platform events: dedupe before identity resolution, and crash
+  // recovery. Holds message text, so the payload is dropped once the event is
+  // finished and the row is deleted 24h after its last update (cron).
+  agentInboundEvents: defineTable({
+    channel: channelValidator,
+    eventId: v.string(), // platform event id, unique per channel (enforced in the claim mutation)
+    status: agentEventStatusValidator,
+    attempts: v.number(), // bumped each time the event moves to `processing`
+    payload: v.string(), // JSON, size-capped by the API; "" once done or failed
+    error: v.optional(v.string()),
+    receivedAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_channel_and_eventId", ["channel", "eventId"])
+    .index("by_channel_and_status_and_updatedAt", ["channel", "status", "updatedAt"])
+    .index("by_status_and_updatedAt", ["status", "updatedAt"]),
+
+  // One conversation in one chat. Ends after an idle timeout chosen by the
+  // agent. Deleted with its messages and actions when unlinked, on request, or
+  // after 30 days without activity.
+  agentSessions: defineTable({
+    userId: v.string(),
+    identityId: v.id("channelIdentities"),
+    channel: channelValidator,
+    chatId: v.string(),
+    startedAt: v.number(),
+    lastActivityAt: v.number(),
+    endedAt: v.optional(v.number()),
+    messageCount: v.number(), // denormalized, for the per-session cap and the next `seq`
+  })
+    .index("by_userId_and_channel_and_chatId_and_endedAt", ["userId", "channel", "chatId", "endedAt"])
+    .index("by_userId", ["userId"])
+    .index("by_identityId", ["identityId"])
+    .index("by_lastActivityAt", ["lastActivityAt"]),
+
+  agentMessages: defineTable({
+    sessionId: v.id("agentSessions"),
+    userId: v.string(),
+    role: agentMessageRoleValidator,
+    content: v.string(), // provider-agnostic JSON, capped at 32 KB by the API
+    seq: v.number(), // 1-based position in the session: the order of record
+    createdAt: v.number(),
+  }).index("by_sessionId_and_seq", ["sessionId", "seq"]),
+
+  // A write the agent proposed and the user confirms with a button.
+  agentPendingActions: defineTable({
+    userId: v.string(),
+    sessionId: v.id("agentSessions"),
+    operation: v.string(), // contract operation name, e.g. "transactions.create"
+    input: v.string(), // JSON, validated against the operation's request schema
+    summary: v.string(),
+    status: agentActionStatusValidator,
+    expiresAt: v.number(),
+    result: v.optional(v.string()), // JSON
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_sessionId_and_status", ["sessionId", "status"])
+    .index("by_userId", ["userId"])
+    .index("by_status_and_expiresAt", ["status", "expiresAt"])
+    .index("by_updatedAt", ["updatedAt"]),
 });

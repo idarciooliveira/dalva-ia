@@ -189,7 +189,7 @@ describe("channelIdentities.resolve", () => {
     const account = await seedAccount(t, userId, { currency: "EUR", balance: 10_000 });
 
     const resolved = await service.channelIdentities.resolve(chat("1001"));
-    expect(resolved.scopes).toEqual(["finance:read", "finance:write"]);
+    expect(resolved.scopes).toEqual(["finance:read", "finance:write", "agent:state"]);
     expect(resolved.profile).toEqual({ displayName: "Alice", baseCurrency: "EUR" });
     const verified = await verifyUserToken(resolved.token);
     expect(verified).toMatchObject({ ok: true, claims: { sub: userId } });
@@ -216,7 +216,9 @@ describe("channelIdentities.resolve", () => {
     });
 
     const resolved = await service.channelIdentities.resolve(chat("1001"));
-    expect(resolved.scopes).toEqual(["finance:read"]);
+    // Read-only keeps the agent's conversation state.
+    expect(resolved.scopes).toEqual(["finance:read", "agent:state"]);
+    expect(resolved.identity.scopes).toEqual(["finance:read"]);
     const finance = clientFor(t, resolved.token);
     await finance.accounts.list();
     await expectApiError(finance.accounts.adjust({ id: account, amount: { amountMinor: 1, currency: "USD" } }), "forbidden", 403);

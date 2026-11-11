@@ -14,13 +14,14 @@ import {
 import { expect, vi } from "vitest";
 
 import type { Doc, Id } from "../../_generated/dataModel";
+import { api } from "../../_generated/api";
 import { setupTest } from "../../test.setup";
 import { SERVICE_KEY_ENV } from "./serviceAuth";
-import { mintUserToken, TOKEN_SECRET_ENV, type FinanceScope } from "./tokens";
+import { mintUserToken, TOKEN_SECRET_ENV, type TokenScope } from "./tokens";
 
 export const TEST_SECRET = "finance-api-test-secret-0123456789abcdef";
 export const TEST_SERVICE_KEY = "finance-api-test-service-key-fedcba9876543210";
-export const ALL_SCOPES: FinanceScope[] = ["finance:read", "finance:write"];
+export const ALL_SCOPES: TokenScope[] = ["finance:read", "finance:write", "agent:state"];
 
 export type T = ReturnType<typeof setupTest>;
 
@@ -76,7 +77,7 @@ export const getDoc = <TT extends "accounts" | "transactions" | "savingsGoals" |
   id: Id<TT>,
 ) => t.run((ctx) => ctx.db.get(id));
 
-export const tokenFor = (userId: string, scopes: FinanceScope[] = ALL_SCOPES, ttl = 600) =>
+export const tokenFor = (userId: string, scopes: TokenScope[] = ALL_SCOPES, ttl = 600) =>
   mintUserToken(userId, scopes, ttl);
 
 /** The contract's own client over `t.fetch`: every success is parsed with the route's response schema. */
@@ -166,3 +167,48 @@ export async function twoUsers(t: T) {
     asBob: clientFor(t, await tokenFor(bob)),
   };
 }
+
+const TG = "telegram" as const;
+
+/**
+ * A user linked to a Telegram chat the way the bot does it (web code, service
+ * redeem), plus the token `resolve` hands out: the one the agent uses on the
+ * agent-store routes. `agent` and `finance` are the same client.
+ */
+export async function linkedChat(t: T, options: { externalUserId?: string; readOnly?: boolean; withAccount?: boolean } = {}) {
+  const externalUserId = options.externalUserId ?? "1001";
+  const userId = await seedUser(t);
+  const web = t.withIdentity({ subject: `${userId}|session-${userId}` });
+  const { code } = await web.action(api.channelLinks.createLinkCode, { channel: TG, consent: true });
+  const service = serviceClientFor(t);
+  const chat = { channel: TG, externalUserId, chatId: externalUserId };
+  const { identity } = await service.channelLinks.redeem({ ...chat, code });
+  if (options.readOnly) {
+    await web.mutation(api.channelLinks.setReadOnly, { identityId: identity.id as unknown as Id<"channelIdentities">, readOnly: true });
+  }
+  const resolved = await service.channelIdentities.resolve(chat);
+  const client = clientFor(t, resolved.token);
+  return {
+    userId,
+    web,
+    service,
+    chat,
+    chatId: externalUserId,
+    identityId: identity.id as unknown as Id<"channelIdentities">,
+    token: resolved.token,
+    resolved,
+    agent: client,
+    finance: client,
+    accountId: options.withAccount ? await seedAccount(t, userId, { balance: 100_000 }) : undefined,
+  };
+}
+
+export type LinkedChat = Awaited<ReturnType<typeof linkedChat>>;
+
+/** Flat, valid input for `transactions.create`, for pending actions. */
+export const expenseInput = (accountId: string, amountMinor = 1250) => ({
+  type: "expense",
+  amount: { amountMinor, currency: "USD" },
+  accountId,
+  date: "2026-04-05",
+});
