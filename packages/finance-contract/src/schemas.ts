@@ -353,6 +353,18 @@ export const transactionCreateRequestSchema = z
 export const transactionResponseSchema = z.object({ transaction: transactionSchema });
 
 /**
+ * Rows that `transactions.update` / `transactions.delete` refuse (`conflict`):
+ * transfer legs (change them with `transfers.*`), goal-contribution transfers
+ * and debt-payment transactions (change them through their own endpoints).
+ */
+export const transactionManagedBySchema = z.enum(["transfer", "goal_contribution", "debt_payment"]);
+export const transactionGetRequestSchema = z.strictObject({ id: transactionIdSchema });
+export const transactionGetResponseSchema = z.object({
+  transaction: transactionSchema,
+  managedBy: transactionManagedBySchema.optional(),
+});
+
+/**
  * Partial update; omitted fields are unchanged and fields cannot be cleared.
  * The sign rule for `amount` depends on the transaction's effective type, so
  * the server enforces it (positive unless the result is an adjustment).
@@ -763,9 +775,13 @@ export const agentActionOperationSchema = z.enum([
 
 export const agentActionStatusSchema = z.enum(["pending", "confirmed", "cancelled", "expired", "executed", "failed"]);
 
+/** Caller's dedupe key for `create`, unique per session (e.g. inbound event id + tool call index). */
+export const agentActionClientKeySchema = z.string().regex(/^[A-Za-z0-9:_-]{1,128}$/);
+
 export const agentPendingActionSchema = z.object({
   id: agentPendingActionIdSchema,
   sessionId: agentSessionIdSchema,
+  clientKey: z.string().optional(),
   operation: agentActionOperationSchema,
   /** Flat input of the operation, as the finance client takes it. */
   input: z.record(z.string(), z.json()),
@@ -782,6 +798,8 @@ const agentPendingActionResponse = z.object({ action: agentPendingActionSchema }
 /**
  * `input` is validated against the operation's own request schema, so a button
  * never leads to an action that can't run. `ttlSeconds` defaults to 10 minutes.
+ * With `clientKey`, a second create with the same key in the same session
+ * returns the existing action (whatever its status) and stores nothing.
  */
 export const agentPendingActionCreateRequestSchema = z.strictObject({
   sessionId: agentSessionIdSchema,
@@ -789,6 +807,7 @@ export const agentPendingActionCreateRequestSchema = z.strictObject({
   input: boundedJson(z.record(z.string(), z.json()), AGENT_ACTION_JSON_MAX_BYTES),
   summary: z.string().trim().min(1).max(500),
   ttlSeconds: z.number().int().min(30).max(3600).optional(),
+  clientKey: agentActionClientKeySchema.optional(),
 });
 export const agentPendingActionCreateResponseSchema = agentPendingActionResponse;
 
@@ -842,3 +861,5 @@ export type AgentSession = z.output<typeof agentSessionSchema>;
 export type AgentMessage = z.output<typeof agentMessageSchema>;
 export type AgentPendingAction = z.output<typeof agentPendingActionSchema>;
 export type AgentActionOperation = z.output<typeof agentActionOperationSchema>;
+export type AgentActionStatus = z.output<typeof agentActionStatusSchema>;
+export type TransactionManagedBy = z.output<typeof transactionManagedBySchema>;

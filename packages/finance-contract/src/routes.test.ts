@@ -55,6 +55,7 @@ describe("route map", () => {
         "subcategories.list",
         "transactions.create",
         "transactions.delete",
+        "transactions.get",
         "transactions.search",
         "transactions.update",
         "transfers.create",

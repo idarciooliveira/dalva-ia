@@ -28,7 +28,7 @@ await service.agentEvents.claim({ channel: "telegram", eventId: String(update.up
 const finance = createFinanceClient({ baseUrl, getToken: () => token });
 const { session } = await finance.agentSessions.current({ channel: "telegram", chatId, idleTimeoutMinutes: 30 });
 await finance.agentMessages.append({ sessionId: session.id, messages: [{ role: "user", content: JSON.stringify(message) }] });
-const { action } = await finance.agentPendingActions.create({ sessionId: session.id, operation: "transactions.create", input, summary: "Add expense of 12.50 USD" });
+const { action } = await finance.agentPendingActions.create({ sessionId: session.id, operation: "transactions.create", input, summary: "Add expense of 12.50 USD", clientKey: `${eventId}:0` }); // clientKey: a repeat returns the same action
 ```
 
 ## Conventions
