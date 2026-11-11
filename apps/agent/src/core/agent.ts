@@ -1,8 +1,10 @@
+import type { AgentPendingAction } from "@mpf/finance-contract";
 import { generateText, isStepCount, type LanguageModel, type ModelMessage } from "ai";
 
 import { cachedSystemMessage, withCacheBreakpoint } from "../llm/model";
 import { errorFields, type Logger } from "../log";
-import { createReadTools } from "../tools";
+import { createTools } from "../tools";
+import { Proposals } from "../tools/proposals";
 import type { FinanceClient } from "./finance";
 import { decodeHistory, encodeAssistantText, encodeResponseMessages, encodeUserText, trimHistory } from "./history";
 import { SYSTEM_PROMPT } from "./prompts/system";
@@ -34,14 +36,29 @@ export interface UserContext {
 
 export interface AgentTurnInput {
   text: string;
+  /** Inbound event of the turn. A proposed change is keyed by it, so a replayed event finds the same action. */
+  eventId: string;
+  /** The chat may write: write tools are offered (each only proposes; the user confirms). */
+  canWrite: boolean;
   session: SessionRecorder;
   userContext: UserContext;
   /** Client bound to the user's token. Tools use it; the model never sees the token. */
   finance: FinanceClient;
   /** Shows the typing indicator; called repeatedly while the turn runs. */
   typing?: () => Promise<void>;
-  /** Sends the answer. Called before the turn is stored, so a slow or failed store never delays or loses the reply. */
-  reply?: (text: string) => Promise<void>;
+  /**
+   * Sends the answer, with the change the turn proposed (if any) for the
+   * Confirm/Cancel buttons. Called before the turn is stored, so a slow or
+   * failed store never delays or loses the reply.
+   */
+  reply?: (reply: AgentReply) => Promise<void>;
+}
+
+export interface AgentReply {
+  /** The model's text; may be empty when a change was proposed. */
+  text: string;
+  /** Pending: send Confirm/Cancel. Any other status: a replayed turn whose change already moved on. */
+  action?: AgentPendingAction;
 }
 
 export interface AgentTurnResult {
@@ -49,6 +66,8 @@ export interface AgentTurnResult {
   steps: number;
   toolCalls: Array<{ name: string; input: unknown }>;
   usage: { inputTokens: number; outputTokens: number };
+  /** The change this turn proposed, if any. */
+  action?: AgentPendingAction;
 }
 
 export interface Agent {
@@ -77,11 +96,16 @@ const oneLine = (text: string, max: number) =>
     .slice(0, max);
 
 /**
- * Per-turn facts, sent at the start of the user message (not in the system
- * prompt, which stays byte-identical across turns for prompt caching).
+ * Per-turn facts, sent as a message of their own just before the user's (not
+ * in the system prompt, which stays byte-identical across turns for prompt caching).
  */
-export function contextBlock(day: { date: string; weekday: string }, timeZone: string, user: UserContext): string {
+export function contextBlock(day: { date: string; weekday: string }, timeZone: string, user: UserContext, canWrite: boolean): string {
   const lines = [`Today: ${day.date} (${day.weekday}), time zone ${timeZone}`];
+  lines.push(
+    canWrite
+      ? "Access: read, and propose changes the user confirms with a button"
+      : "Access: read-only (this chat can't change data; the user can allow changes in DALVA → Settings → Telegram)",
+  );
   if (user.baseCurrency) lines.push(`Base currency: ${oneLine(user.baseCurrency, 3)}`);
   if (user.displayName) lines.push(`Name: ${oneLine(user.displayName, 60)}`);
   return `[DALVA context]\n${lines.join("\n")}\n[/DALVA context]`;
@@ -129,36 +153,45 @@ export function createAgent(options: AgentOptions): Agent {
       const day = localDay(now(), timezone);
       const history = trimHistory(decodeHistory(await input.session.history(historyLimit, signal)), historyMaxBytes);
       if (history.length) history[history.length - 1] = withCacheBreakpoint(history[history.length - 1]!);
-      const tools = createReadTools({
-        finance: input.finance,
-        today: day.date,
-        signal,
-        onFatal: (error) => {
-          fatal ??= error;
-          abort.abort(error);
+      // Write tools only for chats that may write; they propose, the user's button runs it.
+      const proposals = input.canWrite
+        ? new Proposals({ finance: input.finance, eventId: input.eventId, sessionId: (s) => input.session.sessionId(s) })
+        : null;
+      const tools = createTools(
+        {
+          finance: input.finance,
+          today: day.date,
+          signal,
+          onFatal: (error) => {
+            fatal ??= error;
+            abort.abort(error);
+          },
         },
-      });
-      const userMessage: ModelMessage = {
-        role: "user",
-        content: `${contextBlock(day, timezone, input.userContext)}\n\n${input.text}`,
-      };
+        proposals ? { proposals } : undefined,
+      );
+      // The context block is its own message: the user's text stays exactly what they wrote.
+      const contextMessage: ModelMessage = { role: "user", content: contextBlock(day, timezone, input.userContext, input.canWrite) };
+      const userMessage: ModelMessage = { role: "user", content: input.text };
 
       const result = await generateText({
         model,
         instructions,
-        messages: [...history, userMessage],
+        messages: [...history, contextMessage, userMessage],
         tools,
         stopWhen: isStepCount(maxSteps),
-        // The last allowed step must answer, not call another tool.
-        prepareStep: ({ stepNumber }) => (stepNumber >= maxSteps - 1 ? { toolChoice: "none" as const } : {}),
+        // The last allowed step must answer, not call another tool; so must the step after a proposal.
+        prepareStep: ({ stepNumber }) =>
+          stepNumber >= maxSteps - 1 || proposals?.current ? { toolChoice: "none" as const } : {},
         ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
         maxRetries: 1,
         abortSignal: signal,
       });
       if (fatal) throw fatal;
 
+      const action = proposals?.current?.action;
       const modelText = toPlainText(result.text);
-      const text = modelText || FALLBACK_REPLY;
+      // With a proposal the summary speaks for itself; no fallback apology.
+      const text = modelText || (action ? "" : FALLBACK_REPLY);
       const toolCalls = result.steps.flatMap((step) => step.toolCalls.map((call) => ({ name: call.toolName, input: call.input })));
       const usage = { inputTokens: result.usage.inputTokens ?? 0, outputTokens: result.usage.outputTokens ?? 0 };
 
@@ -171,22 +204,23 @@ export function createAgent(options: AgentOptions): Agent {
         cacheReadTokens: result.usage.inputTokenDetails?.cacheReadTokens,
         finishReason: result.finishReason,
         tools: toolCalls.map((call) => call.name).join(",") || undefined,
+        proposed: action ? action.operation : undefined,
         historyMessages: history.length,
         ms: Date.now() - started,
       });
 
       stopTyping();
-      await input.reply?.(text);
+      await input.reply?.({ text, ...(action ? { action } : {}) });
 
       // Best effort, after the reply: a failed or aborted store only loses this turn's history.
       // Bounded by shutdown (and the client's per-request timeout), not by the turn deadline,
       // so a turn that answered close to its limit is still stored.
       await input.session.recordAll(
-        [encodeUserText(input.text), ...encodeResponseMessages(result.responseMessages), ...(modelText ? [] : [encodeAssistantText(text)])],
+        [encodeUserText(input.text), ...encodeResponseMessages(result.responseMessages), ...(modelText || !text ? [] : [encodeAssistantText(text)])],
         options.stopSignal,
       );
 
-      return { text, steps: result.steps.length, toolCalls, usage };
+      return { text, steps: result.steps.length, toolCalls, usage, ...(action ? { action } : {}) };
     } catch (error) {
       const cause = fatal ?? error;
       logger.warn("agent_turn_failed", {

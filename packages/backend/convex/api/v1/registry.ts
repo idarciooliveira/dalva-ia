@@ -29,6 +29,7 @@ export const implementations: Implementations = {
   subcategories: { list: internal.api.v1.categories.listSubcategories },
   transactions: {
     search: internal.api.v1.transactions.search,
+    get: internal.api.v1.transactions.get,
     create: internal.api.v1.transactions.create,
     update: internal.api.v1.transactions.update,
     delete: internal.api.v1.transactions.remove,

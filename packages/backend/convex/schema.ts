@@ -305,6 +305,7 @@ export default defineSchema({
   agentPendingActions: defineTable({
     userId: v.string(),
     sessionId: v.id("agentSessions"),
+    clientKey: v.optional(v.string()), // caller's dedupe key, unique per user
     operation: v.string(), // contract operation name, e.g. "transactions.create"
     input: v.string(), // JSON, validated against the operation's request schema
     summary: v.string(),
@@ -316,6 +317,7 @@ export default defineSchema({
   })
     .index("by_sessionId_and_status", ["sessionId", "status"])
     .index("by_userId", ["userId"])
+    .index("by_userId_and_clientKey", ["userId", "clientKey"])
     .index("by_status_and_expiresAt", ["status", "expiresAt"])
     .index("by_updatedAt", ["updatedAt"]),
 });

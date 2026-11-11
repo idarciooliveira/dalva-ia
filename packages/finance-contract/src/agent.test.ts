@@ -102,6 +102,13 @@ describe("agent pending actions", () => {
     expect(ok(agentPendingActionCreateRequestSchema, { ...create, input: { blob: "x".repeat(17 * 1024) } })).toBe(false);
   });
 
+  it("create takes an optional clientKey for idempotent creation", () => {
+    expect(ok(agentPendingActionCreateRequestSchema, { ...create, clientKey: "812345:0" })).toBe(true);
+    expect(ok(agentPendingActionCreateRequestSchema, { ...create, clientKey: "" })).toBe(false);
+    expect(ok(agentPendingActionCreateRequestSchema, { ...create, clientKey: "a b" })).toBe(false);
+    expect(ok(agentPendingActionCreateRequestSchema, { ...create, clientKey: "k".repeat(129) })).toBe(false);
+  });
+
   it("rejects JSON keys Convex can't store (leading $ or _, empty) at any depth", () => {
     for (const input of [
       { $set: 1 },

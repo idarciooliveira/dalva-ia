@@ -5,7 +5,7 @@ import type { MutationCtx } from "../../_generated/server";
 import * as transactions from "../../domain/transactions";
 import { apiError, notFound, validationError } from "./errors";
 import { apiMutation, apiQuery } from "./define";
-import { appAmount, managedReason, requireOwned, transactionDto, transactionDtos } from "./shared";
+import { appAmount, managedReason, owningContribution, requireOwned, transactionDto, transactionDtos } from "./shared";
 
 export const search = apiQuery(routes.transactions.search, async (ctx, userId, input) => {
   const account = input.accountId
@@ -26,6 +26,20 @@ export const search = apiQuery(routes.transactions.search, async (ctx, userId, i
     limit: input.limit,
   });
   return { items: await transactionDtos(ctx, userId, page.items), nextCursor: page.nextCursor };
+});
+
+export const get = apiQuery(routes.transactions.get, async (ctx, userId, input) => {
+  const tx = await requireOwned(ctx, userId, "transactions", input.id, "id", "Transaction");
+  const [transaction] = await transactionDtos(ctx, userId, [tx]);
+  // Goal contributions are transfers too: check them first so they get the more specific label.
+  const managedBy = (await owningContribution(ctx, tx))
+    ? ("goal_contribution" as const)
+    : tx.type === "transfer" || tx.transferGroupId || tx.linkedTransactionId
+      ? ("transfer" as const)
+      : (await managedReason(ctx, tx))
+        ? ("debt_payment" as const)
+        : undefined;
+  return { transaction: transaction!, ...(managedBy ? { managedBy } : {}) };
 });
 
 /** Category/subcategory must be the user's, and the subcategory must sit under the category. */

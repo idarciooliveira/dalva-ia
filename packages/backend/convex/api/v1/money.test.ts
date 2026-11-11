@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { appToMinor, minorToApp, MoneyRangeError, toMoney } from "./money";
+import { appToMinor, minorToApp, minorToAppExact, MoneyPrecisionError, MoneyRangeError, toMoney } from "./money";
 
 describe("api/v1 money: app (value x 100) <-> ISO minor units", () => {
   it("passes 2-decimal currencies through exactly", () => {
@@ -31,6 +31,15 @@ describe("api/v1 money: app (value x 100) <-> ISO minor units", () => {
     expect(minorToApp(-12_345, "KWD")).toBe(-1235);
     expect(minorToApp(5, "BHD")).toBe(1); // 0.005 -> 0.01
     expect(Object.is(minorToApp(-4, "BHD"), 0)).toBe(true);
+  });
+
+  it("minorToAppExact refuses amounts the x100 storage can't hold exactly, instead of rounding", () => {
+    expect(minorToAppExact(12_340, "KWD")).toBe(1234);
+    expect(() => minorToAppExact(12_345, "KWD")).toThrow(MoneyPrecisionError);
+    expect(() => minorToAppExact(5, "BHD")).toThrow(MoneyPrecisionError);
+    expect(() => minorToAppExact(-12_341, "KWD")).toThrow(MoneyPrecisionError);
+    expect(minorToAppExact(1235, "JPY")).toBe(123_500);
+    expect(minorToAppExact(-98_765, "USD")).toBe(-98_765);
   });
 
   it("round-trips 2-decimal amounts and integral 0/3-decimal amounts", () => {

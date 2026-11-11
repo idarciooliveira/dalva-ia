@@ -43,6 +43,7 @@ const messageDto = (message: Doc<"agentMessages">) => ({
 const actionDto = (action: Doc<"agentPendingActions">) => ({
   id: action._id as string,
   sessionId: action.sessionId as string,
+  ...(action.clientKey === undefined ? {} : { clientKey: action.clientKey }),
   operation: action.operation as AgentActionOperation,
   input: JSON.parse(action.input) as Record<string, never>,
   summary: action.summary,
@@ -108,6 +109,7 @@ export const createPendingAction = agentMutation(routes.agentPendingActions.crea
     summary: input.summary,
     ttlMs: input.ttlSeconds === undefined ? agentStore.DEFAULT_ACTION_TTL_MS : input.ttlSeconds * 1000,
     now: Date.now(),
+    ...(input.clientKey === undefined ? {} : { clientKey: input.clientKey }),
   });
   return { action: actionDto(action) };
 });

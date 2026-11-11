@@ -137,6 +137,26 @@ describe("api/v1 transactions: writes", () => {
     expect(transaction.amount).toEqual({ amountMinor: 90, currency: "EUR" });
   });
 
+  it("rejects 3-decimal amounts the app can't store exactly (precision), on every write", async () => {
+    const t = setupApi();
+    const user = await seedUser(t, { baseCurrency: "KWD" });
+    const kwd = await seedAccount(t, user, { currency: "KWD" });
+    const kwd2 = await seedAccount(t, user, { currency: "KWD", name: "Second" });
+    const client = clientFor(t, await tokenFor(user));
+    const odd = { amountMinor: 12_345, currency: "KWD" }; // 12.345 would be stored as 12.35
+    const precision = async (promise: Promise<unknown>) => {
+      const error = await expectApiError(promise, "validation_failed", 400);
+      expect(error.details).toMatchObject({ reason: "precision" });
+    };
+    await precision(client.transactions.create({ type: "expense", amount: odd, accountId: kwd, date: "2026-01-01" }));
+    await precision(client.accounts.adjust({ id: kwd, amount: odd }));
+    await precision(client.transfers.create({ amount: odd, fromAccountId: kwd, toAccountId: kwd2, date: "2026-01-01" }));
+    const { transaction } = await client.transactions.create({ type: "expense", amount: { amountMinor: 12_340, currency: "KWD" }, accountId: kwd, date: "2026-01-01" });
+    expect(transaction.amount).toEqual({ amountMinor: 12_340, currency: "KWD" });
+    await precision(client.transactions.update({ id: transaction.id, amount: odd }));
+    expect(await t.run((ctx) => ctx.db.query("transactions").collect())).toHaveLength(1);
+  });
+
   it("rejects amounts that round to zero in storage (3-decimal currencies)", async () => {
     const t = setupApi();
     const user = await seedUser(t, { baseCurrency: "KWD" });
@@ -148,7 +168,7 @@ describe("api/v1 transactions: writes", () => {
     await expectApiError(client.accounts.adjust({ id: kwd, amount: { amountMinor: -4, currency: "KWD" } }), "validation_failed");
     const { transfer } = await client.transfers.create({ amount: { amountMinor: 10, currency: "KWD" }, fromAccountId: kwd, toAccountId: kwd2, date: "2026-01-01" });
     await expectApiError(client.transfers.update({ id: transfer.outgoingId, amount: { amountMinor: 3, currency: "KWD" } }), "validation_failed");
-    expect((await client.accounts.adjust({ id: kwd, amount: { amountMinor: 5, currency: "KWD" } })).account.balance).toEqual({ amountMinor: 0, currency: "KWD" });
+    await expectApiError(client.accounts.adjust({ id: kwd, amount: { amountMinor: 5, currency: "KWD" } }), "validation_failed");
   });
 
   it("drops the old subcategory when only the category changes", async () => {
@@ -207,6 +227,53 @@ describe("api/v1 transactions: writes", () => {
     const bobOwn = (await asBob.transactions.create({ type: "expense", amount: usd(1), accountId: bobAccount, date: "2026-01-01" })).transaction;
     await expectApiError(asBob.transactions.update({ id: bobOwn.id, accountId: aliceAccount }), "not_found");
     expect((await getDoc(t, tx))?.note).toBeUndefined();
+  });
+});
+
+describe("api/v1 transactions: get", () => {
+  it("returns one row with its currency and conforms to the contract", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asAlice } = await twoUsers(t);
+    const categoryId = await seedCategory(t, alice);
+    const id = await seedTx(t, alice, aliceAccount, { amount: 1_250, categoryId, description: "Lunch" });
+    const { transaction, managedBy } = await asAlice.transactions.get({ id });
+    expect(transaction).toMatchObject({ id, type: "expense", amount: usd(1_250), accountId: aliceAccount, categoryId, description: "Lunch" });
+    expect(managedBy).toBeUndefined();
+    expectConforms(routes.transactions.get, await raw(t, "GET", `/transactions/${id}`, { token: await tokenFor(alice) }));
+  });
+
+  it("flags managed rows: transfer legs, goal-contribution transfers and debt payments", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asAlice } = await twoUsers(t);
+    const savings = await seedAccount(t, alice, { name: "Savings" });
+    const { transfer } = await asAlice.transfers.create({ amount: usd(1_000), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-01" });
+    for (const id of [transfer.outgoingId, transfer.incomingId]) {
+      expect((await asAlice.transactions.get({ id })).managedBy).toBe("transfer");
+    }
+
+    const goalId = await t.run((ctx) =>
+      ctx.db.insert("savingsGoals", { userId: alice, name: "Trip", targetAmount: 10_000, currentAmount: 0, linkedAccountId: savings, isVirtual: false, createdAt: "2026-01-01" }),
+    );
+    const { contribution } = await asAlice.goalContributions.add({ goalId, amount: usd(500), date: "2026-01-02", fromAccountId: aliceAccount });
+    expect((await asAlice.transactions.get({ id: contribution.transactionId! })).managedBy).toBe("goal_contribution");
+
+    const loan = await seedAccount(t, alice, { name: "Loan", type: "loan", balance: 10_000 });
+    const debtId = await t.run((ctx) =>
+      ctx.db.insert("debts", { userId: alice, name: "Car", debtType: "loan", originalAmount: 10_000, currentBalance: 10_000, linkedAccountId: loan, createdAt: "2026-01-01" }),
+    );
+    const paymentId = await t.run((ctx) =>
+      debtPaymentsDomain.recordDebtPayment(ctx, alice, { debtId, amount: 500, date: "2026-01-02", fromAccountId: aliceAccount }),
+    );
+    const payment = await t.run((ctx) => ctx.db.get(paymentId));
+    expect((await asAlice.transactions.get({ id: payment!.sourceTransactionId })).managedBy).toBe("debt_payment");
+  });
+
+  it("isolates users and rejects malformed ids", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asBob } = await twoUsers(t);
+    const id = await seedTx(t, alice, aliceAccount);
+    await expectApiError(asBob.transactions.get({ id }), "not_found", 404);
+    await expectApiError(asBob.transactions.get({ id: "nope" }), "validation_failed", 400);
   });
 });
 

@@ -47,6 +47,29 @@ export const transactions: Json[] = [
   { id: "tx_8", type: "expense", amount: aoa(9_800), accountId: "acc_cash", categoryId: "cat_health", date: "2026-10-28", description: "Farmácia" },
 ];
 
+/**
+ * Rows only reachable by id (not in searches): a transfer's two legs, and rows
+ * owned by a goal contribution and a debt payment.
+ */
+export const managedTransactions: Array<{ transaction: Json; managedBy: string }> = [
+  {
+    transaction: { id: "tx_tr_out", type: "transfer", amount: aoa(20_000), accountId: "acc_bai", destinationAccountId: "acc_poup", linkedTransactionId: "tx_tr_in", transferGroupId: "tg_1", date: "2026-11-07" },
+    managedBy: "transfer",
+  },
+  {
+    transaction: { id: "tx_tr_in", type: "transfer", amount: aoa(20_000), accountId: "acc_poup", linkedTransactionId: "tx_tr_out", transferGroupId: "tg_1", date: "2026-11-07" },
+    managedBy: "transfer",
+  },
+  {
+    transaction: { id: "tx_goal", type: "transfer", amount: aoa(50_000), accountId: "acc_bai", destinationAccountId: "acc_poup", linkedTransactionId: "tx_goal_in", transferGroupId: "tg_2", date: "2026-11-06" },
+    managedBy: "goal_contribution",
+  },
+  {
+    transaction: { id: "tx_debt", type: "expense", amount: aoa(95_000), accountId: "acc_bai", date: "2026-11-04" },
+    managedBy: "debt_payment",
+  },
+];
+
 export const transactionSummary = (month: string): Json => ({
   month,
   totalIncome: aoa(650_000),
@@ -130,4 +153,8 @@ export function seedFinance(fake: { accounts: Json[]; reads: Map<string, Json | 
   fake.reads.set("/goals", { items: goals });
   fake.reads.set("/debts", { items: debts });
   fake.reads.set("/reports/debt-summary", debtSummary);
+  for (const transaction of transactions) fake.reads.set(`/transactions/${transaction.id}`, { transaction });
+  for (const managed of managedTransactions) fake.reads.set(`/transactions/${managed.transaction.id}`, managed);
+  for (const goal of goals) fake.reads.set(`/goals/${goal.id}`, { goal });
+  for (const debt of debts) fake.reads.set(`/debts/${debt.id}`, { debt });
 }

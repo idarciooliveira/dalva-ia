@@ -2,6 +2,7 @@ import type { Account } from "@mpf/finance-contract";
 
 import type { ChannelAdapter, InboundEvent, RichPart, RichText } from "../channels/channel";
 import { errorFields, type Logger } from "../log";
+import { actionStateMessage, handleButton } from "./actions";
 import type { FinanceClients } from "./finance";
 import { isFinanceError } from "./finance";
 import { redeemLink, resolveUser, type ResolvedUser } from "./identity";
@@ -29,6 +30,8 @@ export interface HandlerOptions {
   sessionIdleMinutes: number;
   /** Free-text chat with the agent. Without it, text gets the "coming soon" reply. */
   chat?: ChatOptions;
+  /** Pause before retrying an ambiguous write after Confirm (times the attempt). Default 500ms. */
+  actionRetryDelayMs?: number;
 }
 
 export function formatBalances(accounts: Account[]): RichText {
@@ -75,7 +78,9 @@ export function createHandler(options: HandlerOptions): {
 } {
   const { adapter, clients } = options;
 
-  const reply = (event: InboundEvent, text: RichText) => adapter.send({ chatId: event.chatId }, { type: "text", text });
+  const reply = async (event: InboundEvent, text: RichText) => {
+    await adapter.send({ chatId: event.chatId }, { type: "text", text });
+  };
 
   /**
    * Plain text for a linked user: one agent turn. The agent stores the turn
@@ -98,11 +103,29 @@ export function createHandler(options: HandlerOptions): {
     }
     await chat.agent.runAgentTurn({
       text,
+      eventId: event.eventId,
+      canWrite: user.canWrite,
       session: new SessionRecorder(user.finance, event, options.sessionIdleMinutes, log),
       userContext: { displayName: user.displayName, baseCurrency: user.baseCurrency },
       finance: user.finance,
-      typing: () => adapter.send({ chatId: event.chatId }, { type: "typing" }),
-      reply: (answer) => reply(event, answer),
+      typing: async () => {
+        await adapter.send({ chatId: event.chatId }, { type: "typing" });
+      },
+      reply: async ({ text: answer, action }) => {
+        const to = { chatId: event.chatId };
+        // The code-built summary comes first, so model text (which tool results could steer) never frames it.
+        const tail: RichPart[] = answer ? ["\n\n", answer] : [];
+        if (action?.status === "pending") {
+          // The turn proposed a change (or a replay found it still pending): Confirm/Cancel buttons.
+          await adapter.send(to, { type: "confirm", text: [{ bold: action.summary }, ...tail], actionId: action.id });
+        } else if (action) {
+          // A replayed turn whose change was already confirmed, cancelled or expired: show where it stands, no buttons.
+          const state = actionStateMessage(action);
+          await adapter.send(to, { type: "text", text: [...(typeof state === "string" ? [state] : state), ...tail] });
+        } else {
+          await reply(event, answer);
+        }
+      },
     });
   }
 
@@ -176,12 +199,39 @@ export function createHandler(options: HandlerOptions): {
     }
   }
 
+  /**
+   * Confirm/Cancel. Resolving the user from this chat is what scopes the
+   * action: the token only reaches actions of this user and chat identity.
+   */
+  async function buttonPress(event: InboundEvent, log: Logger): Promise<void> {
+    if (event.chatType !== "private") {
+      // Buttons are only ever sent in private chats; never resolve from a group.
+      if (event.buttonId) await adapter.answerButton(event.buttonId, texts.buttonUnavailable());
+      return;
+    }
+    const resolved = await withServiceErrors(event, log, async () => ({ user: await resolveUser(clients, event) }));
+    if (!resolved) return;
+    try {
+      await handleButton(event, resolved.user, {
+        adapter,
+        logger: log,
+        sessionIdleMinutes: options.sessionIdleMinutes,
+        retryDelayMs: options.actionRetryDelayMs,
+      });
+    } catch (error) {
+      const answer = replyForFinanceError(error);
+      if (!answer) throw error;
+      log.warn("finance_error", errorFields(error));
+      if (event.buttonId) await adapter.answerButton(event.buttonId).catch(() => {});
+      await reply(event, answer);
+    }
+  }
+
   async function handle(event: InboundEvent): Promise<void> {
     const log = options.logger.child({ eventId: event.eventId, chatId: event.chatId, kind: event.kind });
 
     if (event.kind === "button") {
-      // Pending actions are executed in a later release; just stop the spinner.
-      if (event.buttonId) await adapter.answerButton(event.buttonId, texts.buttonUnavailable());
+      await buttonPress(event, log);
       return;
     }
 

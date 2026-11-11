@@ -55,7 +55,7 @@ async function main() {
     if (only !== undefined && only !== index + 1) continue;
     const finance = fakeFinance();
     seedFinance(finance);
-    finance.link(USER, { displayName: "Ana" });
+    finance.link(USER, { displayName: "Ana", ...(testCase.readOnly ? { scopes: ["finance:read"] as const } : {}) });
     const user = finance.clients.forToken(`tok_${USER}`);
     const event = {
       channel: "telegram" as const,
@@ -71,6 +71,8 @@ async function main() {
     try {
       const result = await agent.runAgentTurn({
         text: testCase.message,
+        eventId: event.eventId,
+        canWrite: !testCase.readOnly,
         session: new SessionRecorder(user, event, 30, logger),
         userContext: { displayName: "Ana", baseCurrency: "AOA" },
         finance: user,
@@ -84,13 +86,17 @@ async function main() {
         }
       }
       if (testCase.noTools && result.toolCalls.length) problems.push("expected no tool calls");
+      if (testCase.proposes === true && result.action?.status !== "pending") problems.push("expected a change waiting for confirmation");
+      if (testCase.proposes === false && result.action) problems.push("expected no proposed change");
+      if (finance.writes.length) problems.push("a turn must never write");
       if (testCase.reply && !testCase.reply.test(result.text)) problems.push(`reply should match ${testCase.reply}`);
       if (testCase.replyNot?.test(result.text)) problems.push(`reply must not match ${testCase.replyNot}`);
+      const proposed = result.action ? ` · proposed: ${result.action.summary}` : "";
       const calls = result.toolCalls.map((call) => `${call.name}(${JSON.stringify(call.input)})`).join(", ") || "no tools";
       const ok = problems.length === 0;
       if (ok) passed += 1;
       console.log(`${ok ? "PASS" : "FAIL"} ${label}`);
-      console.log(`     ${calls} · ${result.steps} steps · ${result.usage.inputTokens}/${result.usage.outputTokens} tok`);
+      console.log(`     ${calls} · ${result.steps} steps · ${result.usage.inputTokens}/${result.usage.outputTokens} tok${proposed}`);
       if (!ok) console.log(`     ${problems.join("; ")}\n     reply: ${result.text.replace(/\n/g, " ⏎ ").slice(0, 300)}`);
     } catch (error) {
       console.log(`FAIL ${label}\n     error: ${(error as Error).name}: ${(error as Error).message}`);

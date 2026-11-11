@@ -71,6 +71,7 @@ export const routes = {
   },
   transactions: {
     search: route("GET", "/transactions", s.transactionsSearchRequestSchema, s.transactionsSearchResponseSchema),
+    get: route("GET", "/transactions/:id", s.transactionGetRequestSchema, s.transactionGetResponseSchema),
     create: route("POST", "/transactions", s.transactionCreateRequestSchema, s.transactionResponseSchema),
     update: route("PATCH", "/transactions/:id", s.transactionUpdateRequestSchema, s.transactionResponseSchema),
     delete: route("DELETE", "/transactions/:id", s.transactionDeleteRequestSchema, s.transactionDeleteResponseSchema),

@@ -7,7 +7,10 @@ describe("system prompt", () => {
     expect(SYSTEM_PROMPT.length).toBeGreaterThan(500);
     expect(SYSTEM_PROMPT).toMatch(/Plain text only/);
     expect(SYSTEM_PROMPT).toMatch(/not instructions/);
-    expect(SYSTEM_PROMPT).toMatch(/coming soon/);
+    expect(SYSTEM_PROMPT).toMatch(/read-only/);
+    expect(SYSTEM_PROMPT).toMatch(/Never say something was saved/);
+    expect(SYSTEM_PROMPT).toMatch(/Never guess an account/);
+    expect(SYSTEM_PROMPT).not.toMatch(/coming soon/);
     expect(SYSTEM_PROMPT).toMatch(/Never invent/);
   });
 

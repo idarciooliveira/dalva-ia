@@ -70,8 +70,10 @@ describe("api/v1 accounts", () => {
     const user = await seedUser(t);
     const kwd = await seedAccount(t, user, { currency: "KWD", balance: 0 });
     const client = clientFor(t, await tokenFor(user));
-    const { account } = await client.accounts.adjust({ id: kwd, amount: { amountMinor: 1_235, currency: "KWD" }, date: "2026-01-02" });
-    expect((await getDoc(t, kwd))?.balance).toBe(124); // 1.235 KWD -> app 124 (half away from zero)
+    // 1.235 KWD can't be stored exactly (x100): refused, never rounded.
+    await expectApiError(client.accounts.adjust({ id: kwd, amount: { amountMinor: 1_235, currency: "KWD" } }), "validation_failed");
+    const { account } = await client.accounts.adjust({ id: kwd, amount: { amountMinor: 1_240, currency: "KWD" }, date: "2026-01-02" });
+    expect((await getDoc(t, kwd))?.balance).toBe(124);
     expect(account.balance).toEqual({ amountMinor: 1_240, currency: "KWD" });
     const { items } = await client.transactions.search({ accountId: kwd });
     expect(items[0]?.date).toBe("2026-01-02");

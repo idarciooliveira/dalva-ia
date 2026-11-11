@@ -57,6 +57,7 @@ describe("telegram parse", () => {
       kind: "button",
       buttonPayload: "c:k17abc_def-123",
       buttonId: "4382bfdwdsb323b2d9",
+      messageRef: "13",
       username: "ana_s",
     });
   });
@@ -153,6 +154,33 @@ describe("telegram send", () => {
     await adapter.answerButton("cb1", "later");
     expect(telegram.actions).toEqual([{ chatId: "42", action: "typing" }]);
     expect(telegram.answered).toEqual([{ id: "cb1", text: "later" }]);
+  });
+
+  test("send returns the ref of the last message (where the buttons are)", async () => {
+    const { adapter } = telegramAdapter(captureLogger().logger);
+    const first = await adapter.send({ chatId: "42" }, { type: "confirm", text: "Add expense?", actionId: "act_1" });
+    const second = await adapter.send({ chatId: "42" }, { type: "text", text: "hi" });
+    expect(first).toEqual({ messageRef: "1" });
+    expect(second).toEqual({ messageRef: "2" });
+  });
+
+  test("editMessage replaces the text and removes the buttons (or sets them for a confirm)", async () => {
+    const { adapter, telegram } = telegramAdapter(captureLogger().logger);
+    await adapter.editMessage({ chatId: "42" }, "13", { type: "text", text: [{ bold: "Saved" }, " a & b"] });
+    expect(telegram.edited).toEqual([{ chatId: "42", messageId: 13, html: "<b>Saved</b> a &amp; b", replyMarkup: { inline_keyboard: [] } }]);
+    await adapter.editMessage({ chatId: "42" }, "13", { type: "confirm", text: "again?", actionId: "act_1" });
+    const markup = telegram.edited[1]!.replyMarkup as { inline_keyboard: Array<Array<{ callback_data: string }>> };
+    expect(markup.inline_keyboard.flat().map((b) => b.callback_data)).toEqual(["c:act_1", "x:act_1"]);
+  });
+
+  test("editMessage keeps only the first chunk of a long text and ignores 'message is not modified'", async () => {
+    const { adapter, telegram } = telegramAdapter(captureLogger().logger);
+    await adapter.editMessage({ chatId: "42" }, "13", { type: "text", text: "x\n".repeat(5000) });
+    expect(telegram.edited[0]!.html.length).toBeLessThanOrEqual(4096);
+    telegram.failEdit("Bad Request: message is not modified");
+    await expect(adapter.editMessage({ chatId: "42" }, "13", { type: "text", text: "same" })).resolves.toBeUndefined();
+    telegram.failEdit("Bad Request: message to edit not found");
+    await expect(adapter.editMessage({ chatId: "42" }, "13", { type: "text", text: "gone" })).rejects.toThrow();
   });
 
   test("button payload codec rejects garbage", () => {

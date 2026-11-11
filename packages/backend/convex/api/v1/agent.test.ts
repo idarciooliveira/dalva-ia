@@ -551,6 +551,49 @@ describe("agentPendingActions", () => {
     expect(new Date(short.expiresAt).getTime() - Date.now()).toBeLessThanOrEqual(60_000);
   });
 
+  it("a clientKey makes create idempotent per session: a repeat returns the existing action in any status", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t, { withAccount: true });
+    const s = await session(chat);
+    const create = (amountMinor = 1250, clientKey = "5001:0") =>
+      chat.agent.agentPendingActions.create({
+        sessionId: s.id,
+        operation: "transactions.create",
+        input: expenseInput(chat.accountId!, amountMinor),
+        summary: `Expense ${amountMinor}`,
+        clientKey,
+      });
+    const first = (await create()).action;
+    expect(first.clientKey).toBe("5001:0");
+    // Same key: same action, even when the replayed proposal differs. Nothing new is stored.
+    const again = (await create(999)).action;
+    expect(again).toMatchObject({ id: first.id, summary: "Expense 1250", input: expenseInput(chat.accountId!) });
+    await chat.agent.agentPendingActions.confirm({ id: first.id });
+    expect((await create()).action).toMatchObject({ id: first.id, status: "confirmed" });
+    // Another key is another action.
+    expect((await create(1250, "5001:1")).action.id).not.toBe(first.id);
+    expect(await t.run((ctx) => ctx.db.query("agentPendingActions").collect())).toHaveLength(2);
+  });
+
+  it("a clientKey is scoped to the user: a replay in a newer session finds the same action; a repeat still needs write access", async () => {
+    const t = setupApi();
+    const { alice, bob } = await twoChats(t);
+    const first = await session(alice);
+    const input = { operation: "transactions.create" as const, input: expenseInput(alice.accountId!), summary: "x", clientKey: "k1" };
+    const a = (await alice.agent.agentPendingActions.create({ sessionId: first.id, ...input })).action;
+    const { session: second } = await alice.agent.agentSessions.current({ channel: TG, chatId: alice.chatId, idleTimeoutMinutes: 30, startNew: true });
+    const b = (await alice.agent.agentPendingActions.create({ sessionId: second.id, ...input })).action;
+    expect(b.id).toBe(a.id);
+    // Another user with the same key gets their own action.
+    const bobSession = await session(bob);
+    const c = (await bob.agent.agentPendingActions.create({ ...input, sessionId: bobSession.id, input: expenseInput(bob.accountId!) })).action;
+    expect(c.id).not.toBe(a.id);
+    const chat = alice;
+
+    await chat.web.mutation(api.channelLinks.setReadOnly, { identityId: chat.identityId, readOnly: true });
+    await expectApiError(chat.agent.agentPendingActions.create({ sessionId: second.id, ...input }), "forbidden", 403);
+  });
+
   it("validates the input against the operation's own schema", async () => {
     const t = setupApi();
     const chat = await linkedChat(t, { withAccount: true });
