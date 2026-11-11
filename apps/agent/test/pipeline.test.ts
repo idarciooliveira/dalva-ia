@@ -5,12 +5,16 @@ import { createPipeline, type EventHandler } from "../src/core/pipeline";
 import { ChatQueues } from "../src/core/queue";
 import { captureLogger, fakeFinance, telegramAdapter, textUpdate, waitFor } from "./helpers";
 
-function setup(handle: EventHandler, limits?: { maxPerChat?: number; maxTotal?: number }) {
+function setup(
+  handle: EventHandler,
+  limits?: { maxPerChat?: number; maxTotal?: number; maxConcurrent?: number },
+  accept?: (event: InboundEvent) => boolean,
+) {
   const { logger, lines } = captureLogger();
   const { adapter } = telegramAdapter(logger);
   const finance = fakeFinance();
   const onFailure = vi.fn(async (_event: InboundEvent) => {});
-  const pipeline = createPipeline({ adapter, service: finance.clients.service, handle, logger, limits, onFailure });
+  const pipeline = createPipeline({ adapter, service: finance.clients.service, handle, logger, limits, onFailure, accept });
   return { pipeline, finance, lines, onFailure };
 }
 
@@ -124,7 +128,7 @@ describe("pipeline", () => {
     finance.events.set("41", { eventId: "41", status: "received", attempts: 0, payload: JSON.stringify(textUpdate(41, "b")) });
     finance.events.set("42", { eventId: "42", status: "done", attempts: 1 });
     finance.events.set("43", { eventId: "43", status: "received", attempts: 0, payload: "{\"nope\":1}" });
-    expect(await pipeline.recover()).toBe(2);
+    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(2);
     await pipeline.shutdown(1000);
     expect(handled).toEqual(["40", "41"]);
     expect(finance.callsTo("/agent/events/claim")).toHaveLength(0);
@@ -167,9 +171,104 @@ describe("pipeline", () => {
   });
 });
 
+describe("pipeline recovery and failures", () => {
+  test("a failed processing update is retried by the next recovery pass", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      handled.push(event.eventId);
+    });
+    finance.fail("POST /agent/events/status", "network");
+    pipeline.deliver(textUpdate(80, "a"));
+    await waitFor(() => finance.calls.some((call) => call.path === "/agent/events/status"));
+    await waitFor(() => pipeline.size === 0);
+    expect(handled).toEqual([]);
+    expect(finance.events.get("80")).toMatchObject({ status: "received" });
+    expect(await pipeline.recover({ olderThanSeconds: 120 })).toBe(1);
+    await pipeline.shutdown(1000);
+    expect(handled).toEqual(["80"]);
+    expect(finance.events.get("80")).toMatchObject({ status: "done" });
+  });
+
+  test("recovery skips events still queued in this process", async () => {
+    const gate = deferred();
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      await gate.promise;
+      handled.push(event.eventId);
+    });
+    pipeline.deliver(textUpdate(81, "a"));
+    pipeline.deliver(textUpdate(82, "b"));
+    await waitFor(() => finance.events.has("81"));
+    // 82 is claimed only once 81 is done, but 81 is processing and queued here.
+    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(0);
+    gate.resolve();
+    await pipeline.shutdown(1000);
+    expect(handled).toEqual(["81", "82"]);
+  });
+
+  test("a failed done update is retried once", async () => {
+    const gate = deferred();
+    const { pipeline, finance } = setup(() => gate.promise);
+    pipeline.deliver(textUpdate(83, "a"));
+    await waitFor(() => finance.events.get("83")?.status === "processing");
+    finance.fail("POST /agent/events/status", "network");
+    gate.resolve();
+    await pipeline.shutdown(1000);
+    expect(finance.events.get("83")).toMatchObject({ status: "done" });
+  });
+
+  test("an oversized event is not claimed and the user is told", async () => {
+    const handle = vi.fn(async () => {});
+    const { pipeline, finance, onFailure } = setup(handle);
+    pipeline.deliver(textUpdate(84, "x".repeat(40_000)));
+    await pipeline.shutdown(1000);
+    expect(finance.callsTo("/agent/events/claim")).toHaveLength(0);
+    expect(handle).not.toHaveBeenCalled();
+    expect(onFailure).toHaveBeenCalledTimes(1);
+  });
+
+  test("events the accept filter refuses are never claimed", async () => {
+    const handle = vi.fn(async () => {});
+    const { pipeline, finance } = setup(handle, undefined, (event) => event.chatType === "private");
+    expect(pipeline.deliver(textUpdate(85, "hi all", 1, -100))).toBe("ignored");
+    await pipeline.shutdown(1000);
+    expect(finance.calls).toHaveLength(0);
+    expect(handle).not.toHaveBeenCalled();
+  });
+
+  test("a non-finance error is stored as its name only", async () => {
+    const { pipeline, finance } = setup(async () => {
+      throw Object.assign(new Error("Call to 'sendMessage' failed! (403: Forbidden: bot was blocked by the user)"), {
+        name: "GrammyError",
+        error_code: 403,
+      });
+    });
+    pipeline.deliver(textUpdate(86, "a"));
+    await pipeline.shutdown(1000);
+    expect(finance.events.get("86")).toMatchObject({ status: "failed", error: "GrammyError" });
+  });
+
+  test("at most maxConcurrent chats run at once", async () => {
+    let running = 0;
+    let peak = 0;
+    const { pipeline } = setup(
+      async () => {
+        running += 1;
+        peak = Math.max(peak, running);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        running -= 1;
+      },
+      { maxConcurrent: 2 },
+    );
+    for (let chat = 1; chat <= 6; chat++) pipeline.deliver(textUpdate(90 + chat, "a", chat));
+    await pipeline.shutdown(2000);
+    expect(peak).toBe(2);
+  });
+});
+
 describe("ChatQueues", () => {
   test("waitForCapacity resolves once a slot frees up", async () => {
-    const queues = new ChatQueues({ maxPerChat: 5, maxTotal: 1 });
+    const queues = new ChatQueues({ maxPerChat: 5, maxTotal: 1, maxConcurrent: 5 });
     const gate = deferred();
     queues.enqueue("a", () => gate.promise);
     let resolved = false;
@@ -182,7 +281,7 @@ describe("ChatQueues", () => {
 
   test("a task that throws doesn't stall its chat", async () => {
     const errors: unknown[] = [];
-    const queues = new ChatQueues({ maxPerChat: 5, maxTotal: 5 }, (error) => errors.push(error));
+    const queues = new ChatQueues({ maxPerChat: 5, maxTotal: 5, maxConcurrent: 5 }, (error) => errors.push(error));
     const ran: number[] = [];
     queues.enqueue("a", async () => {
       throw new Error("x");

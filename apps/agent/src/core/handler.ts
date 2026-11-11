@@ -45,7 +45,20 @@ function replyForFinanceError(error: unknown): RichText | null {
   return null;
 }
 
-export function createHandler(options: HandlerOptions): { handle: EventHandler; onFailure: (event: InboundEvent) => Promise<void> } {
+/**
+ * Which events get claimed (and their payload stored) at all. Group chats only
+ * get a "use a private chat" answer to commands; their other messages, which
+ * can be other members' text, are never stored.
+ */
+export function acceptEvent(event: InboundEvent): boolean {
+  return event.chatType === "private" || event.kind === "command" || event.kind === "button";
+}
+
+export function createHandler(options: HandlerOptions): {
+  handle: EventHandler;
+  onFailure: (event: InboundEvent) => Promise<void>;
+  accept: (event: InboundEvent) => boolean;
+} {
   const { adapter, clients } = options;
 
   const reply = (event: InboundEvent, text: RichText) => adapter.send({ chatId: event.chatId }, { type: "text", text });
@@ -100,6 +113,21 @@ export function createHandler(options: HandlerOptions): { handle: EventHandler; 
     await recorder.recordAssistant(answer);
   }
 
+  /**
+   * Service-key calls: `rate_limited` gets its own reply (returns null). Other
+   * errors (a bad service key is `unauthorized`) fail the event: they are ours, not the user's.
+   */
+  async function withServiceErrors<T>(event: InboundEvent, log: Logger, run: () => Promise<T>): Promise<T | null> {
+    try {
+      return await run();
+    } catch (error) {
+      if (!isFinanceError(error, "rate_limited")) throw error;
+      log.warn("finance_error", errorFields(error));
+      await reply(event, texts.rateLimited());
+      return null;
+    }
+  }
+
   async function handle(event: InboundEvent): Promise<void> {
     const log = options.logger.child({ eventId: event.eventId, chatId: event.chatId, kind: event.kind });
 
@@ -117,13 +145,16 @@ export function createHandler(options: HandlerOptions): { handle: EventHandler; 
 
     const code = event.command === "start" ? event.args?.[0] : undefined;
     if (event.kind === "command" && code) {
-      const result = await redeemLink(clients, event, code);
+      const result = await withServiceErrors(event, log, () => redeemLink(clients, event, code));
+      if (!result) return;
       log.info("link_redeem", { result });
       await reply(event, result === "linked" ? texts.linked() : result === "invalid" ? texts.linkInvalid() : texts.alreadyLinked());
       return;
     }
 
-    const user = await resolveUser(clients, event);
+    const resolved = await withServiceErrors(event, log, async () => ({ user: await resolveUser(clients, event) }));
+    if (!resolved) return;
+    const user = resolved.user;
     if (!user) {
       log.info("chat_unlinked");
       const answer =
@@ -151,5 +182,5 @@ export function createHandler(options: HandlerOptions): { handle: EventHandler; 
     await reply(event, texts.failed());
   }
 
-  return { handle, onFailure };
+  return { handle, onFailure, accept: acceptEvent };
 }

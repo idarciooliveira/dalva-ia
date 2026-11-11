@@ -13,16 +13,16 @@ function setup() {
   const { logger, lines } = captureLogger();
   const { adapter, telegram } = telegramAdapter(logger);
   const finance = fakeFinance();
-  const { handle, onFailure } = createHandler({ adapter, clients: finance.clients, logger, sessionIdleMinutes: 30 });
+  const { handle, onFailure, accept } = createHandler({ adapter, clients: finance.clients, logger, sessionIdleMinutes: 30 });
   let nextId = 1000;
   // One pipeline per update: shutdown() drains it, so each call returns once the update is fully handled.
   const run = async (text: string, userId = Number(USER), chatId = userId) => {
-    const p = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, logger });
+    const p = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, accept, logger });
     p.deliver(textUpdate(nextId++, text, userId, chatId));
     await p.shutdown(2000);
   };
   const runUpdate = async (update: unknown) => {
-    const p = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, logger });
+    const p = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, accept, logger });
     p.deliver(update);
     await p.shutdown(2000);
   };
@@ -74,6 +74,22 @@ describe("identity", () => {
     finance.link(USER); // the redeem went through before the connection dropped
     await run(`/start ${CODE}`);
     expect(lastReply()).toContain("Connected.");
+  });
+
+  test("a re-processed /start <code> that already linked says connected, not invalid", async () => {
+    const { finance, run, lastReply } = setup();
+    finance.link(USER); // our first attempt redeemed the code, then the process crashed
+    await run(`/start ${CODE}`);
+    expect(finance.callsTo("/channel-links/redeem")).toHaveLength(1);
+    expect(lastReply()).toContain("Connected.");
+  });
+
+  test("rate limiting on resolve gets its own reply", async () => {
+    const { finance, run, lastReply } = setup();
+    finance.fail("POST /channel-identities/resolve", "rate_limited");
+    await run("/balance");
+    expect(lastReply()).toContain("Too many requests");
+    expect([...finance.events.values()].at(-1)).toMatchObject({ status: "done" });
   });
 
   test("unlinked chats get instructions to connect from Settings → Telegram", async () => {
@@ -281,10 +297,11 @@ describe("chats and buttons", () => {
     expect(finance.callsTo("/channel-identities/resolve")).toHaveLength(0);
   });
 
-  test("group plain text is ignored", async () => {
-    const { runUpdate, telegram } = setup();
+  test("group plain text is ignored and never stored", async () => {
+    const { finance, runUpdate, telegram } = setup();
     await runUpdate(textUpdate(5000, "hello all", 424242, -100123));
     expect(telegram.sent).toHaveLength(0);
+    expect(finance.calls).toHaveLength(0);
   });
 
   test("/start <code> from a group never redeems", async () => {

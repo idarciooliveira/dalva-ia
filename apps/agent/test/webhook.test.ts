@@ -50,6 +50,12 @@ describe("webhook", () => {
     release();
   });
 
+  test("413 on an oversized body", async () => {
+    const { post } = setup();
+    const response = await post(JSON.stringify({ update_id: 1, pad: "é".repeat(600_000) }), WEBHOOK_SECRET);
+    expect(response.status).toBe(413);
+  });
+
   test("400 on a body that isn't JSON", async () => {
     const { post } = setup();
     expect((await post("{not json", WEBHOOK_SECRET)).status).toBe(400);

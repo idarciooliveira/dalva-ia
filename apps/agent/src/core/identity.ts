@@ -23,8 +23,13 @@ export async function redeemLink(clients: FinanceClients, event: InboundEvent, c
     });
     return "linked";
   } catch (error) {
-    // Unknown, used, expired or superseded codes are all not_found; a non-private chat is validation_failed.
-    if (isFinanceError(error, "not_found", "validation_failed")) return "invalid";
+    if (isFinanceError(error, "validation_failed")) return "invalid"; // e.g. not a private chat
+    // Unknown, used, expired or superseded codes are all not_found. "Used" can be our own
+    // earlier redeem of this same event (re-processed after a crash), so check the link first.
+    if (isFinanceError(error, "not_found")) {
+      const user = await resolveUser(clients, event).catch(() => null);
+      return user ? "linked" : "invalid";
+    }
     // This Telegram account or this DALVA user already has a link.
     if (isFinanceError(error, "conflict")) return "already_linked";
     if (isFinanceError(error, "network_error", "timeout", "aborted", "internal", "invalid_response")) {

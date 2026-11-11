@@ -3,6 +3,8 @@ export interface ChatQueueLimits {
   maxPerChat: number;
   /** Tasks waiting or running in total. Past it, every new task is refused. */
   maxTotal: number;
+  /** Tasks running at once across chats (each makes several API calls). */
+  maxConcurrent: number;
 }
 
 export type EnqueueResult = "accepted" | "chat_full" | "full";
@@ -14,13 +16,15 @@ interface Lane {
 
 /**
  * In-memory serial queue per chat: tasks of one chat run one at a time in
- * arrival order, different chats run concurrently. Bounded both per chat and
- * in total, so a flood can't grow memory without limit.
+ * arrival order, different chats run concurrently up to `maxConcurrent`.
+ * Bounded per chat and in total, so a flood can't grow memory without limit.
  */
 export class ChatQueues {
   private readonly lanes = new Map<string, Lane>();
   private total = 0;
-  private waiters: Array<() => void> = [];
+  private running = 0;
+  private capacityWaiters: Array<() => void> = [];
+  private slotWaiters: Array<() => void> = [];
 
   constructor(
     private readonly limits: ChatQueueLimits,
@@ -31,33 +35,33 @@ export class ChatQueues {
     return this.total;
   }
 
-  hasCapacity(): boolean {
-    return this.total < this.limits.maxTotal;
+  available(): number {
+    return Math.max(0, this.limits.maxTotal - this.total);
   }
 
   enqueue(key: string, task: () => Promise<void>): EnqueueResult {
-    if (!this.hasCapacity()) return "full";
+    if (this.available() === 0) return "full";
     const lane = this.lanes.get(key) ?? { tail: Promise.resolve(), size: 0 };
     if (lane.size >= this.limits.maxPerChat) return "chat_full";
     lane.size += 1;
     this.total += 1;
     this.lanes.set(key, lane);
     lane.tail = lane.tail
-      .then(task)
+      .then(() => this.runWithSlot(task))
       .catch((error) => this.onTaskError(error))
       .finally(() => {
         lane.size -= 1;
         this.total -= 1;
         if (lane.size === 0 && this.lanes.get(key) === lane) this.lanes.delete(key);
-        this.notify();
+        this.notifyCapacity();
       });
     return "accepted";
   }
 
-  /** Resolves when the total is below the limit (polling waits on this). */
+  /** Resolves when there is room for at least one more task (polling waits on this). */
   waitForCapacity(): Promise<void> {
-    if (this.hasCapacity()) return Promise.resolve();
-    return new Promise((resolve) => this.waiters.push(resolve));
+    if (this.available() > 0) return Promise.resolve();
+    return new Promise((resolve) => this.capacityWaiters.push(resolve));
   }
 
   /** Resolves when every queued task has finished, or after `timeoutMs`. Returns whether it drained. */
@@ -79,10 +83,23 @@ export class ChatQueues {
     return true;
   }
 
-  private notify() {
-    if (!this.hasCapacity()) return;
-    const waiters = this.waiters;
-    this.waiters = [];
+  private async runWithSlot(task: () => Promise<void>): Promise<void> {
+    while (this.running >= this.limits.maxConcurrent) {
+      await new Promise<void>((resolve) => this.slotWaiters.push(resolve));
+    }
+    this.running += 1;
+    try {
+      await task();
+    } finally {
+      this.running -= 1;
+      this.slotWaiters.shift()?.();
+    }
+  }
+
+  private notifyCapacity() {
+    if (this.available() === 0) return;
+    const waiters = this.capacityWaiters;
+    this.capacityWaiters = [];
     for (const resolve of waiters) resolve();
   }
 }

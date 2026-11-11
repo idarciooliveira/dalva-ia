@@ -7,7 +7,11 @@ import { createPipeline } from "./core/pipeline";
 import { createApp } from "./http";
 import { createLogger, errorFields } from "./log";
 
-const SHUTDOWN_DRAIN_MS = 20_000;
+/** Below Docker's default 10s stop timeout (SIGKILL after). */
+const SHUTDOWN_DRAIN_MS = 8_000;
+const RECOVER_INTERVAL_MS = 60_000;
+const RECOVER_OLDER_THAN_SECONDS = 120;
+const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 async function main() {
   let config;
@@ -34,15 +38,34 @@ async function main() {
     logger,
   });
   const clients = createFinanceClients({ baseUrl: config.FINANCE_API_URL, serviceKey: config.FINANCE_API_SERVICE_KEY });
-  const { handle, onFailure } = createHandler({
+  const { handle, onFailure, accept } = createHandler({
     adapter,
     clients,
     logger,
     sessionIdleMinutes: config.SESSION_IDLE_MINUTES,
   });
-  const pipeline = createPipeline({ adapter, service: clients.service, handle, onFailure, logger });
+  const pipeline = createPipeline({ adapter, service: clients.service, handle, onFailure, accept, logger });
 
   let ready = false;
+  let stopping = false;
+  let recoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let server: { stop(closeActiveConnections?: boolean): Promise<void> } | undefined;
+
+  const shutdown = async (signal: string) => {
+    if (stopping) return;
+    stopping = true;
+    logger.info("shutdown_started", { signal });
+    ready = false;
+    clearInterval(recoveryTimer);
+    await adapter.stop();
+    const drained = await pipeline.shutdown(SHUTDOWN_DRAIN_MS);
+    await server?.stop();
+    logger.info("shutdown_complete", { drained });
+    process.exit(drained ? 0 : 1);
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+
   const app = createApp({
     adapter,
     pipeline,
@@ -50,32 +73,32 @@ async function main() {
     probeFinance: createFinanceProbe({ baseUrl: config.FINANCE_API_URL }),
     isReady: () => ready,
   });
-  const server = Bun.serve({ port: config.PORT, fetch: app.fetch });
+  server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
   logger.info("server_started", { port: config.PORT, mode: config.TELEGRAM_MODE });
 
+  // Boot: everything the previous run left unfinished, before new events can arrive.
   try {
-    await pipeline.recover();
+    await pipeline.recover({ olderThanSeconds: 0 });
   } catch (error) {
-    // The backend may be down at boot; unfinished events stay recoverable for the next start.
+    // Backend down at boot: the periodic pass below picks the events up later.
     logger.error("recover_failed", errorFields(error));
   }
+  if (stopping) return;
   ready = true;
-  await adapter.start(pipeline.deliver, pipeline.waitForCapacity);
+  await adapter.start(pipeline.deliver, { available: pipeline.available, wait: pipeline.waitForCapacity });
 
-  let stopping = false;
-  const shutdown = async (signal: string) => {
-    if (stopping) return;
-    stopping = true;
-    logger.info("shutdown_started", { signal });
-    ready = false;
-    await adapter.stop();
-    const drained = await pipeline.shutdown(SHUTDOWN_DRAIN_MS);
-    await server.stop();
-    logger.info("shutdown_complete", { drained });
-    process.exit(drained ? 0 : 1);
-  };
-  process.on("SIGTERM", () => void shutdown("SIGTERM"));
-  process.on("SIGINT", () => void shutdown("SIGINT"));
+  // Afterwards: events whose status update failed mid-way. Events queued here are skipped.
+  let recovering = false;
+  recoveryTimer = setInterval(() => {
+    if (recovering || stopping) return;
+    recovering = true;
+    pipeline
+      .recover({ olderThanSeconds: RECOVER_OLDER_THAN_SECONDS })
+      .catch((error) => logger.warn("recover_failed", errorFields(error)))
+      .finally(() => {
+        recovering = false;
+      });
+  }, RECOVER_INTERVAL_MS);
 }
 
 void main().catch((error) => {

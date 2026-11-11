@@ -35,13 +35,13 @@ Polling calls `deleteWebhook` first (pending updates are kept), so don't point a
 
 ## How an update flows
 
-1. Adapter parses it into a channel-agnostic `InboundEvent` (`src/channels/channel.ts`). Only `src/channels/telegram/` knows grammY.
-2. Per-chat serial queue (bounded: 20 per chat, 1000 total). Chats run concurrently; a chat's messages run in order.
+1. Adapter parses it into a channel-agnostic `InboundEvent` (`src/channels/channel.ts`). Only `src/channels/telegram/` knows grammY. Group messages other than commands are dropped here, before anything is stored.
+2. Per-chat serial queue (bounded: 20 per chat, 1000 total, 32 running at once). Chats run concurrently; a chat's messages run in order. Polling never fetches more than the queue can take.
 3. `agentEvents.claim` (duplicate: drop) → `updateStatus processing` → handle → `done` / `failed`.
 4. Handle: `/start <code>` redeems; anything else calls `resolve` (with `chatId`) for a 15-minute user token; group chats only get "use a private chat".
 5. User and bot messages are appended to the current session (`/unlink` and `/forget` record nothing).
 
-On boot, `listRecoverable` re-queues events a crashed run left unfinished before the webhook opens. SIGTERM stops intake and drains the queues (20s).
+On boot, `listRecoverable` re-queues events a crashed run left unfinished before the webhook opens; every 60s it picks up events whose status update failed (untouched for 2 minutes, not queued in this process). SIGTERM stops intake and drains the queues for 8s, under Docker's default 10s stop timeout.
 
 Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Other text and photos get a "coming soon" reply. Confirm/cancel buttons are only acknowledged.
 

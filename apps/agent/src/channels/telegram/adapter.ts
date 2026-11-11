@@ -6,7 +6,7 @@ import type { InlineKeyboardMarkup, Update } from "grammy/types";
 
 import { errorFields, type Logger } from "../../log";
 import { encodeButtonPayload } from "../channel";
-import type { ChannelAdapter, ChatAddress, Deliver, OutboundMessage, WebhookIngress } from "../channel";
+import type { ChannelAdapter, ChatAddress, Deliver, IntakeCapacity, OutboundMessage, WebhookIngress } from "../channel";
 import { renderHtml } from "./format";
 import { parseTelegramUpdate } from "./parse";
 
@@ -14,6 +14,11 @@ export const TELEGRAM_WEBHOOK_PATH = "/webhooks/telegram";
 export const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
 const ALLOWED_UPDATES = ["message", "callback_query"] as const;
 const MAX_CALLBACK_DATA_BYTES = 64;
+const MAX_UPDATES_PER_POLL = 100;
+/** Long-poll wait inside getUpdates; the HTTP timeout must exceed it. */
+const POLL_TIMEOUT_SECONDS = 25;
+/** grammY's default is 500s: one hung call would block a chat's queue for minutes. */
+const API_TIMEOUT_SECONDS = 30;
 /** Telegram updates are small; anything bigger is not from Telegram. */
 const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 
@@ -55,9 +60,9 @@ function webhookIngress(secret: string, logger: Logger): WebhookIngress {
       if (length > MAX_WEBHOOK_BODY_BYTES) return new Response("too large", { status: 413 });
       let body: unknown;
       try {
-        const text = await request.text();
-        if (text.length > MAX_WEBHOOK_BODY_BYTES) return new Response("too large", { status: 413 });
-        body = JSON.parse(text);
+        const bytes = await request.arrayBuffer();
+        if (bytes.byteLength > MAX_WEBHOOK_BODY_BYTES) return new Response("too large", { status: 413 });
+        body = JSON.parse(new TextDecoder().decode(bytes));
       } catch {
         return new Response("bad request", { status: 400 });
       }
@@ -87,7 +92,7 @@ function inlineKeyboard(actionId: string): InlineKeyboardMarkup {
 
 export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelAdapter {
   const logger = options.logger.child({ channel: "telegram" });
-  const api: TelegramApi = options.api ?? new Api(options.token);
+  const api: TelegramApi = options.api ?? new Api(options.token, { timeoutSeconds: API_TIMEOUT_SECONDS });
   const pollRetryMs = options.pollRetryMs ?? 3000;
 
   if (options.mode === "webhook" && !options.webhookSecret) {
@@ -96,25 +101,29 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
 
   let polling: { controller: AbortController; loop: Promise<void> } | null = null;
 
-  async function pollLoop(deliver: Deliver, waitForCapacity: () => Promise<void>, signal: AbortSignal) {
+  async function pollLoop(deliver: Deliver, capacity: IntakeCapacity, signal: AbortSignal) {
+    const aborted = new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
     let offset = 0;
     while (!signal.aborted) {
       try {
-        await waitForCapacity();
+        await Promise.race([capacity.wait(), aborted]);
         if (signal.aborted) return;
+        // Never fetch more than the pipeline can queue: fetched updates are confirmed by the next offset.
+        const limit = Math.min(MAX_UPDATES_PER_POLL, capacity.available());
+        if (limit <= 0) continue;
         const updates: Update[] = await api.getUpdates(
-          { offset, timeout: 25, allowed_updates: [...ALLOWED_UPDATES] },
+          { offset, limit, timeout: POLL_TIMEOUT_SECONDS, allowed_updates: [...ALLOWED_UPDATES] },
           // grammY types its signal with an old AbortSignal shim; the runtime object is the standard one.
           signal as unknown as Parameters<TelegramApi["getUpdates"]>[1],
         );
         for (const update of updates) {
+          if (deliver(update) === "overloaded") break; // Not confirmed: Telegram hands it out again next poll.
           offset = update.update_id + 1;
-          deliver(update);
         }
       } catch (error) {
         if (signal.aborted) return;
         logger.warn("poll_failed", errorFields(error));
-        await new Promise((resolve) => setTimeout(resolve, pollRetryMs));
+        await Promise.race([new Promise((resolve) => setTimeout(resolve, pollRetryMs)), aborted]);
       }
     }
   }
@@ -148,12 +157,12 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
       await api.answerCallbackQuery(buttonId, text ? { text } : undefined);
     },
 
-    async start(deliver, waitForCapacity) {
+    async start(deliver, capacity) {
       if (options.mode !== "polling" || polling) return;
       // getUpdates fails while a webhook is set; keep pending updates so nothing is lost.
       await api.deleteWebhook({ drop_pending_updates: false });
       const controller = new AbortController();
-      polling = { controller, loop: pollLoop(deliver, waitForCapacity, controller.signal) };
+      polling = { controller, loop: pollLoop(deliver, capacity, controller.signal) };
       logger.info("polling_started");
     },
 

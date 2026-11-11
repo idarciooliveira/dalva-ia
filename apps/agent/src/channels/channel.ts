@@ -45,6 +45,13 @@ export interface ChatAddress {
 export type DeliverResult = "accepted" | "ignored" | "dropped" | "overloaded";
 export type Deliver = (raw: unknown) => DeliverResult;
 
+/** Room left in the pipeline, so a pulling transport never fetches more than it can queue. */
+export interface IntakeCapacity {
+  available(): number;
+  /** Resolves when `available() > 0`. */
+  wait(): Promise<void>;
+}
+
 export interface WebhookIngress {
   /** HTTP path the platform posts to, e.g. `/webhooks/telegram`. */
   path: string;
@@ -62,7 +69,7 @@ export interface ChannelAdapter {
   /** Present in webhook mode. */
   readonly webhook?: WebhookIngress;
   /** Start pulling events (polling mode). Resolves once started. */
-  start(deliver: Deliver, waitForCapacity: () => Promise<void>): Promise<void>;
+  start(deliver: Deliver, capacity: IntakeCapacity): Promise<void>;
   /** Stop pulling events. */
   stop(): Promise<void>;
 }
