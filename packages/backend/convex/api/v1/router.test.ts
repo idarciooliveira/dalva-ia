@@ -1,11 +1,11 @@
-import { allRoutes, errorEnvelopeSchema, isWriteRoute } from "@mpf/finance-contract";
+import { allRoutes, errorEnvelopeSchema, isWriteRoute, requiredScope, requiresIdempotencyKey } from "@mpf/finance-contract";
 import { describe, expect, it, vi } from "vitest";
 
 import { implementationFor } from "./registry";
 import { BodyTooLargeError, readBodyText } from "./router";
 import { SERVICE_KEY_ENV } from "./serviceAuth";
 import { serviceImplementationFor } from "./serviceRegistry";
-import { raw, seedUser, setupApi, TEST_SERVICE_KEY, TEST_SECRET, tokenFor, type RawResponse } from "./test.helpers";
+import { ALL_SCOPES, raw, seedUser, setupApi, TEST_SERVICE_KEY, TEST_SECRET, tokenFor, type RawResponse } from "./test.helpers";
 import { mintUserToken, TOKEN_SECRET_ENV } from "./tokens";
 
 const KEY = "router-test-key-0001";
@@ -39,38 +39,39 @@ describe("api/v1 router", () => {
 
   describe.each(serviceRoutes.map((r) => [r.name, r] as const))("%s service auth", (_name, { route }) => {
     const path = pathOf(route.path);
+    const body = isWriteRoute(route) ? { body: {} } : {};
 
     it("rejects no credential, a wrong key and user tokens with 401", async () => {
       const t = setupApi();
       const user = await seedUser(t);
-      expectError(await raw(t, route.method, path, { body: {} }), "unauthorized", 401);
-      expectError(await raw(t, route.method, path, { body: {}, token: "x".repeat(48) }), "unauthorized", 401);
-      expectError(await raw(t, route.method, path, { body: {}, token: TEST_SERVICE_KEY.slice(0, -1) }), "unauthorized", 401);
+      expectError(await raw(t, route.method, path, body), "unauthorized", 401);
+      expectError(await raw(t, route.method, path, { ...body, token: "x".repeat(48) }), "unauthorized", 401);
+      expectError(await raw(t, route.method, path, { ...body, token: TEST_SERVICE_KEY.slice(0, -1) }), "unauthorized", 401);
       for (const scopes of [["finance:read"], ["finance:read", "finance:write"]] as const) {
         const token = await tokenFor(user, [...scopes]);
-        expectError(await raw(t, route.method, path, { body: {}, token }), "unauthorized", 401);
+        expectError(await raw(t, route.method, path, { ...body, token }), "unauthorized", 401);
       }
       // The token secret is not the service key either.
-      expectError(await raw(t, route.method, path, { body: {}, token: TEST_SECRET }), "unauthorized", 401);
+      expectError(await raw(t, route.method, path, { ...body, token: TEST_SECRET }), "unauthorized", 401);
     });
 
     it("accepts the service key without an Idempotency-Key and validates the body", async () => {
       const t = setupApi();
-      expectError(await raw(t, route.method, path, { body: {}, token: TEST_SERVICE_KEY }), "validation_failed", 400);
+      expectError(await raw(t, route.method, path, { ...body, token: TEST_SERVICE_KEY }), "validation_failed", 400);
     });
 
     it("returns 500 internal when the service key is missing, short or equal to the token secret", async () => {
       const t = setupApi();
       for (const value of ["", "too-short", TEST_SECRET]) {
         vi.stubEnv(SERVICE_KEY_ENV, value);
-        expectError(await raw(t, route.method, path, { body: {}, token: value || "anything" }), "internal", 500);
+        expectError(await raw(t, route.method, path, { ...body, token: value || "anything" }), "internal", 500);
       }
     });
   });
 
   describe.each(userRoutes.map((r) => [r.name, r] as const))("%s auth", (_name, { route }) => {
     const path = pathOf(route.path);
-    const options = isWriteRoute(route) ? { idempotencyKey: KEY, body: {} } : {};
+    const options = requiresIdempotencyKey(route) ? { idempotencyKey: KEY, body: {} } : isWriteRoute(route) ? { body: {} } : {};
 
     it("rejects a missing, malformed, forged or expired token with 401", async () => {
       const t = setupApi();
@@ -97,15 +98,20 @@ describe("api/v1 router", () => {
     it("rejects a token without the required scope with 403", async () => {
       const t = setupApi();
       const user = await seedUser(t);
-      const wrongScope = await tokenFor(user, [isWriteRoute(route) ? "finance:read" : "finance:write"]);
-      expectError(await raw(t, route.method, path, { ...options, token: wrongScope }), "forbidden", 403);
+      const required = requiredScope(route);
+      const others = ALL_SCOPES.filter((scope) => scope !== required);
+      for (const scopes of [[isWriteRoute(route) && required === "finance:write" ? "finance:read" : "finance:write"], others] as const) {
+        const wrongScope = await tokenFor(user, [...scopes]);
+        expectError(await raw(t, route.method, path, { ...options, token: wrongScope }), "forbidden", 403);
+      }
     });
 
     it("dispatches to the right function kind and never 500s on unknown ids", async () => {
       const t = setupApi();
       const token = await tokenFor(await seedUser(t));
       const response = await raw(t, route.method, path, { ...options, token });
-      expect([200, 400, 404]).toContain(response.status);
+      // Agent-store routes also refuse a token that has no channel identity (403).
+      expect([200, 400, 403, 404]).toContain(response.status);
     });
   });
 

@@ -1,5 +1,6 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { deleteIdentityHistory } from "./agentStore";
 
 export type Channel = Doc<"channelIdentities">["channel"];
 export type ChannelScope = Doc<"channelIdentities">["scopes"][number];
@@ -142,10 +143,17 @@ export async function resolveIdentity(
   return { identity, displayName: user.name, baseCurrency: profile?.baseCurrency };
 }
 
-export async function unlinkByExternal(ctx: MutationCtx, channel: Channel, externalUserId: string, now: number) {
+/** Unlinking also deletes the identity's chat history (sessions, messages, pending actions). */
+export async function unlinkByExternal(
+  ctx: MutationCtx,
+  channel: Channel,
+  externalUserId: string,
+  now: number,
+): Promise<Id<"channelIdentities">> {
   const identity = await findActiveByExternal(ctx, channel, externalUserId);
   if (!identity) throw new Error(IDENTITY_NOT_FOUND);
   await ctx.db.patch(identity._id, { unlinkedAt: now });
+  await deleteIdentityHistory(ctx, identity._id);
   return identity._id;
 }
 
@@ -157,9 +165,15 @@ async function requireOwnedActive(ctx: QueryCtx, userId: string, identityId: Id<
   return identity;
 }
 
-export async function unlinkForUser(ctx: MutationCtx, userId: string, identityId: Id<"channelIdentities">, now: number) {
+export async function unlinkForUser(
+  ctx: MutationCtx,
+  userId: string,
+  identityId: Id<"channelIdentities">,
+  now: number,
+): Promise<void> {
   const identity = await requireOwnedActive(ctx, userId, identityId);
   await ctx.db.patch(identity._id, { unlinkedAt: now });
+  await deleteIdentityHistory(ctx, identity._id);
 }
 
 export async function setReadOnly(

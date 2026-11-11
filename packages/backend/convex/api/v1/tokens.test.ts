@@ -43,6 +43,19 @@ describe("api/v1 tokens", () => {
     expect(result).toMatchObject({ ok: true, claims: { scopes: ["finance:write"] } });
   });
 
+  it("carries the agent:state scope next to the finance ones", async () => {
+    const token = await mintUserToken("user-1", ["finance:read", "agent:state"], 600);
+    expect(JSON.parse(atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/")))).toMatchObject({
+      scope: "finance:read agent:state",
+    });
+    expect(await verifyUserToken(token)).toMatchObject({ ok: true, claims: { scopes: ["finance:read", "agent:state"] } });
+    expect(await verifyUserToken(await sign({ alg: "HS256" }, claims({ scope: "agent:state" })))).toMatchObject({
+      ok: true,
+      claims: { scopes: ["agent:state"] },
+    });
+    await expect(mintUserToken("user-1", ["agent:state", "agent:admin" as never], 600)).rejects.toThrow("scopes");
+  });
+
   it("rejects a wrong signature, a different secret and tampered payloads", async () => {
     const token = await mintUserToken("user-1", ["finance:read"], 600);
     const [h, p, s] = token.split(".") as [string, string, string];

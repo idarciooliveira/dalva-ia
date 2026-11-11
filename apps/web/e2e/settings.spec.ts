@@ -71,6 +71,16 @@ test.describe("Settings → Telegram", () => {
     await readOnly.click();
     await expect(readOnly).toBeChecked();
 
+    // Delete chat history: asks first, cancelling does nothing, confirming says so.
+    await page.getByRole("button", { name: "Delete chat history" }).click();
+    await expect(page.getByRole("alertdialog")).toContainText(/the bot forgets your past conversations/i);
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await expect(page.getByRole("alertdialog")).toBeHidden();
+    await expect(page.getByText("Chat history deleted.")).toBeHidden();
+    await page.getByRole("button", { name: "Delete chat history" }).click();
+    await page.getByRole("button", { name: "Delete history" }).click();
+    await expect(page.getByText("Chat history deleted.")).toBeVisible();
+
     await page.getByRole("button", { name: "Unlink Telegram" }).click();
     await expect(page.getByRole("alertdialog")).toContainText(/loses access to your finances right away/i);
     await page.getByRole("button", { name: /^unlink$/i }).click();

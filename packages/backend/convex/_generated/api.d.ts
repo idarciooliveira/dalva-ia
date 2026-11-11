@@ -9,6 +9,9 @@
  */
 
 import type * as accounts from "../accounts.js";
+import type * as agentStore from "../agentStore.js";
+import type * as api_v1_agent from "../api/v1/agent.js";
+import type * as api_v1_agentEvents from "../api/v1/agentEvents.js";
 import type * as api_v1_accounts from "../api/v1/accounts.js";
 import type * as api_v1_categories from "../api/v1/categories.js";
 import type * as api_v1_channels from "../api/v1/channels.js";
@@ -35,6 +38,7 @@ import type * as dashboard from "../dashboard.js";
 import type * as debtPayments from "../debtPayments.js";
 import type * as debts from "../debts.js";
 import type * as domain_accounts from "../domain/accounts.js";
+import type * as domain_agentStore from "../domain/agentStore.js";
 import type * as domain_categories from "../domain/categories.js";
 import type * as domain_channelLinks from "../domain/channelLinks.js";
 import type * as domain_dashboard from "../domain/dashboard.js";
@@ -62,6 +66,9 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
+  agentStore: typeof agentStore;
+  "api/v1/agent": typeof api_v1_agent;
+  "api/v1/agentEvents": typeof api_v1_agentEvents;
   "api/v1/accounts": typeof api_v1_accounts;
   "api/v1/categories": typeof api_v1_categories;
   "api/v1/channels": typeof api_v1_channels;
@@ -88,6 +95,7 @@ declare const fullApi: ApiFromModules<{
   debtPayments: typeof debtPayments;
   debts: typeof debts;
   "domain/accounts": typeof domain_accounts;
+  "domain/agentStore": typeof domain_agentStore;
   "domain/categories": typeof domain_categories;
   "domain/channelLinks": typeof domain_channelLinks;
   "domain/dashboard": typeof domain_dashboard;

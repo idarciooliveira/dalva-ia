@@ -208,6 +208,7 @@ bunx playwright test --project=chromium
 | `packages/backend/convex/savingsGoals.ts` | Savings goal CRUD |
 | `packages/backend/convex/goalContributions.ts` | Goal contribution history |
 | `packages/backend/convex/channelLinks.ts` | Telegram link codes, linked identities, read-only, unlink |
+| `packages/backend/convex/agentStore.ts` | Chat agent state: delete-history button, retention crons (logic in `domain/agentStore.ts`, routes in `api/v1/agent*.ts`) |
 | `packages/backend/convex/test.setup.ts` | Shared convex-test helpers |
 | `packages/backend/convex/*.test.ts` | Backend unit tests |
 

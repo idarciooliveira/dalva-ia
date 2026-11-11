@@ -2,9 +2,10 @@ import type { RouteDef, RouteParsedInput } from "@mpf/finance-contract";
 import { v } from "convex/values";
 import type { z } from "zod";
 
+import type { Doc } from "../../_generated/dataModel";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "../../_generated/server";
 import { channelTokenProblem } from "../../domain/channelLinks";
-import { apiError, mapDomainErrors } from "./errors";
+import { apiError, mapDomainErrors, type HandlerFailure } from "./errors";
 import { IDEMPOTENCY_TTL_MS } from "./idempotency";
 
 /** What a handler returns: the response schema's input side (plain-string ids). */
@@ -106,3 +107,68 @@ export function apiMutation<R extends RouteDef>(_route: R, handler: WriteHandler
   });
 }
 
+
+/* -------------------------------------------------------------------------- */
+/*  Agent store routes (`agent:state`)                                        */
+/* -------------------------------------------------------------------------- */
+
+/** Who an agent-store call acts for: the token's user and the chat identity it was resolved for. */
+export interface AgentCaller {
+  userId: string;
+  identity: Doc<"channelIdentities">;
+}
+
+export type AgentReadHandler<R extends RouteDef> = (
+  ctx: QueryCtx,
+  caller: AgentCaller,
+  input: RouteParsedInput<R>,
+) => Promise<RouteResponse<R>>;
+
+export type AgentWriteHandler<R extends RouteDef> = (
+  ctx: MutationCtx,
+  caller: AgentCaller,
+  input: RouteParsedInput<R>,
+) => Promise<RouteResponse<R> | HandlerFailure>;
+
+/**
+ * Agent-store calls need a token minted for a channel identity (`cid`), and
+ * that identity must still be active. Unlike finance routes there is no
+ * read/write scope check beyond `agent:state` (the router did that), so a
+ * read-only identity keeps its conversation state.
+ */
+async function requireCaller(ctx: QueryCtx, userId: string, channelIdentityId: string | undefined): Promise<AgentCaller> {
+  if (channelIdentityId === undefined) throw apiError("forbidden", "Agent routes need a token for a linked chat");
+  const id = ctx.db.normalizeId("channelIdentities", channelIdentityId);
+  const identity = id ? await ctx.db.get(id) : null;
+  if (!identity || identity.userId !== userId || identity.unlinkedAt !== undefined) {
+    throw apiError("unauthorized", "Channel link revoked");
+  }
+  return { userId, identity };
+}
+
+/** Internal query for a GET agent-store route. */
+export function agentQuery<R extends RouteDef>(_route: R, handler: AgentReadHandler<R>) {
+  return internalQuery({
+    args: { userId: v.string(), input: v.any(), channelIdentityId: v.optional(v.string()) },
+    handler: async (ctx, args): Promise<RouteResponse<R>> => {
+      const caller = await requireCaller(ctx, args.userId, args.channelIdentityId);
+      return await mapDomainErrors(() => handler(ctx, caller, args.input as RouteParsedInput<R>));
+    },
+  });
+}
+
+/**
+ * Internal mutation for a write agent-store route. No idempotency record:
+ * these writes either are naturally safe to repeat (a second `confirm` is a
+ * `conflict`) or belong to a single-threaded chat. A handler may return a
+ * `handlerFailure` to commit its writes and still answer with an error.
+ */
+export function agentMutation<R extends RouteDef>(_route: R, handler: AgentWriteHandler<R>) {
+  return internalMutation({
+    args: { userId: v.string(), input: v.any(), channelIdentityId: v.optional(v.string()) },
+    handler: async (ctx, args): Promise<RouteResponse<R> | HandlerFailure> => {
+      const caller = await requireCaller(ctx, args.userId, args.channelIdentityId);
+      return await mapDomainErrors(() => handler(ctx, caller, args.input as RouteParsedInput<R>));
+    },
+  });
+}

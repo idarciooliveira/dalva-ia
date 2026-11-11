@@ -21,9 +21,20 @@ const { token, profile } = await service.channelIdentities.resolve({ channel: "t
 const finance = createFinanceClient({ baseUrl, getToken: () => token });
 ```
 
+Agent state (PR 5): events with the service key, sessions, messages, pending actions and history with the user token (scope `agent:state`, which `resolve` always grants):
+
+```ts
+await service.agentEvents.claim({ channel: "telegram", eventId: String(update.update_id), payload: JSON.stringify(update) }); // { status: "new" | "duplicate" }
+const finance = createFinanceClient({ baseUrl, getToken: () => token });
+const { session } = await finance.agentSessions.current({ channel: "telegram", chatId, idleTimeoutMinutes: 30 });
+await finance.agentMessages.append({ sessionId: session.id, messages: [{ role: "user", content: JSON.stringify(message) }] });
+const { action } = await finance.agentPendingActions.create({ sessionId: session.id, operation: "transactions.create", input, summary: "Add expense of 12.50 USD" });
+```
+
 ## Conventions
 
 - Every route has `auth: "user" | "service"`. User routes take a user token; service routes take the service key. The router rejects the wrong credential with `unauthorized`, and each client only exposes its own routes. Service routes take no `Idempotency-Key`.
+- User routes may also carry a `scope` (`agent:state` for the agent store) that replaces the method-derived `finance:read` / `finance:write` and drops the `Idempotency-Key` requirement (`requiredScope`, `requiresIdempotencyKey`).
 - User routes: `Authorization: Bearer <user-scoped token>` on every call. `Idempotency-Key` on every write (POST/PATCH/DELETE); the client generates one unless given, and puts it on `FinanceApiError.idempotencyKey` (also for `aborted`, `timeout` and `network_error`, which the client reports as separate codes; the caught error is kept as `cause` and never mutated) so an ambiguous write can be retried with the same key.
 - Success: `{ ok: true, data }`. Error: `{ ok: false, error: { code, message, details? } }` with codes `unauthorized | forbidden | not_found | validation_failed | conflict | rate_limited | internal` (HTTP statuses in `ERROR_STATUS`).
 - Amounts are `{ amountMinor, currency }`: an integer in the ISO 4217 minor unit (JPY 0 decimals, USD 2, KWD 3). Convert with `parseDecimalAmount` / `formatMinorAmount`; both are BigInt/string based.

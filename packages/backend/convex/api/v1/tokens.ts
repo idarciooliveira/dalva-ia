@@ -2,7 +2,7 @@
  * User tokens for the Finance API: compact JWS, HS256, Web Crypto only (runs
  * in the default Convex runtime, no Node APIs).
  *
- * Claims: `sub` (userId), `scope` (space-separated), `aud` ("finance-api"),
+ * Claims: `sub` (userId), `scope` (space-separated: finance:read, finance:write, agent:state), `aud` ("finance-api"),
  * `iat`, `exp`, and `cid` (channel identity id) for tokens minted by
  * `channelIdentities.resolve`: those are re-checked against the identity on
  * every request, so unlinking or switching to read-only applies at once.
@@ -12,6 +12,10 @@
 export const FINANCE_API_AUDIENCE = "finance-api";
 export const FINANCE_SCOPES = ["finance:read", "finance:write"] as const;
 export type FinanceScope = (typeof FINANCE_SCOPES)[number];
+/** Agent store routes (sessions, messages, pending actions, history). Granted to every resolved channel token. */
+export const AGENT_STATE_SCOPE = "agent:state" as const;
+export const TOKEN_SCOPES = [...FINANCE_SCOPES, AGENT_STATE_SCOPE] as const;
+export type TokenScope = (typeof TOKEN_SCOPES)[number];
 
 export const TOKEN_SECRET_ENV = "FINANCE_API_TOKEN_SECRET";
 const MIN_SECRET_BYTES = 32;
@@ -22,7 +26,7 @@ const MAX_TOKEN_LENGTH = 4096;
 
 export interface UserTokenClaims {
   sub: string;
-  scopes: FinanceScope[];
+  scopes: TokenScope[];
   exp: number;
   iat?: number;
   /** Channel identity the token was minted for. */
@@ -95,13 +99,13 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
  */
 export async function mintUserToken(
   userId: string,
-  scopes: readonly FinanceScope[],
+  scopes: readonly TokenScope[],
   ttlSeconds: number,
   options: { now?: number; channelIdentityId?: string } = {},
 ): Promise<string> {
   if (typeof userId !== "string" || userId.length === 0) throw new Error("mintUserToken: userId is required");
-  if (scopes.length === 0 || scopes.some((s) => !FINANCE_SCOPES.includes(s))) {
-    throw new Error("mintUserToken: scopes must be a non-empty subset of finance:read, finance:write");
+  if (scopes.length === 0 || scopes.some((s) => !TOKEN_SCOPES.includes(s))) {
+    throw new Error("mintUserToken: scopes must be a non-empty subset of finance:read, finance:write, agent:state");
   }
   if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0 || ttlSeconds > MAX_TTL_SECONDS) {
     throw new Error("mintUserToken: ttlSeconds must be a positive integer up to one year");
@@ -177,7 +181,7 @@ export async function verifyUserToken(token: string, options: { now?: number } =
   }
   if (now >= exp) return { ok: false, reason: "expired" };
 
-  const scopes = FINANCE_SCOPES.filter((s) => scope.split(" ").includes(s));
+  const scopes = TOKEN_SCOPES.filter((s) => scope.split(" ").includes(s));
   return {
     ok: true,
     claims: { sub, scopes, exp, ...(typeof iat === "number" ? { iat } : {}), ...(cid !== undefined ? { cid } : {}) },

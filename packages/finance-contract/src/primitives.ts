@@ -16,6 +16,9 @@ export const goalContributionIdSchema = opaqueId.brand<"GoalContributionId">();
 export const debtIdSchema = opaqueId.brand<"DebtId">();
 export const debtPaymentIdSchema = opaqueId.brand<"DebtPaymentId">();
 export const channelIdentityIdSchema = opaqueId.brand<"ChannelIdentityId">();
+export const agentSessionIdSchema = opaqueId.brand<"AgentSessionId">();
+export const agentMessageIdSchema = opaqueId.brand<"AgentMessageId">();
+export const agentPendingActionIdSchema = opaqueId.brand<"AgentPendingActionId">();
 
 export type AccountId = z.output<typeof accountIdSchema>;
 export type CategoryId = z.output<typeof categoryIdSchema>;
@@ -26,6 +29,9 @@ export type GoalContributionId = z.output<typeof goalContributionIdSchema>;
 export type DebtId = z.output<typeof debtIdSchema>;
 export type DebtPaymentId = z.output<typeof debtPaymentIdSchema>;
 export type ChannelIdentityId = z.output<typeof channelIdentityIdSchema>;
+export type AgentSessionId = z.output<typeof agentSessionIdSchema>;
+export type AgentMessageId = z.output<typeof agentMessageIdSchema>;
+export type AgentPendingActionId = z.output<typeof agentPendingActionIdSchema>;
 
 /* -------------------------------------------------------------------------- */
 /*  Dates                                                                     */

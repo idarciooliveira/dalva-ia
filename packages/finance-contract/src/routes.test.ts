@@ -7,15 +7,29 @@ import {
   matchRoute,
   mergeRequestInput,
   pathParamNames,
+  requiredScope,
   requiresIdempotencyKey,
   routes,
 } from "./routes";
+import { agentActionOperationSchema } from "./schemas";
 
 describe("route map", () => {
   it("covers every v1 operation", () => {
     const names = allRoutes().map((r) => r.name).sort();
     expect(names).toEqual(
       [
+        "agentEvents.claim",
+        "agentEvents.listRecoverable",
+        "agentEvents.updateStatus",
+        "agentHistory.delete",
+        "agentMessages.append",
+        "agentMessages.list",
+        "agentPendingActions.cancel",
+        "agentPendingActions.complete",
+        "agentPendingActions.confirm",
+        "agentPendingActions.create",
+        "agentPendingActions.get",
+        "agentSessions.current",
         "accounts.adjust",
         "accounts.get",
         "accounts.list",
@@ -56,7 +70,7 @@ describe("route map", () => {
   });
 
   it("only mutates through POST/PATCH/DELETE and reads through GET", () => {
-    for (const { name, route } of allRoutes().filter((r) => r.route.auth === "user")) {
+    for (const { name, route } of allRoutes().filter((r) => r.route.auth === "user" && !r.route.scope)) {
       const read = name.endsWith(".list") || name.endsWith(".get") || name.endsWith(".search") || name.startsWith("reports.");
       expect(route.method === "GET", name).toBe(read);
       expect(isWriteRoute(route), name).toBe(!read);
@@ -65,10 +79,38 @@ describe("route map", () => {
 
   it("marks only the channel routes as service routes, one auth per group", () => {
     const service = allRoutes().filter((r) => r.route.auth === "service").map((r) => r.name).sort();
-    expect(service).toEqual(["channelIdentities.resolve", "channelIdentities.unlink", "channelLinks.redeem"]);
+    expect(service).toEqual([
+      "agentEvents.claim",
+      "agentEvents.listRecoverable",
+      "agentEvents.updateStatus",
+      "channelIdentities.resolve",
+      "channelIdentities.unlink",
+      "channelLinks.redeem",
+    ]);
     for (const ops of Object.values(routes)) {
       expect(new Set(Object.values(ops).map((r) => r.auth)).size).toBe(1);
     }
+  });
+
+  it("puts every agent-store route behind agent:state, with no Idempotency-Key", () => {
+    const agent = allRoutes().filter((r) => r.group.startsWith("agent") && r.route.auth === "user");
+    expect(agent.length).toBeGreaterThan(0);
+    for (const { name, route } of agent) {
+      expect(route.scope, name).toBe("agent:state");
+      expect(requiredScope(route), name).toBe("agent:state");
+      expect(requiresIdempotencyKey(route), name).toBe(false);
+    }
+    expect(allRoutes().filter((r) => r.route.scope && !r.group.startsWith("agent"))).toEqual([]);
+    expect(requiredScope(routes.transactions.search)).toBe("finance:read");
+    expect(requiredScope(routes.transactions.create)).toBe("finance:write");
+  });
+
+  it("lists exactly the finance write routes as pending-action operations", () => {
+    const writes = allRoutes()
+      .filter((r) => r.route.auth === "user" && !r.route.scope && isWriteRoute(r.route))
+      .map((r) => r.name)
+      .sort();
+    expect([...agentActionOperationSchema.options].sort()).toEqual(writes);
   });
 
   it("requires an Idempotency-Key on user writes only", () => {
@@ -76,6 +118,7 @@ describe("route map", () => {
     expect(requiresIdempotencyKey(routes.transactions.search)).toBe(false);
     expect(requiresIdempotencyKey(routes.channelLinks.redeem)).toBe(false);
     expect(requiresIdempotencyKey(routes.channelIdentities.unlink)).toBe(false);
+    expect(requiresIdempotencyKey(routes.agentEvents.claim)).toBe(false);
   });
 
   it("declares every path param in the request schema", () => {

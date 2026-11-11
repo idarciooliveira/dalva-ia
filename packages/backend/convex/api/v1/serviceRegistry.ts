@@ -5,7 +5,7 @@ import { internal } from "../../_generated/api";
 import type { ActionCtx } from "../../_generated/server";
 import { hashLinkCode } from "../../lib/linkCodes";
 import { notFound } from "./errors";
-import { mintUserToken } from "./tokens";
+import { AGENT_STATE_SCOPE, mintUserToken } from "./tokens";
 
 /** Lifetime of a token minted by `channelIdentities.resolve`. */
 export const RESOLVED_TOKEN_TTL_SECONDS = 15 * 60;
@@ -33,19 +33,26 @@ export const serviceImplementations: ServiceImplementations = {
       return await ctx.runMutation(internal.api.v1.channels.redeem, { ...rest, codeHash: await hashLinkCode(code) });
     },
   },
+  agentEvents: {
+    claim: (ctx, input) => ctx.runMutation(internal.api.v1.agentEvents.claim, input),
+    updateStatus: (ctx, input) => ctx.runMutation(internal.api.v1.agentEvents.updateStatus, input),
+    listRecoverable: (ctx, input) => ctx.runQuery(internal.api.v1.agentEvents.listRecoverable, input),
+  },
   channelIdentities: {
     resolve: async (ctx, input) => {
       const found = await ctx.runQuery(internal.api.v1.channels.lookup, input);
       if (!found) throw notFound("Channel identity");
       const now = Math.floor(Date.now() / 1000);
-      const token = await mintUserToken(found.userId, found.identity.scopes, RESOLVED_TOKEN_TTL_SECONDS, {
+      // `agent:state` is always granted: read-only users keep their conversation state.
+      const scopes = [...found.identity.scopes, AGENT_STATE_SCOPE];
+      const token = await mintUserToken(found.userId, scopes, RESOLVED_TOKEN_TTL_SECONDS, {
         now,
         channelIdentityId: found.identity.id,
       });
       return {
         token,
         expiresAt: new Date((now + RESOLVED_TOKEN_TTL_SECONDS) * 1000).toISOString(),
-        scopes: found.identity.scopes,
+        scopes,
         identity: found.identity,
         profile: found.profile,
       };

@@ -2,6 +2,17 @@ import { errorCodeSchema, type ErrorCode } from "@mpf/finance-contract";
 import { ConvexError, type Value } from "convex/values";
 
 import {
+  ACTION_NOT_CONFIRMED,
+  ACTION_NOT_FOUND,
+  CHAT_MISMATCH,
+  EVENT_FINISHED,
+  EVENT_NOT_FOUND,
+  SESSION_ENDED,
+  SESSION_FULL,
+  SESSION_NOT_FOUND,
+  TOO_MANY_PENDING,
+} from "../../domain/agentStore";
+import {
   CHANNEL_ALREADY_LINKED,
   EXTERNAL_ALREADY_LINKED,
   IDENTITY_NOT_FOUND,
@@ -59,6 +70,27 @@ export function readApiErrorData(error: unknown): ApiErrorData | null {
 }
 
 /**
+ * A failure a mutation reports as its return value instead of throwing, for
+ * the case where it must commit a write (marking an action `expired`) and
+ * still answer with an error. The router turns it into the error envelope.
+ */
+export interface HandlerFailure {
+  apiFailure: { code: ErrorCode; message: string; details?: unknown };
+}
+
+export function handlerFailure(code: ErrorCode, message: string, details?: unknown): HandlerFailure {
+  return { apiFailure: { code, message, ...(details === undefined ? {} : { details }) } };
+}
+
+export function readHandlerFailure(value: unknown): ApiErrorData | null {
+  if (typeof value !== "object" || value === null || !("apiFailure" in value)) return null;
+  const { code, message, details } = (value as HandlerFailure).apiFailure;
+  const parsed = errorCodeSchema.safeParse(code);
+  if (!parsed.success || typeof message !== "string") return null;
+  return { code: parsed.data, message, ...(details === undefined ? {} : { details }) };
+}
+
+/**
  * Domain functions throw plain `Error`s. Every message the API can reach is
  * listed here with its contract code; anything else stays an internal error.
  */
@@ -90,6 +122,15 @@ const DOMAIN_ERRORS: Readonly<Record<string, ErrorCode>> = {
   [USER_ALREADY_LINKED]: "conflict",
   [CHANNEL_ALREADY_LINKED]: "conflict",
   [PRIVATE_CHAT_REQUIRED]: "validation_failed",
+  [EVENT_NOT_FOUND]: "not_found",
+  [EVENT_FINISHED]: "conflict",
+  [SESSION_NOT_FOUND]: "not_found",
+  [SESSION_ENDED]: "conflict",
+  [SESSION_FULL]: "conflict",
+  [CHAT_MISMATCH]: "validation_failed",
+  [ACTION_NOT_FOUND]: "not_found",
+  [TOO_MANY_PENDING]: "conflict",
+  [ACTION_NOT_CONFIRMED]: "conflict",
 };
 
 export async function mapDomainErrors<T>(fn: () => Promise<T>): Promise<T> {

@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import { API_BASE_PATH } from "./envelope";
 import * as s from "./schemas";
+import type { TokenScope } from "./schemas";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -9,6 +10,8 @@ export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
  * Who may call a route:
  * - `user`: a user token (`finance:read` for GET, `finance:write` for writes),
  *   writes need an `Idempotency-Key`.
+ * - `user` routes with an explicit `scope` (the agent store) need that scope
+ *   instead of `finance:read`/`finance:write`, and take no `Idempotency-Key`.
  * - `service`: the chat agent's service key (`FINANCE_API_SERVICE_KEY`). Acts on
  *   no user's behalf, needs no scope and no `Idempotency-Key`.
  * The two credentials are never interchangeable.
@@ -24,6 +27,8 @@ export interface RouteDef {
   /** Shape of `data` in the success envelope. */
   response: z.ZodType;
   auth: RouteAuth;
+  /** User routes only. Overrides the method-derived finance scope (`agent:state` for the agent store). */
+  scope?: TokenScope;
 }
 
 const route = <Req extends z.ZodType, Res extends z.ZodType>(
@@ -39,6 +44,13 @@ const serviceRoute = <Req extends z.ZodType, Res extends z.ZodType>(
   request: Req,
   response: Res,
 ) => ({ method, path, request, response, auth: "service" as const }) satisfies RouteDef;
+
+const agentRoute = <Req extends z.ZodType, Res extends z.ZodType>(
+  method: HttpMethod,
+  path: string,
+  request: Req,
+  response: Res,
+) => ({ method, path, request, response, auth: "user" as const, scope: s.AGENT_STATE_SCOPE }) satisfies RouteDef;
 
 /**
  * The /api/v1 route map. Server and client both derive from this object:
@@ -151,6 +163,79 @@ export const routes = {
       s.channelIdentityUnlinkResponseSchema,
     ),
   },
+  /* Agent store. Events run before identity resolution, so they use the service key. */
+  agentEvents: {
+    claim: serviceRoute("POST", "/agent/events/claim", s.agentEventClaimRequestSchema, s.agentEventClaimResponseSchema),
+    updateStatus: serviceRoute(
+      "POST",
+      "/agent/events/status",
+      s.agentEventUpdateStatusRequestSchema,
+      s.agentEventUpdateStatusResponseSchema,
+    ),
+    listRecoverable: serviceRoute(
+      "GET",
+      "/agent/events/recoverable",
+      s.agentEventsRecoverableRequestSchema,
+      s.agentEventsRecoverableResponseSchema,
+    ),
+  },
+  agentSessions: {
+    current: agentRoute(
+      "POST",
+      "/agent/sessions/current",
+      s.agentSessionCurrentRequestSchema,
+      s.agentSessionCurrentResponseSchema,
+    ),
+  },
+  agentMessages: {
+    list: agentRoute(
+      "GET",
+      "/agent/sessions/:sessionId/messages",
+      s.agentMessagesListRequestSchema,
+      s.agentMessagesListResponseSchema,
+    ),
+    append: agentRoute(
+      "POST",
+      "/agent/sessions/:sessionId/messages",
+      s.agentMessagesAppendRequestSchema,
+      s.agentMessagesAppendResponseSchema,
+    ),
+  },
+  agentPendingActions: {
+    create: agentRoute(
+      "POST",
+      "/agent/pending-actions",
+      s.agentPendingActionCreateRequestSchema,
+      s.agentPendingActionCreateResponseSchema,
+    ),
+    get: agentRoute(
+      "GET",
+      "/agent/pending-actions/:id",
+      s.agentPendingActionGetRequestSchema,
+      s.agentPendingActionGetResponseSchema,
+    ),
+    confirm: agentRoute(
+      "POST",
+      "/agent/pending-actions/:id/confirm",
+      s.agentPendingActionConfirmRequestSchema,
+      s.agentPendingActionConfirmResponseSchema,
+    ),
+    cancel: agentRoute(
+      "POST",
+      "/agent/pending-actions/:id/cancel",
+      s.agentPendingActionCancelRequestSchema,
+      s.agentPendingActionCancelResponseSchema,
+    ),
+    complete: agentRoute(
+      "POST",
+      "/agent/pending-actions/:id/complete",
+      s.agentPendingActionCompleteRequestSchema,
+      s.agentPendingActionCompleteResponseSchema,
+    ),
+  },
+  agentHistory: {
+    delete: agentRoute("DELETE", "/agent/history", s.agentHistoryDeleteRequestSchema, s.agentHistoryDeleteResponseSchema),
+  },
 } as const satisfies Record<string, Record<string, RouteDef>>;
 
 export type Routes = typeof routes;
@@ -171,9 +256,14 @@ export function isWriteRoute(route: Pick<RouteDef, "method">): boolean {
   return route.method !== "GET";
 }
 
-/** User-route writes require an `Idempotency-Key` header; service routes never take one. */
-export function requiresIdempotencyKey(route: Pick<RouteDef, "method" | "auth">): boolean {
-  return route.auth === "user" && isWriteRoute(route);
+/** Finance user-route writes require an `Idempotency-Key` header; service and agent-store routes never take one. */
+export function requiresIdempotencyKey(route: Pick<RouteDef, "method" | "auth" | "scope">): boolean {
+  return route.auth === "user" && route.scope === undefined && isWriteRoute(route);
+}
+
+/** The scope a user token needs for a route: its explicit `scope`, else `finance:read` (GET) or `finance:write`. */
+export function requiredScope(route: Pick<RouteDef, "method" | "scope">): TokenScope {
+  return route.scope ?? (isWriteRoute(route) ? "finance:write" : "finance:read");
 }
 
 export function pathParamNames(path: string): string[] {
