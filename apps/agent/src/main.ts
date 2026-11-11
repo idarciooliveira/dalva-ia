@@ -12,6 +12,12 @@ import { createLogger, errorFields } from "./log";
 
 /** Below Docker's default 10s stop timeout (SIGKILL after). */
 const SHUTDOWN_DRAIN_MS = 8_000;
+/**
+ * Agent turns still running this long into the drain are aborted, so they
+ * fail (the user gets the apology) inside the drain instead of being killed
+ * and replayed, paid for twice, by the next boot's recovery.
+ */
+const SHUTDOWN_TURN_GRACE_MS = 5_000;
 const MAX_REQUEST_BODY_BYTES = 1024 * 1024;
 
 async function main() {
@@ -45,6 +51,7 @@ async function main() {
     logger,
   });
   const clients = createFinanceClients({ baseUrl: config.FINANCE_API_URL, serviceKey: config.FINANCE_API_SERVICE_KEY });
+  const stopTurns = new AbortController();
   const agent = createAgent({
     model: getModel(modelSettings(config)),
     maxSteps: config.AGENT_MAX_STEPS,
@@ -52,6 +59,7 @@ async function main() {
     turnTimeoutMs: config.AGENT_TURN_TIMEOUT_SECONDS * 1000,
     timezone: config.DEFAULT_TIMEZONE,
     logger,
+    stopSignal: stopTurns.signal,
   });
   const { handle, onFailure, accept } = createHandler({
     adapter,
@@ -87,8 +95,10 @@ async function main() {
     logger.info("shutdown_started", { signal });
     // Intake first, then drain everything that was accepted.
     accepting = false;
+    const stopTimer = setTimeout(() => stopTurns.abort(new Error("shutdown")), SHUTDOWN_TURN_GRACE_MS);
     await adapter.stop();
     const drained = await pipeline.shutdown(SHUTDOWN_DRAIN_MS);
+    clearTimeout(stopTimer);
     await server?.stop();
     logger.info("shutdown_complete", { drained });
     process.exit(drained ? 0 : 1);

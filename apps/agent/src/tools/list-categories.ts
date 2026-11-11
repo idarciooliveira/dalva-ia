@@ -1,10 +1,10 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { bounded, compact, guarded, includeArchivedInput, type ToolContext } from "./shared";
+import { bounded, call, clip, compact, guarded, includeArchivedInput, NAME_MAX, type ToolContext } from "./shared";
 
-const MAX_CATEGORIES = 60;
-const MAX_SUBCATEGORIES = 30;
+const MAX_CATEGORIES = 40;
+const MAX_SUBCATEGORIES = 15;
 
 export const listCategories = (context: ToolContext) =>
   tool({
@@ -17,8 +17,8 @@ export const listCategories = (context: ToolContext) =>
       guarded(context, async () => {
         const archived = includeArchived ?? false;
         const [categories, subcategories] = await Promise.all([
-          context.finance.categories.list({ includeArchived: archived }),
-          context.finance.subcategories.list({ includeArchived: archived }),
+          context.finance.categories.list({ includeArchived: archived }, call(context)),
+          context.finance.subcategories.list({ includeArchived: archived }, call(context)),
         ]);
         const visible = categories.items.filter((c) => (!type || c.type === type) && (archived || !c.archived));
         const { items, truncated } = bounded(visible, MAX_CATEGORIES);
@@ -28,10 +28,10 @@ export const listCategories = (context: ToolContext) =>
               .filter((sub) => sub.categoryId === category.id && (archived || !sub.archived))
               .sort((a, b) => a.sortOrder - b.sortOrder)
               .slice(0, MAX_SUBCATEGORIES)
-              .map((sub) => ({ id: sub.id, name: sub.name }));
+              .map((sub) => ({ id: sub.id, name: clip(sub.name, NAME_MAX) }));
             return compact({
               id: category.id,
-              name: category.name,
+              name: clip(category.name, NAME_MAX),
               type: category.type,
               archived: category.archived || undefined,
               subcategories: subs,

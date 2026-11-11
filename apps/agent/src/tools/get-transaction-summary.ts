@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { clip, compact, currentMonth, guarded, money, monthInput, type ToolContext } from "./shared";
+import { call, clip, compact, currentMonth, guarded, money, monthInput, type ToolContext } from "./shared";
 
 const MAX_RECENT = 5;
 
@@ -12,7 +12,7 @@ export const getTransactionSummary = (context: ToolContext) =>
     inputSchema: z.object({ month: monthInput.optional() }),
     execute: ({ month }) =>
       guarded(context, async () => {
-        const summary = await context.finance.reports.transactionSummary({ month: month ?? currentMonth(context.today) });
+        const summary = await context.finance.reports.transactionSummary({ month: month ?? currentMonth(context.today) }, call(context));
         return {
           month: summary.month,
           income: money(summary.totalIncome),

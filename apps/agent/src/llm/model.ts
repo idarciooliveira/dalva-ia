@@ -1,6 +1,6 @@
 import { createGateway } from "@ai-sdk/gateway";
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
-import type { LanguageModel, SystemModelMessage } from "ai";
+import type { LanguageModel, ModelMessage, SystemModelMessage } from "ai";
 
 /**
  * The only place that knows model providers. Everything else gets a
@@ -37,10 +37,17 @@ export function getModel(settings: ModelSettings, options: ModelOptions = {}): L
 }
 
 /**
- * The system prompt as a message with a prompt-cache breakpoint. Both
- * providers forward `anthropic.cacheControl` to Anthropic models; other
- * vendors ignore it (and cache stable prefixes on their own).
+ * Prompt-cache breakpoint. Both providers forward `anthropic.cacheControl`
+ * to Anthropic models; other vendors ignore it (and cache stable prefixes on their own).
  */
+const CACHE_BREAKPOINT = { anthropic: { cacheControl: { type: "ephemeral" as const } } };
+
+/** The system prompt as a message with a cache breakpoint. */
 export function cachedSystemMessage(content: string): SystemModelMessage {
-  return { role: "system", content, providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } };
+  return { role: "system", content, providerOptions: CACHE_BREAKPOINT };
+}
+
+/** The same breakpoint at the end of the replayed history, so earlier turns are read from cache too. */
+export function withCacheBreakpoint<T extends ModelMessage>(message: T): T {
+  return { ...message, providerOptions: { ...message.providerOptions, ...CACHE_BREAKPOINT } };
 }

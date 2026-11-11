@@ -1,10 +1,10 @@
 import { generateText, isStepCount, type LanguageModel, type ModelMessage } from "ai";
 
-import { cachedSystemMessage } from "../llm/model";
+import { cachedSystemMessage, withCacheBreakpoint } from "../llm/model";
 import { errorFields, type Logger } from "../log";
 import { createReadTools } from "../tools";
 import type { FinanceClient } from "./finance";
-import { decodeHistory, encodeAssistantText, encodeResponseMessages, encodeUserText } from "./history";
+import { decodeHistory, encodeAssistantText, encodeResponseMessages, encodeUserText, trimHistory } from "./history";
 import { SYSTEM_PROMPT } from "./prompts/system";
 import type { SessionRecorder } from "./session";
 
@@ -20,6 +20,10 @@ export interface AgentOptions {
   logger: Logger;
   /** Stored messages replayed to the model. Default 30. */
   historyLimit?: number;
+  /** Serialized size budget for replayed history (oldest turns go first). Default 24 KB. */
+  historyMaxBytes?: number;
+  /** Aborts every running turn (shutdown). */
+  stopSignal?: AbortSignal;
   now?: () => Date;
 }
 
@@ -50,6 +54,7 @@ export interface Agent {
 }
 
 const DEFAULT_HISTORY_LIMIT = 30;
+const DEFAULT_HISTORY_MAX_BYTES = 24 * 1024;
 /** Telegram shows "typing…" for about 5 seconds per call. */
 const TYPING_INTERVAL_MS = 4_500;
 const FALLBACK_REPLY = "Sorry, I couldn't put an answer together. Please try asking in another way.";
@@ -62,7 +67,12 @@ export function localDay(date: Date, timeZone: string): { date: string; weekday:
 }
 
 /** One line of profile text, safe to put in the context block. */
-const oneLine = (text: string, max: number) => text.replace(/[\r\n\t]+/g, " ").trim().slice(0, max);
+const oneLine = (text: string, max: number) =>
+  text
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/[[\]]/g, "")
+    .trim()
+    .slice(0, max);
 
 /**
  * Per-turn facts, sent at the start of the user message (not in the system
@@ -99,6 +109,7 @@ export function createAgent(options: AgentOptions): Agent {
   const { model, logger, timezone } = options;
   const now = options.now ?? (() => new Date());
   const historyLimit = options.historyLimit ?? DEFAULT_HISTORY_LIMIT;
+  const historyMaxBytes = options.historyMaxBytes ?? DEFAULT_HISTORY_MAX_BYTES;
   const maxSteps = Math.max(1, options.maxSteps);
   const instructions = cachedSystemMessage(SYSTEM_PROMPT);
 
@@ -107,15 +118,19 @@ export function createAgent(options: AgentOptions): Agent {
     const stopTyping = startTyping(input.typing);
     const deadline = AbortSignal.timeout(options.turnTimeoutMs);
     const abort = new AbortController();
+    // One signal for everything the turn does: history load, model calls and tool API calls.
+    const signal = AbortSignal.any([abort.signal, deadline, ...(options.stopSignal ? [options.stopSignal] : [])]);
     /** First error that must end the turn (revoked link, rate limit). */
     let fatal: unknown;
 
     try {
       const day = localDay(now(), timezone);
-      const history = decodeHistory(await input.session.history(historyLimit));
+      const history = trimHistory(decodeHistory(await input.session.history(historyLimit, signal)), historyMaxBytes);
+      if (history.length) history[history.length - 1] = withCacheBreakpoint(history[history.length - 1]!);
       const tools = createReadTools({
         finance: input.finance,
         today: day.date,
+        signal,
         onFatal: (error) => {
           fatal ??= error;
           abort.abort(error);
@@ -136,7 +151,7 @@ export function createAgent(options: AgentOptions): Agent {
         prepareStep: ({ stepNumber }) => (stepNumber >= maxSteps - 1 ? { toolChoice: "none" as const } : {}),
         ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
         maxRetries: 1,
-        abortSignal: AbortSignal.any([abort.signal, deadline]),
+        abortSignal: signal,
       });
       if (fatal) throw fatal;
 
@@ -172,6 +187,7 @@ export function createAgent(options: AgentOptions): Agent {
         provider: providerName(model),
         model: modelName(model),
         timedOut: deadline.aborted,
+        stopped: options.stopSignal?.aborted || undefined,
         ms: Date.now() - started,
       });
       throw cause;

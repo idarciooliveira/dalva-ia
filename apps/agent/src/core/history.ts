@@ -43,23 +43,39 @@ export const encodeUserText = (text: string): StoredMessage => ({
   content: JSON.stringify({ v, kind: "text", text }),
 });
 
+/** Longest assistant text kept per record; replies are short, this only guards runaway output. */
+const ASSISTANT_TEXT_MAX = 8_000;
+
 export const encodeAssistantText = (text: string): StoredMessage => ({
   role: "assistant",
-  content: JSON.stringify({ v, text }),
+  content: JSON.stringify({ v, text: text.slice(0, ASSISTANT_TEXT_MAX) }),
 });
 
 /** JSON-safe copy (drops undefined, functions...). */
 const toJson = (value: unknown): Json => (value === undefined ? null : (JSON.parse(JSON.stringify(value)) as Json));
 
-/** A tool result too large for one stored message is replaced by a marker. */
+const TOO_LARGE: Json = { error: "too_large", message: "Result was too large to keep." };
+
+/** Results too large for one stored message are replaced by a marker, largest first, until the record fits. */
 function fitToolResults(results: StoredToolResult[]): string {
-  const content = JSON.stringify({ v, toolResults: results });
-  if (utf8Bytes(content) <= AGENT_MESSAGE_CONTENT_MAX_BYTES) return content;
-  return JSON.stringify({
-    v,
-    toolResults: results.map((result) => ({ ...result, output: { error: "too_large", message: "Result was too large to keep." }, isError: true })),
-  });
+  const fitted = results.map((result) => ({ ...result }));
+  const content = () => JSON.stringify({ v, toolResults: fitted });
+  const bySize = fitted
+    .map((result, index) => ({ index, size: utf8Bytes(JSON.stringify(result.output)) }))
+    .sort((a, b) => b.size - a.size);
+  for (const { index } of bySize) {
+    if (utf8Bytes(content()) <= AGENT_MESSAGE_CONTENT_MAX_BYTES) break;
+    fitted[index] = { ...fitted[index]!, output: TOO_LARGE, isError: true };
+  }
+  return content();
 }
+
+/** Tool-call inputs come from the model (even invalid ones): keep a bounded copy. */
+const TOOL_INPUT_MAX_BYTES = 2_000;
+const boundedInput = (input: unknown): Json => {
+  const json = toJson(input);
+  return utf8Bytes(JSON.stringify(json)) <= TOOL_INPUT_MAX_BYTES ? json : { too_large: true };
+};
 
 /** AI SDK response messages (assistant + tool) -> stored records. */
 export function encodeResponseMessages(messages: ModelMessage[]): StoredMessage[] {
@@ -73,11 +89,11 @@ export function encodeResponseMessages(messages: ModelMessage[]): StoredMessage[
         .join("");
       const toolCalls: StoredToolCall[] = parts
         .filter((part) => part.type === "tool-call")
-        .map((part) => ({ id: part.toolCallId, name: part.toolName, input: toJson(part.input) }));
+        .map((part) => ({ id: part.toolCallId, name: part.toolName.slice(0, 64), input: boundedInput(part.input) }));
       if (!text && toolCalls.length === 0) continue;
       stored.push({
         role: "assistant",
-        content: JSON.stringify({ v, ...(text ? { text } : {}), ...(toolCalls.length ? { toolCalls } : {}) }),
+        content: JSON.stringify({ v, ...(text ? { text: text.slice(0, ASSISTANT_TEXT_MAX) } : {}), ...(toolCalls.length ? { toolCalls } : {}) }),
       });
     } else if (message.role === "tool") {
       const results: StoredToolResult[] = message.content
@@ -178,4 +194,21 @@ export function decodeHistory(records: Array<Pick<AgentMessage, "role" | "conten
     // `tool` records not consumed above are orphans; `system` records are never replayed.
   }
   return out;
+}
+
+/**
+ * Keep the newest messages within `maxBytes` of serialized JSON, cutting only
+ * at user messages so a turn's tool calls and results stay together. The
+ * newest turn is always kept.
+ */
+export function trimHistory(messages: ModelMessage[], maxBytes: number): ModelMessage[] {
+  let total = 0;
+  let start = messages.length;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    total += utf8Bytes(JSON.stringify(messages[i]));
+    if (messages[i]!.role !== "user") continue;
+    if (total > maxBytes && start < messages.length) break;
+    start = i;
+  }
+  return messages.slice(start);
 }

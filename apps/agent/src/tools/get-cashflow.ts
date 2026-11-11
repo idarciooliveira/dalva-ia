@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { currentMonth, guarded, money, monthInput, type ToolContext } from "./shared";
+import { call, currentMonth, guarded, money, monthInput, type ToolContext } from "./shared";
 
 export const getCashflow = (context: ToolContext) =>
   tool({
@@ -14,7 +14,7 @@ export const getCashflow = (context: ToolContext) =>
     execute: ({ month, months }) =>
       guarded(context, async () => {
         const target = month ?? currentMonth(context.today);
-        const report = await context.finance.reports.cashflow({ month: target, trendMonths: Math.min(months ?? 6, 12) });
+        const report = await context.finance.reports.cashflow({ month: target, trendMonths: Math.min(months ?? 6, 12) }, call(context));
         return {
           month: target,
           income: money(report.currentMonth.income),

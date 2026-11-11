@@ -99,6 +99,19 @@ describe("chat", () => {
     expect(lastReply()).toContain("no longer connected");
   });
 
+  test("a forbidden or rate-limited Finance API inside a tool gets the command replies", async () => {
+    for (const [code, reply] of [
+      ["forbidden", "isn't allowed"],
+      ["rate_limited", "Too many requests"],
+    ] as const) {
+      const { run, lastReply, finance } = setup([{ tools: [{ name: "get_net_worth", input: {} }] }, { text: "never" }]);
+      finance.fail("GET /reports/net-worth", code);
+      await run("net worth?");
+      expect(lastReply()).toContain(reply);
+      expect(finance.messages).toHaveLength(0);
+    }
+  });
+
   test("photos get a not-supported-yet reply", async () => {
     const { runUpdate, lastReply, model, finance } = setup([{ text: "never" }]);
     const photo = fixture("photo");

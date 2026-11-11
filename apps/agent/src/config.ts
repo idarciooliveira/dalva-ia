@@ -33,7 +33,7 @@ const configSchema = z
     AI_GATEWAY_API_KEY: z.string().min(8, "must be at least 8 chars").optional(),
     OPENROUTER_API_KEY: z.string().min(8, "must be at least 8 chars").optional(),
     AGENT_MAX_STEPS: z.coerce.number().int().min(1, "must be 1-10").max(10, "must be 1-10").default(6),
-    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(64, "must be 64-8192").max(8192, "must be 64-8192").optional(),
+    AGENT_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(64, "must be 64-8192").max(8192, "must be 64-8192").default(1024),
     AGENT_TURN_TIMEOUT_SECONDS: z.coerce.number().int().min(5).max(300).default(45),
     AGENT_RATE_LIMIT_TURNS: z.coerce.number().int().min(1).max(1000).default(20),
     AGENT_RATE_LIMIT_WINDOW_MINUTES: z.coerce.number().int().min(1).max(1440).default(10),

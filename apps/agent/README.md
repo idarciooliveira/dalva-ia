@@ -22,7 +22,7 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 | `AGENT_MODEL` | Provider model id, e.g. `anthropic/claude-sonnet-5-5`. Required, no default |
 | `AI_GATEWAY_API_KEY` / `OPENROUTER_API_KEY` | Key of the selected provider |
 | `AGENT_MAX_STEPS` | Model calls per chat turn, default `6` (1-10). The last one can't call tools |
-| `AGENT_MAX_OUTPUT_TOKENS` | Optional output cap per model call |
+| `AGENT_MAX_OUTPUT_TOKENS` | Output cap per model call, default `1024` |
 | `AGENT_TURN_TIMEOUT_SECONDS` | Whole-turn timeout, default `45` |
 | `AGENT_RATE_LIMIT_TURNS` / `AGENT_RATE_LIMIT_WINDOW_MINUTES` | Chat turns per user per window, default `20` / `10` |
 | `DEFAULT_TIMEZONE` | IANA zone for "today" and default report months, default `Africa/Luanda` |
@@ -70,9 +70,9 @@ Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Plain text goes t
 Read-only in this release. `src/core/agent.ts` runs one turn per text message:
 
 1. Over 2000 characters, or over the per-user rate limit (in memory): a fixed reply, nothing stored, no model call.
-2. Load the last 30 messages of the chat's session, add the user message with a short context block (today in `DEFAULT_TIMEZONE`, base currency, display name), call the model with the read tools and `AGENT_MAX_STEPS`. The last step can't call tools, so a turn always ends with text. Typing indicator while it runs.
+2. Load the last 30 messages of the chat's session (trimmed to 24 KB at turn boundaries, newest turn always kept, with a cache breakpoint at its end), add the user message with a short context block (today in `DEFAULT_TIMEZONE`, base currency, display name), call the model with the read tools and `AGENT_MAX_STEPS`. The last step can't call tools, so a turn always ends with text. Typing indicator while it runs.
 3. Store the turn (user, assistant tool calls, tool results, answer) in one append, then send the reply. Storing is best effort: a failure is logged and the reply still goes out. A turn that won't fit the session's 500 messages starts a new session first.
-4. Model or provider error, timeout: the event fails and the user gets the generic apology. A revoked link or Finance API rate limit inside a tool ends the turn with the same replies as commands.
+4. Model or provider error, timeout: the event fails and the user gets the generic apology. One abort signal covers the turn (history load, model calls, tool API calls), fired by the timeout, a fatal tool error or shutdown (turns still running 5s into the drain). A revoked link or Finance API rate limit inside a tool ends the turn with the same replies as commands.
 
 **Providers.** `src/llm/` is the only place that imports a provider (`@ai-sdk/gateway`, `@openrouter/ai-sdk-provider`); the rest uses the AI SDK's `LanguageModel` (`ai`). A boundary test enforces it. The system prompt (`src/core/prompts/system.md`, bundled as text) never changes between turns and carries a cache breakpoint, so providers can cache it.
 

@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { guarded, money, type ToolContext } from "./shared";
+import { call, guarded, money, type ToolContext } from "./shared";
 
 export const getNetWorth = (context: ToolContext) =>
   tool({
@@ -9,7 +9,7 @@ export const getNetWorth = (context: ToolContext) =>
     inputSchema: z.object({}),
     execute: () =>
       guarded(context, async () => {
-        const report = await context.finance.reports.netWorth({});
+        const report = await context.finance.reports.netWorth({}, call(context));
         return {
           hasData: report.hasData,
           assets: money(report.totalAssets),

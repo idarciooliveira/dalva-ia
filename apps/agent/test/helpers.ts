@@ -301,7 +301,17 @@ export function fakeFinance() {
 
     const key = `${method} ${path}`;
     const gate = gates.get(key);
-    if (gate) await gate;
+    if (gate) {
+      // Like real fetch: an aborted signal rejects a request that is still waiting.
+      const signal = init?.signal;
+      await Promise.race([
+        gate,
+        new Promise<never>((_, reject) => {
+          if (signal?.aborted) reject(signal.reason);
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+      ]);
+    }
 
     const failure = failures.get(key);
     let lostReply = false;

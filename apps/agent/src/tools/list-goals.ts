@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { bounded, compact, guarded, includeArchivedInput, money, percent, type ToolContext } from "./shared";
+import { bounded, call, clip, compact, guarded, includeArchivedInput, money, percent, NAME_MAX, type ToolContext } from "./shared";
 
 const MAX_GOALS = 30;
 
@@ -11,14 +11,14 @@ export const listGoals = (context: ToolContext) =>
     inputSchema: z.object({ includeArchived: includeArchivedInput }),
     execute: ({ includeArchived }) =>
       guarded(context, async () => {
-        const { items } = await context.finance.goals.list({ includeArchived: includeArchived ?? false });
+        const { items } = await context.finance.goals.list({ includeArchived: includeArchived ?? false }, call(context));
         const visible = includeArchived ? items : items.filter((goal) => !goal.archived);
         const { items: goals, truncated } = bounded(visible, MAX_GOALS);
         return compact({
           goals: goals.map((goal) =>
             compact({
               id: goal.id,
-              name: goal.name,
+              name: clip(goal.name, NAME_MAX),
               target: money(goal.targetAmount),
               saved: money(goal.currentAmount),
               percent: percent(goal.currentAmount.amountMinor, goal.targetAmount.amountMinor) ?? undefined,

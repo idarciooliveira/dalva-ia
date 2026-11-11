@@ -85,7 +85,7 @@ describe("loadConfig: agent model", () => {
       AGENT_RATE_LIMIT_WINDOW_MINUTES: 10,
       AGENT_TURN_TIMEOUT_SECONDS: 45,
     });
-    expect(loadConfig(ai).AGENT_MAX_OUTPUT_TOKENS).toBeUndefined();
+    expect(loadConfig(ai).AGENT_MAX_OUTPUT_TOKENS).toBe(1024);
   });
 
   test("requires a provider and a model, with no default model", () => {

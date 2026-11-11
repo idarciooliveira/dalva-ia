@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { bounded, compact, guarded, includeArchivedInput, money, toToolError, type ToolContext } from "./shared";
+import { bounded, call, clip, compact, guarded, includeArchivedInput, money, NAME_MAX, toToolError, type ToolContext } from "./shared";
 
 const MAX_DEBTS = 30;
 
@@ -13,9 +13,9 @@ export const listDebts = (context: ToolContext) =>
     execute: ({ includeArchived }) =>
       guarded(context, async () => {
         const [list, summary] = await Promise.all([
-          context.finance.debts.list({ includeArchived: includeArchived ?? false }),
+          context.finance.debts.list({ includeArchived: includeArchived ?? false }, call(context)),
           // The totals can fail on their own (e.g. mixed currencies) without hiding the list.
-          context.finance.reports.debtSummary({}).then(
+          context.finance.reports.debtSummary({}, call(context)).then(
             (report) => ({
               totalOriginal: money(report.totalOriginal),
               totalRemaining: money(report.totalRemaining),
@@ -30,9 +30,9 @@ export const listDebts = (context: ToolContext) =>
           debts: items.map((debt) =>
             compact({
               id: debt.id,
-              name: debt.name,
+              name: clip(debt.name, NAME_MAX),
               type: debt.debtType,
-              lender: debt.lender,
+              lender: clip(debt.lender, NAME_MAX),
               balance: money(debt.currentBalance),
               original: money(debt.originalAmount),
               minimumPayment: debt.minimumPayment ? money(debt.minimumPayment) : undefined,

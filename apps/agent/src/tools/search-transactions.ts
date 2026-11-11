@@ -2,7 +2,7 @@ import type { Transaction } from "@mpf/finance-contract";
 import { tool } from "ai";
 import { z } from "zod";
 
-import { clip, compact, dateInput, guarded, idInput, money, type ToolContext } from "./shared";
+import { call, clip, compact, dateInput, guarded, idInput, money, NAME_MAX, type ToolContext } from "./shared";
 
 export const SEARCH_MAX_LIMIT = 20;
 const DEFAULT_LIMIT = 10;
@@ -25,8 +25,8 @@ export const searchTransactions = (context: ToolContext) =>
         const limit = Math.min(Math.max(1, input.limit ?? DEFAULT_LIMIT), SEARCH_MAX_LIMIT);
         // Names make the answer readable without extra tool calls; best effort.
         const names = Promise.all([
-          context.finance.accounts.list({ includeArchived: true }).catch(() => ({ items: [] })),
-          context.finance.categories.list({ includeArchived: true }).catch(() => ({ items: [] })),
+          context.finance.accounts.list({ includeArchived: true }, call(context)).catch(() => ({ items: [] })),
+          context.finance.categories.list({ includeArchived: true }, call(context)).catch(() => ({ items: [] })),
         ]);
         const { items, nextCursor } = await context.finance.transactions.search(
           compact({
@@ -38,10 +38,11 @@ export const searchTransactions = (context: ToolContext) =>
             q: input.text,
             limit,
           }),
+          call(context),
         );
         const [accounts, categories] = await names;
-        const accountName = new Map(accounts.items.map((a) => [a.id as string, a.name]));
-        const categoryName = new Map(categories.items.map((c) => [c.id as string, c.name]));
+        const accountName = new Map(accounts.items.map((a) => [a.id as string, clip(a.name, NAME_MAX)]));
+        const categoryName = new Map(categories.items.map((c) => [c.id as string, clip(c.name, NAME_MAX)]));
         return {
           transactions: items.slice(0, limit).map((tx: Transaction) =>
             compact({

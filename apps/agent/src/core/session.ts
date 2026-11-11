@@ -50,17 +50,18 @@ export class SessionRecorder {
    * The latest `limit` messages of the chat's current session, oldest first.
    * Throws on API errors: the agent can't answer without its context.
    */
-  async history(limit: number): Promise<AgentMessage[]> {
-    const session = await this.session();
+  async history(limit: number, signal?: AbortSignal): Promise<AgentMessage[]> {
+    const session = await this.session(false, signal);
     if (session.messageCount === 0) return [];
-    const { items } = await this.finance.agentMessages.list({ sessionId: session.id, limit });
+    const { items } = await this.finance.agentMessages.list({ sessionId: session.id, limit }, { signal });
     return items;
   }
 
   /**
    * Append one turn in order. A turn that would overflow the session starts a
-   * new one first, so a turn is never split; a `conflict` (session ended or
-   * full meanwhile) retries the remainder once in a fresh session.
+   * new one first; a `conflict` (session ended or full meanwhile) retries the
+   * remainder once in a fresh session, which can split a turn that spans
+   * batches (history loading drops the orphaned half).
    */
   async recordAll(messages: StoredMessage[]): Promise<void> {
     if (messages.length === 0) return;
@@ -86,14 +87,17 @@ export class SessionRecorder {
     }
   }
 
-  private async session(startNew = false): Promise<AgentSession> {
+  private async session(startNew = false, signal?: AbortSignal): Promise<AgentSession> {
     if (this.current && !startNew) return this.current;
-    const { session } = await this.finance.agentSessions.current({
-      channel: this.event.channel,
-      chatId: this.event.chatId,
-      idleTimeoutMinutes: this.idleTimeoutMinutes,
-      ...(startNew ? { startNew: true } : {}),
-    });
+    const { session } = await this.finance.agentSessions.current(
+      {
+        channel: this.event.channel,
+        chatId: this.event.chatId,
+        idleTimeoutMinutes: this.idleTimeoutMinutes,
+        ...(startNew ? { startNew: true } : {}),
+      },
+      { signal },
+    );
     this.current = { ...session };
     return this.current;
   }

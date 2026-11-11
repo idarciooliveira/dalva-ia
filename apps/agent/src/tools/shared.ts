@@ -13,7 +13,12 @@ export interface ToolContext {
   today: string;
   /** Called with errors that must end the turn (revoked link, rate limit). */
   onFatal: (error: unknown) => void;
+  /** Aborted when the turn ends early (timeout, fatal error, shutdown): in-flight API calls stop too. */
+  signal?: AbortSignal;
 }
+
+/** Call options for every Finance API call of a tool. */
+export const call = (context: ToolContext) => ({ signal: context.signal });
 
 /** Amount as the model sees it: an exact decimal string plus its currency. */
 export interface Amount {
@@ -40,8 +45,14 @@ export function bounded<T>(items: T[], max: number): { items: T[]; truncated: bo
 }
 
 /** Free text from the user's data, cut so one row can't flood the context. */
-export const clip = (text: string | undefined, max = 120): string | undefined =>
-  text === undefined ? undefined : text.length > max ? `${text.slice(0, max - 1)}…` : text;
+export function clip(text: string, max?: number): string;
+export function clip(text: string | undefined, max?: number): string | undefined;
+export function clip(text: string | undefined, max = 120): string | undefined {
+  return text === undefined ? undefined : text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Names are user-entered too; keep them short. */
+export const NAME_MAX = 80;
 
 /** Drop undefined fields so results stay compact. */
 export function compact<T extends Record<string, unknown>>(value: T): T {

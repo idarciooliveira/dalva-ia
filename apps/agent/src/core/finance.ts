@@ -21,7 +21,10 @@ export function createFinanceClients(options: FinanceClientsOptions): FinanceCli
   const baseFetch: typeof fetch = options.fetch ?? ((...args) => globalThis.fetch(...args));
   const timeoutMs = options.timeoutMs ?? 10_000;
   const timedFetch = ((input: RequestInfo | URL, init?: RequestInit) =>
-    baseFetch(input, { ...init, signal: init?.signal ?? AbortSignal.timeout(timeoutMs) })) as typeof fetch;
+    baseFetch(input, {
+      ...init,
+      signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
+    })) as typeof fetch;
 
   return {
     service: createFinanceServiceClient({

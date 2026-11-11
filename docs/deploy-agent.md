@@ -56,12 +56,12 @@ The service key must be identical in Convex and in the agent.
 | `AI_GATEWAY_API_KEY` | Gateway key (Vercel → AI Gateway → API keys). Needed when `AI_PROVIDER=gateway`. |
 | `OPENROUTER_API_KEY` | OpenRouter key. Needed when `AI_PROVIDER=openrouter`. |
 | `AGENT_MAX_STEPS` | Model calls per turn, `6` default (1-10). |
-| `AGENT_MAX_OUTPUT_TOKENS` | Optional cap per model call (64-8192). |
+| `AGENT_MAX_OUTPUT_TOKENS` | Cap per model call, `1024` default (64-8192). |
 | `AGENT_TURN_TIMEOUT_SECONDS` | `45` default. |
 | `AGENT_RATE_LIMIT_TURNS` / `AGENT_RATE_LIMIT_WINDOW_MINUTES` | `20` turns per `10` minutes per user, default. |
 | `DEFAULT_TIMEZONE` | `Africa/Luanda` default. |
 
-Switching provider or model is an env change and a restart; stored chat history stays usable. Set a spend limit on the provider account: the per-user rate limit is the only cost guard in the agent.
+Switching provider or model is an env change and a restart; stored chat history stays usable. Set a spend limit on the provider account: the agent caps steps, output tokens and turns per user, but has no global budget. On stop, agent turns still running after 5s are aborted (the user gets the generic apology) so the drain finishes and recovery never pays for a turn twice.
 
 The agent validates all of this at boot and exits naming the bad variables, never the values.
 
