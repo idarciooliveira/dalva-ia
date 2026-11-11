@@ -2,7 +2,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { convexQuery, useConvexAction, useConvexMutation } from "@convex-dev/react-query";
 import { api } from "@mpf/backend/convex/_generated/api";
 import type { Id } from "@mpf/backend/convex/_generated/dataModel";
-import { Check, Copy, ExternalLink, Link2Off, MessageCircle, RefreshCw, ShieldCheck } from "lucide-react";
+import { Check, Copy, ExternalLink, Link2Off, MessageCircle, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import {
@@ -254,6 +254,8 @@ interface TelegramLink {
 
 function LinkedTelegram({ link }: { link: TelegramLink }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyDeleted, setHistoryDeleted] = useState(false);
   const [error, setError] = useState("");
 
   const { mutateAsync: setReadOnly, isPending: savingReadOnly } = useMutation({
@@ -263,12 +265,27 @@ function LinkedTelegram({ link }: { link: TelegramLink }) {
     mutationFn: useConvexMutation(api.channelLinks.unlink),
   });
 
+  const { mutateAsync: deleteHistory, isPending: deletingHistory } = useMutation({
+    mutationFn: useConvexMutation(api.agentStore.deleteMyHistory),
+  });
+
   const toggleReadOnly = async (readOnly: boolean) => {
     setError("");
     try {
       await setReadOnly({ identityId: link._id, readOnly });
     } catch {
       setError("Couldn't update the setting. Please try again.");
+    }
+  };
+
+  const confirmDeleteHistory = async () => {
+    setError("");
+    setHistoryDeleted(false);
+    try {
+      await deleteHistory({});
+      setHistoryDeleted(true);
+    } catch {
+      setError("Couldn't delete chat history. Please try again.");
     }
   };
 
@@ -308,6 +325,24 @@ function LinkedTelegram({ link }: { link: TelegramLink }) {
         />
       </div>
 
+      <div className="flex items-center justify-between gap-4 border-b border-border pb-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-foreground">Chat history</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            The bot keeps recent conversations and pending confirmations for up to 30 days. Delete them any time.
+          </p>
+        </div>
+        <Button variant="outline" size="default" disabled={deletingHistory} onClick={() => setHistoryOpen(true)}>
+          <Trash2 className="mr-1.5 size-4" />
+          Delete chat history
+        </Button>
+      </div>
+
+      {historyDeleted && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Chat history deleted.
+        </p>
+      )}
       {error && <p className="text-sm text-destructive">{error}</p>}
 
       <div className="flex justify-end">
@@ -317,12 +352,31 @@ function LinkedTelegram({ link }: { link: TelegramLink }) {
         </Button>
       </div>
 
+      <AlertDialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete chat history?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The bot forgets your past conversations and cancels any pending confirmations. Your accounts and
+              transactions are not affected. This can't be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void confirmDeleteHistory()}>
+              Delete history
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Unlink Telegram?</AlertDialogTitle>
             <AlertDialogDescription>
-              The bot loses access to your finances right away. You can connect again later.
+              The bot loses access to your finances right away and your chat history is deleted. You can connect
+              again later.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
