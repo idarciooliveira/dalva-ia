@@ -102,6 +102,19 @@ describe("agent pending actions", () => {
     expect(ok(agentPendingActionCreateRequestSchema, { ...create, input: { blob: "x".repeat(17 * 1024) } })).toBe(false);
   });
 
+  it("rejects JSON keys Convex can't store (leading $ or _, empty) at any depth", () => {
+    for (const input of [{ $set: 1 }, { _id: "x" }, { "": 1 }, { a: { b: [{ $c: 1 }] } }]) {
+      expect(ok(agentPendingActionCreateRequestSchema, { ...create, input }), JSON.stringify(input)).toBe(false);
+    }
+    expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: { details: { _x: 1 } } })).toBe(false);
+    expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: [{ $x: 1 }] })).toBe(false);
+    expect(ok(agentPendingActionCreateRequestSchema, { ...create, input: { a: { "b-c": [1, "$ok", { d_: null }] } } })).toBe(true);
+    // Too deep.
+    let deep: unknown = 1;
+    for (let i = 0; i < 20; i++) deep = { a: deep };
+    expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: deep })).toBe(false);
+  });
+
   it("complete needs a final status and a result", () => {
     expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "executed", result: { id: "t1" } })).toBe(true);
     expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: null })).toBe(true);

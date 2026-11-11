@@ -10,6 +10,15 @@ import { apiError, handlerFailure } from "./errors";
  * identity come from the token (see `define.ts`), never from the request.
  */
 
+/**
+ * A button that can only fail is worse than none: creating or confirming a
+ * write needs an identity that still has `finance:write` (the user may have
+ * switched to read-only after the token was minted). Cancelling stays allowed.
+ */
+function requireWriteAccess(identity: Doc<"channelIdentities">) {
+  if (!identity.scopes.includes("finance:write")) throw apiError("forbidden", "Channel link lacks the finance:write scope");
+}
+
 const iso = (ms: number) => new Date(ms).toISOString();
 
 const sessionDto = (session: Doc<"agentSessions">) => ({
@@ -84,6 +93,7 @@ function operationRoute(operation: string): RouteDef | null {
 }
 
 export const createPendingAction = agentMutation(routes.agentPendingActions.create, async (ctx, { userId, identity }, input) => {
+  requireWriteAccess(identity);
   const session = await agentStore.loadSession(ctx, userId, identity._id, input.sessionId);
   // The button must lead to something that can run: check the input against the operation's own schema now.
   const route = operationRoute(input.operation);
@@ -116,6 +126,7 @@ function transitionResult(transition: agentStore.ActionTransition) {
 }
 
 export const confirmPendingAction = agentMutation(routes.agentPendingActions.confirm, async (ctx, { userId, identity }, input) => {
+  requireWriteAccess(identity);
   const action = await agentStore.loadAction(ctx, userId, identity._id, input.id);
   return transitionResult(await agentStore.transitionPending(ctx, action, "confirmed", Date.now()));
 });

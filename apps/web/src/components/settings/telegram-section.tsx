@@ -329,7 +329,7 @@ function LinkedTelegram({ link }: { link: TelegramLink }) {
         <div className="min-w-0">
           <p className="text-sm font-medium text-foreground">Chat history</p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            The bot keeps recent conversations and pending confirmations for up to 30 days. Delete them any time.
+            The bot remembers recent conversations and keeps pending confirmations for a short time. Conversations are deleted after 30 days without activity, or any time you choose.
           </p>
         </div>
         <Button variant="outline" size="default" disabled={deletingHistory} onClick={() => setHistoryOpen(true)}>

@@ -283,3 +283,26 @@ describe("cron: purgeInactiveHistory", () => {
     expect(await counts(t)).toEqual({ sessions: 0, messages: 0, actions: 0 });
   });
 });
+
+describe("unlink with a large history", () => {
+  it("deletes the first batch in the unlink mutation and the rest through the scheduler", async () => {
+    const t = setupTest();
+    const alice = await newUser(t);
+    const bob = await newUser(t);
+    const aliceIdentity = await seedIdentity(t, alice.userId, "1");
+    const bobIdentity = await seedIdentity(t, bob.userId, "2");
+    await seedSession(t, alice.userId, aliceIdentity, { messages: 700 });
+    await seedSession(t, bob.userId, bobIdentity, { messages: 3 });
+
+    await alice.as.mutation(api.channelLinks.unlink, { identityId: aliceIdentity });
+    const first = await counts(t);
+    expect(first.messages).toBeGreaterThan(3); // some of Alice's are left for the continuation
+    expect(first.messages).toBeLessThan(703);
+    expect((await scheduled(t)).length).toBe(1);
+
+    await t.mutation(internal.agentStore.purgeIdentityHistory, { identityId: aliceIdentity });
+    expect(await counts(t)).toEqual({ sessions: 1, messages: 3, actions: 1 });
+    const left = await t.run((ctx) => ctx.db.query("agentSessions").collect());
+    expect(left[0]!.userId).toBe(bob.userId);
+  });
+});

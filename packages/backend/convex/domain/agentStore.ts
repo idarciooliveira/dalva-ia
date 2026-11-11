@@ -248,20 +248,36 @@ export async function loadAction(
   return action;
 }
 
+/**
+ * At most `MAX_PENDING_PER_SESSION` live pending actions per session. Rows past
+ * `expiresAt` that the cron has not reached yet are expired here as they are
+ * read, so a pile of them can neither count against the limit nor hide live
+ * rows behind them. Bounded: a few small reads, then a conservative refusal.
+ */
+async function assertRoomForAction(ctx: MutationCtx, sessionId: Id<"agentSessions">, now: number) {
+  for (let round = 0; round < 5; round++) {
+    const open = await ctx.db
+      .query("agentPendingActions")
+      .withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", sessionId).eq("status", "pending"))
+      .take(MAX_PENDING_PER_SESSION + 1);
+    let live = 0;
+    for (const action of open) {
+      if (action.expiresAt <= now) await ctx.db.patch(action._id, { status: "expired", updatedAt: now });
+      else live++;
+    }
+    if (live >= MAX_PENDING_PER_SESSION) break;
+    if (open.length <= MAX_PENDING_PER_SESSION) return; // read them all
+  }
+  throw new Error(TOO_MANY_PENDING);
+}
+
 export async function createPendingAction(
   ctx: MutationCtx,
   session: Doc<"agentSessions">,
   args: { operation: string; input: string; summary: string; ttlMs: number; now: number },
 ) {
   if (session.endedAt !== undefined) throw new Error(SESSION_ENDED);
-  // Expired rows the cron has not reached yet don't count against the limit.
-  const open = await ctx.db
-    .query("agentPendingActions")
-    .withIndex("by_sessionId_and_status", (q) => q.eq("sessionId", session._id).eq("status", "pending"))
-    .take(MAX_PENDING_PER_SESSION + 1);
-  if (open.filter((action) => action.expiresAt > args.now).length >= MAX_PENDING_PER_SESSION) {
-    throw new Error(TOO_MANY_PENDING);
-  }
+  await assertRoomForAction(ctx, session._id, args.now);
   const id = await ctx.db.insert("agentPendingActions", {
     userId: session.userId,
     sessionId: session._id,

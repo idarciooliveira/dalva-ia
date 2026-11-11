@@ -606,6 +606,99 @@ describe("agentPendingActions", () => {
     await newAction(chat);
   });
 
+  it("expired-but-pending rows can't be used to get past the per-session limit", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t, { withAccount: true });
+    const { session: s } = await newAction(chat);
+    await t.run(async (ctx) => {
+      const first = (await ctx.db.query("agentPendingActions").first())!;
+      for (let i = 0; i < 30; i++) {
+        await ctx.db.insert("agentPendingActions", {
+          ...(({ _id, _creationTime, ...rest }) => rest)(first),
+          expiresAt: Date.now() - 1_000,
+        });
+      }
+      await ctx.db.patch(first._id, { expiresAt: Date.now() - 1_000 });
+    });
+    // 31 expired rows are still `pending`: creating works and sweeps them to `expired`.
+    await chat.agent.agentPendingActions.create({
+      sessionId: s.id,
+      operation: "transactions.create",
+      input: expenseInput(chat.accountId!),
+      summary: "fresh",
+    });
+    const rows = await t.run((ctx) => ctx.db.query("agentPendingActions").collect());
+    expect(rows).toHaveLength(32);
+    expect(rows.filter((a) => a.status === "expired")).toHaveLength(31);
+    expect(rows.filter((a) => a.status === "pending").map((a) => a.summary)).toEqual(["fresh"]);
+
+    // And the limit still bites once 20 live ones exist.
+    for (let i = 1; i < 20; i++) await newAction(chat);
+    await expectApiError(
+      chat.agent.agentPendingActions.create({ sessionId: s.id, operation: "transactions.create", input: expenseInput(chat.accountId!), summary: "too many" }),
+      "conflict",
+      409,
+    );
+  });
+
+  it("a read-only identity can't create or confirm a write action", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t, { withAccount: true });
+    const { action } = await newAction(chat);
+    await chat.web.mutation(api.channelLinks.setReadOnly, { identityId: chat.identityId, readOnly: true });
+
+    // The existing token still carries finance:write, but the identity no longer does.
+    await expectApiError(chat.agent.agentPendingActions.confirm({ id: action.id }), "forbidden", 403);
+    expect((await chat.agent.agentPendingActions.get({ id: action.id })).action.status).toBe("pending");
+    await expectApiError(
+      chat.agent.agentPendingActions.create({
+        sessionId: action.sessionId,
+        operation: "transactions.create",
+        input: expenseInput(chat.accountId!),
+        summary: "nope",
+      }),
+      "forbidden",
+      403,
+    );
+    // Cancelling a button is not a write.
+    expect((await chat.agent.agentPendingActions.cancel({ id: action.id })).action.status).toBe("cancelled");
+
+    const readOnly = await linkedChat(t, { externalUserId: "3003", readOnly: true, withAccount: true });
+    const s = await session(readOnly);
+    await expectApiError(
+      readOnly.agent.agentPendingActions.create({ sessionId: s.id, operation: "transactions.create", input: expenseInput(readOnly.accountId!), summary: "x" }),
+      "forbidden",
+      403,
+    );
+  });
+
+  it("confirm still works after the session was ended by idle rollover", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t, { withAccount: true });
+    const { action } = await newAction(chat);
+    await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30, startNew: true });
+    expect((await chat.agent.agentPendingActions.confirm({ id: action.id })).action.status).toBe("confirmed");
+  });
+
+  it("rejects JSON keys Convex can't store with validation_failed, not a 500", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t, { withAccount: true });
+    const s = await session(chat);
+    const create = await raw(t, "POST", "/agent/pending-actions", {
+      token: chat.token,
+      body: { sessionId: s.id, operation: "transactions.create", input: { $set: 1 }, summary: "x" },
+    });
+    expect(create.status).toBe(400);
+    const { action } = await newAction(chat);
+    await chat.agent.agentPendingActions.confirm({ id: action.id });
+    const complete = await raw(t, "POST", `/agent/pending-actions/${action.id}/complete`, {
+      token: chat.token,
+      body: { status: "failed", result: { _bad: true } },
+    });
+    expect(complete.status).toBe(400);
+    expect((await chat.agent.agentPendingActions.get({ id: action.id })).action.status).toBe("confirmed");
+  });
+
   it("only the session owner can create an action in it, and not in an ended session", async () => {
     const t = setupApi();
     const { alice, bob } = await twoChats(t);
@@ -810,6 +903,18 @@ describe("agentHistory.delete", () => {
 /* -------------------------------------------------------------------------- */
 /*  Unlink and the web button                                                 */
 /* -------------------------------------------------------------------------- */
+
+describe("history deleted while an action is confirmed", () => {
+  it("lets the agent finish the call, then complete says not_found so it can drop the result", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t, { withAccount: true });
+    const { action } = await newAction(chat);
+    await chat.agent.agentPendingActions.confirm({ id: action.id });
+    await chat.agent.agentHistory.delete();
+    await expectApiError(chat.agent.agentPendingActions.complete({ id: action.id, status: "executed", result: {} }), "not_found", 404);
+    await expectApiError(chat.agent.agentPendingActions.get({ id: action.id }), "not_found", 404);
+  });
+});
 
 describe("history and unlink", () => {
   const counts = (t: T) =>
