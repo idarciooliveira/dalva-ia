@@ -14,7 +14,9 @@
   "dependencies": {
     "@auth/core": "0.37.0",
     "@convex-dev/auth": "^0.0.91",
-    "convex": "^1.21.0"
+    "@mpf/finance-contract": "workspace:*",
+    "convex": "^1.21.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@edge-runtime/vm": "^5.0.0",

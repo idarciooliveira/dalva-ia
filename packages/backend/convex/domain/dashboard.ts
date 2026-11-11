@@ -1,6 +1,14 @@
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
-const liabilityAccountTypes = new Set(["credit_card", "loan"]);
+export const liabilityAccountTypes = new Set(["credit_card", "loan"]);
+
+/** Accounts whose balances `getNetWorth` adds to `totalAssets`. */
+export async function netWorthAssetAccounts(ctx: QueryCtx | MutationCtx, userId: string) {
+  return (await ctx.db
+    .query("accounts")
+    .withIndex("by_userId", (q) => q.eq("userId", userId))
+    .take(100)).filter((account) => !account.archived && !liabilityAccountTypes.has(account.type));
+}
 
 export async function getNetWorth(
   ctx: QueryCtx | MutationCtx,

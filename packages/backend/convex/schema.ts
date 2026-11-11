@@ -97,7 +97,11 @@ export default defineSchema({
     .index("by_userId_and_date", ["userId", "date"])
     .index("by_accountId", ["accountId"])
     .index("by_categoryId", ["categoryId"])
-    .index("by_transferGroupId", ["transferGroupId"]),
+    .index("by_transferGroupId", ["transferGroupId"])
+    // Finance API search: newest first within a filter.
+    .index("by_userId_and_accountId_and_date", ["userId", "accountId", "date"])
+    .index("by_userId_and_categoryId_and_date", ["userId", "categoryId", "date"])
+    .index("by_userId_and_type_and_date", ["userId", "type", "date"]),
 
   /* ------------------------------------------------------------------ */
   /*  Savings goals                                                      */
@@ -128,7 +132,8 @@ export default defineSchema({
     transactionId: v.optional(v.id("transactions")), // linked transfer transaction (for account-linked goals)
   })
     .index("by_userId", ["userId"])
-    .index("by_goalId", ["goalId"]),
+    .index("by_goalId", ["goalId"])
+    .index("by_transactionId", ["transactionId"]),
 
   /* ------------------------------------------------------------------ */
   /*  Debts                                                              */
@@ -171,5 +176,20 @@ export default defineSchema({
     liabilityTransactionId: v.optional(v.id("transactions")),
   })
     .index("by_userId", ["userId"])
-    .index("by_debtId", ["debtId"]),
+    .index("by_debtId", ["debtId"])
+    .index("by_sourceTransactionId", ["sourceTransactionId"])
+    .index("by_liabilityTransactionId", ["liabilityTransactionId"]),
+
+  /* ------------------------------------------------------------------ */
+  /*  Finance API idempotency records                                    */
+  /* ------------------------------------------------------------------ */
+  apiIdempotencyKeys: defineTable({
+    userId: v.string(),
+    key: v.string(), // Idempotency-Key header
+    requestHash: v.string(), // sha256 of operation + canonical input
+    response: v.any(), // success `data` replayed for the same key + body
+    createdAt: v.number(), // ms epoch; purged after the TTL by a cron
+  })
+    .index("by_userId_and_key", ["userId", "key"])
+    .index("by_createdAt", ["createdAt"]),
 });

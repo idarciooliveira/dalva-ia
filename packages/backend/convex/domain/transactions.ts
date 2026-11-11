@@ -1,4 +1,4 @@
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 export type TransactionType = "income" | "expense" | "adjustment" | "transfer";
@@ -297,6 +297,37 @@ export async function listTransactions(
 }
 
 /**
+ * How each report reads its rows. Shared with `reportAccountIds` so callers
+ * can see exactly which accounts fed a report (for currency checks).
+ */
+export const REPORT_READS = {
+  summary: { order: "desc", take: 200, types: ["income", "expense", "adjustment"] },
+  spending: { order: "asc", take: 500, types: ["expense"] },
+  cashflow: { order: "asc", take: 2000, types: ["income", "expense"] },
+} as const satisfies Record<string, { order: "asc" | "desc"; take: number; types: readonly TransactionType[] }>;
+
+/**
+ * Accounts of the rows a report aggregates: the same index range, order and
+ * bound as the report, restricted to the types it sums.
+ */
+export async function reportAccountIds(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  args: { report: keyof typeof REPORT_READS; dateFrom: string; dateTo: string },
+) {
+  const read = REPORT_READS[args.report];
+  const txs = await ctx.db
+    .query("transactions")
+    .withIndex("by_userId_and_date", (q) =>
+      q.eq("userId", userId).gte("date", args.dateFrom).lte("date", args.dateTo),
+    )
+    .order(read.order)
+    .take(read.take);
+  const types: readonly TransactionType[] = read.types;
+  return [...new Set(txs.filter((tx) => types.includes(tx.type)).map((tx) => tx.accountId))];
+}
+
+/**
  * Get a monthly transaction summary: total income, total expenses,
  * and recent transactions for the given month (format: "YYYY-MM").
  */
@@ -315,7 +346,7 @@ export async function getTransactionSummary(
       q.eq("userId", userId).gte("date", dateFrom).lte("date", dateTo),
     )
     .order("desc")
-    .take(200);
+    .take(REPORT_READS.summary.take);
 
   let totalIncome = 0;
   let totalExpenses = 0;
@@ -352,7 +383,7 @@ export async function getSpendingByCategory(
     .withIndex("by_userId_and_date", (q) =>
       q.eq("userId", userId).gte("date", dateFrom).lte("date", dateTo),
     )
-    .take(500);
+    .take(REPORT_READS.spending.take);
 
   // Aggregate expense amounts by categoryId
   const categoryTotals = new Map<string, number>(); // categoryId → total amount
@@ -425,7 +456,7 @@ export async function getCashflow(
     .withIndex("by_userId_and_date", (q) =>
       q.eq("userId", userId).gte("date", dateFrom).lte("date", dateTo),
     )
-    .take(2000);
+    .take(REPORT_READS.cashflow.take);
 
   // Initialize buckets
   const buckets = new Map<string, { income: number; expenses: number }>();
@@ -466,3 +497,183 @@ export async function getCashflow(
   };
 }
 
+
+/* -------------------------------------------------------------------------- */
+/*  Search (cursor-paginated)                                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Rows read per page at most, matching or not. Bounds the cost of sparse filters and `q`. */
+export const SEARCH_SCAN_LIMIT = 1000;
+
+/**
+ * Last row read: its `date` and `_creationTime`, plus the rows already read at
+ * exactly that position (`_creationTime` is not guaranteed unique). `seen` holds
+ * their ids, so deleting or moving one of them between pages can't make the
+ * next page skip another; past `MAX_TIE_IDS` (cursor size cap) it degrades to
+ * a count.
+ */
+export type SearchPosition = { date: string; creationTime: number; seen: string[] | number };
+
+const MAX_TIE_IDS = 6;
+const CURSOR_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
+
+function encodeSearchCursor(position: SearchPosition): string {
+  return btoa(JSON.stringify([position.date, position.creationTime, position.seen]))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
+
+export function decodeSearchCursor(cursor: string): SearchPosition {
+  try {
+    const value: unknown = JSON.parse(atob(cursor.replace(/-/g, "+").replace(/_/g, "/")));
+    if (
+      Array.isArray(value) &&
+      value.length === 3 &&
+      typeof value[0] === "string" &&
+      typeof value[1] === "number" &&
+      Number.isFinite(value[1]) &&
+      ((Number.isSafeInteger(value[2]) && value[2] > MAX_TIE_IDS) ||
+        (Array.isArray(value[2]) &&
+          value[2].length >= 1 &&
+          value[2].length <= MAX_TIE_IDS &&
+          value[2].every((id: unknown) => typeof id === "string" && CURSOR_ID_RE.test(id))))
+    ) {
+      return { date: value[0], creationTime: value[1], seen: value[2] };
+    }
+  } catch {
+    // fall through
+  }
+  throw new Error("Invalid cursor");
+}
+
+/**
+ * Search a user's transactions, newest first (`date` desc, then creation
+ * order desc), with an opaque keyset cursor.
+ *
+ * - Uses the most selective index for the filters (account > category >
+ *   type > user); the date range is always part of the index range, and the
+ *   remaining filters and the `q` text match (case-insensitive substring of
+ *   description, note or payee) run on the scanned rows.
+ * - Each page reads at most `SEARCH_SCAN_LIMIT` rows. When filters are sparse
+ *   the page can come back short (even empty) with a non-null `nextCursor`;
+ *   the cursor always resumes right after the last row read, so no row is
+ *   skipped or repeated. Rows sharing a `_creationTime` are told apart by
+ *   the ids already read at that position. `nextCursor` is null only when the range is exhausted.
+ */
+export async function searchTransactions(
+  ctx: QueryCtx | MutationCtx,
+  userId: string,
+  args: {
+    dateFrom?: string;
+    dateTo?: string;
+    accountId?: Id<"accounts">;
+    categoryId?: Id<"categories">;
+    type?: TransactionType;
+    q?: string;
+    cursor?: string;
+    limit: number;
+    scanLimit?: number;
+  },
+) {
+  const after = args.cursor ? decodeSearchCursor(args.cursor) : null;
+  const scanLimit = args.scanLimit ?? SEARCH_SCAN_LIMIT;
+  const needle = args.q?.toLowerCase();
+
+  // Index range for one date segment: `eqDate` (rows on the cursor's date
+  // created at or before it) or `[dateFrom, below)` / `[dateFrom, dateTo]`.
+  type Segment = { eqDate: string; atOrBefore: number } | { below?: string };
+  const query = (segment: Segment) => {
+    // The four indexes share the shape [userId, <filter>?, date, _creationTime];
+    // the builder type differs per index, so the range is applied untyped.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const range = (q: any) => {
+      if ("eqDate" in segment) return q.eq("date", segment.eqDate).lte("_creationTime", segment.atOrBefore);
+      let r = q;
+      if (args.dateFrom) r = r.gte("date", args.dateFrom);
+      if (segment.below !== undefined) r = r.lt("date", segment.below);
+      else if (args.dateTo) r = r.lte("date", args.dateTo);
+      return r;
+    };
+    const table = ctx.db.query("transactions");
+    if (args.accountId) {
+      const accountId = args.accountId;
+      return table.withIndex("by_userId_and_accountId_and_date", (q) => range(q.eq("userId", userId).eq("accountId", accountId))).order("desc");
+    }
+    if (args.categoryId) {
+      const categoryId = args.categoryId;
+      return table.withIndex("by_userId_and_categoryId_and_date", (q) => range(q.eq("userId", userId).eq("categoryId", categoryId))).order("desc");
+    }
+    if (args.type) {
+      const type = args.type;
+      return table.withIndex("by_userId_and_type_and_date", (q) => range(q.eq("userId", userId).eq("type", type))).order("desc");
+    }
+    return table.withIndex("by_userId_and_date", (q) => range(q.eq("userId", userId))).order("desc");
+  };
+
+  const segments: Segment[] = [];
+  if (after) {
+    const inRange =
+      (!args.dateFrom || after.date >= args.dateFrom) && (!args.dateTo || after.date <= args.dateTo);
+    if (inRange) segments.push({ eqDate: after.date, atOrBefore: after.creationTime });
+    // Rows strictly older than the cursor date, clipped to dateTo.
+    const below = args.dateTo && args.dateTo < after.date ? undefined : after.date;
+    segments.push(below === undefined ? {} : { below });
+  } else {
+    segments.push({});
+  }
+
+  const matches = (tx: Doc<"transactions">) =>
+    tx.userId === userId &&
+    (!args.accountId || tx.accountId === args.accountId) &&
+    (!args.categoryId || tx.categoryId === args.categoryId) &&
+    (!args.type || tx.type === args.type) &&
+    (!needle ||
+      [tx.description, tx.note, tx.payee].some((field) => field?.toLowerCase().includes(needle)));
+
+  return await collectSearchPage(
+    segments.map((segment) => () => query(segment)),
+    after,
+    { limit: args.limit, scanLimit, matches },
+  );
+}
+
+/**
+ * Read rows in index order from consecutive sources and build one page.
+ * Pure over its inputs (exported for tests): the cursor encodes the last row
+ * read, and rows already read at the cursor's exact position are skipped.
+ */
+export async function collectSearchPage<R extends { _id: string; date: string; _creationTime: number }>(
+  sources: Array<() => AsyncIterable<R>>,
+  after: SearchPosition | null,
+  options: { limit: number; scanLimit: number; matches: (row: R) => boolean },
+): Promise<{ items: R[]; nextCursor: string | null }> {
+  const { limit, scanLimit, matches } = options;
+  const items: R[] = [];
+  let last: SearchPosition | null = after;
+  const seenAtCursor = Array.isArray(after?.seen) ? new Set(after.seen) : null;
+  let countToSkip = typeof after?.seen === "number" ? after.seen : 0;
+  let scanned = 0;
+  for (const source of sources) {
+    for await (const row of source()) {
+      if (after && row.date === after.date && row._creationTime === after.creationTime) {
+        if (seenAtCursor?.has(row._id)) continue;
+        if (countToSkip > 0) {
+          countToSkip--;
+          continue;
+        }
+      }
+      if (scanned >= scanLimit || (items.length === limit && matches(row))) {
+        return { items, nextCursor: encodeSearchCursor(last!) };
+      }
+      scanned++;
+      if (matches(row)) items.push(row);
+      const prior = last && row.date === last.date && row._creationTime === last.creationTime ? last.seen : null;
+      let seen: string[] | number = [row._id];
+      if (typeof prior === "number") seen = prior + 1;
+      else if (prior) seen = prior.length < MAX_TIE_IDS ? [...prior, row._id] : prior.length + 1;
+      last = { date: row.date, creationTime: row._creationTime, seen };
+    }
+  }
+  return { items, nextCursor: null };
+}
