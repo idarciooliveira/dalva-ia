@@ -281,13 +281,22 @@ async function assertRoomForAction(ctx: MutationCtx, sessionId: Id<"agentSession
 export async function createPendingAction(
   ctx: MutationCtx,
   session: Doc<"agentSessions">,
-  args: { operation: string; input: string; summary: string; ttlMs: number; now: number },
+  args: { operation: string; input: string; summary: string; ttlMs: number; now: number; clientKey?: string },
 ) {
+  // A repeated create (the caller replayed the same proposal) returns what the first one stored, in any status.
+  if (args.clientKey !== undefined) {
+    const existing = await ctx.db
+      .query("agentPendingActions")
+      .withIndex("by_sessionId_and_clientKey", (q) => q.eq("sessionId", session._id).eq("clientKey", args.clientKey))
+      .first();
+    if (existing) return existing;
+  }
   if (session.endedAt !== undefined) throw new Error(SESSION_ENDED);
   await assertRoomForAction(ctx, session._id, args.now);
   const id = await ctx.db.insert("agentPendingActions", {
     userId: session.userId,
     sessionId: session._id,
+    ...(args.clientKey !== undefined ? { clientKey: args.clientKey } : {}),
     operation: args.operation,
     input: args.input,
     summary: args.summary,

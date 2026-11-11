@@ -210,6 +210,53 @@ describe("api/v1 transactions: writes", () => {
   });
 });
 
+describe("api/v1 transactions: get", () => {
+  it("returns one row with its currency and conforms to the contract", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asAlice } = await twoUsers(t);
+    const categoryId = await seedCategory(t, alice);
+    const id = await seedTx(t, alice, aliceAccount, { amount: 1_250, categoryId, description: "Lunch" });
+    const { transaction, managedBy } = await asAlice.transactions.get({ id });
+    expect(transaction).toMatchObject({ id, type: "expense", amount: usd(1_250), accountId: aliceAccount, categoryId, description: "Lunch" });
+    expect(managedBy).toBeUndefined();
+    expectConforms(routes.transactions.get, await raw(t, "GET", `/transactions/${id}`, { token: await tokenFor(alice) }));
+  });
+
+  it("flags managed rows: transfer legs, goal-contribution transfers and debt payments", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asAlice } = await twoUsers(t);
+    const savings = await seedAccount(t, alice, { name: "Savings" });
+    const { transfer } = await asAlice.transfers.create({ amount: usd(1_000), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-01" });
+    for (const id of [transfer.outgoingId, transfer.incomingId]) {
+      expect((await asAlice.transactions.get({ id })).managedBy).toBe("transfer");
+    }
+
+    const goalId = await t.run((ctx) =>
+      ctx.db.insert("savingsGoals", { userId: alice, name: "Trip", targetAmount: 10_000, currentAmount: 0, linkedAccountId: savings, isVirtual: false, createdAt: "2026-01-01" }),
+    );
+    const { contribution } = await asAlice.goalContributions.add({ goalId, amount: usd(500), date: "2026-01-02", fromAccountId: aliceAccount });
+    expect((await asAlice.transactions.get({ id: contribution.transactionId! })).managedBy).toBe("goal_contribution");
+
+    const loan = await seedAccount(t, alice, { name: "Loan", type: "loan", balance: 10_000 });
+    const debtId = await t.run((ctx) =>
+      ctx.db.insert("debts", { userId: alice, name: "Car", debtType: "loan", originalAmount: 10_000, currentBalance: 10_000, linkedAccountId: loan, createdAt: "2026-01-01" }),
+    );
+    const paymentId = await t.run((ctx) =>
+      debtPaymentsDomain.recordDebtPayment(ctx, alice, { debtId, amount: 500, date: "2026-01-02", fromAccountId: aliceAccount }),
+    );
+    const payment = await t.run((ctx) => ctx.db.get(paymentId));
+    expect((await asAlice.transactions.get({ id: payment!.sourceTransactionId })).managedBy).toBe("debt_payment");
+  });
+
+  it("isolates users and rejects malformed ids", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asBob } = await twoUsers(t);
+    const id = await seedTx(t, alice, aliceAccount);
+    await expectApiError(asBob.transactions.get({ id }), "not_found", 404);
+    await expectApiError(asBob.transactions.get({ id: "nope" }), "validation_failed", 400);
+  });
+});
+
 describe("api/v1 transactions: search", () => {
   it("pages newest first with a real cursor and no gaps or repeats", async () => {
     const t = setupApi();
