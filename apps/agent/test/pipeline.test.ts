@@ -194,7 +194,32 @@ describe("pipeline processing", () => {
     expect(handle).not.toHaveBeenCalled();
   });
 
-  test("a failed done update is retried once", async () => {
+  test("a failed processing update doesn't stop handling: the message is handled and replied to", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      handled.push(event.eventId);
+    });
+    finance.fail("POST /agent/events/status", "network");
+    await pipeline.deliver(textUpdate(36, "x"));
+    await pipeline.shutdown(1000);
+    expect(handled).toEqual(["36"]);
+    expect(finance.events.get("36")).toMatchObject({ status: "done" });
+  });
+
+  test("a final status that keeps failing is given up after 3 tries; the event stays recoverable", async () => {
+    const gate = deferred();
+    const { pipeline, finance, lines } = setup(() => gate.promise);
+    await pipeline.deliver(textUpdate(37, "a"));
+    await waitFor(() => finance.events.get("37")?.status === "processing");
+    finance.fail("POST /agent/events/status", "network", 3);
+    gate.resolve();
+    await pipeline.shutdown(1000);
+    expect(finance.events.get("37")).toMatchObject({ status: "processing" });
+    expect(finance.callsTo("/agent/events/status")).toHaveLength(4);
+    expect(lines.some((line) => line.includes("event_status_failed") && line.includes('"status":"done"'))).toBe(true);
+  });
+
+  test("a failed done update is retried", async () => {
     const gate = deferred();
     const { pipeline, finance } = setup(() => gate.promise);
     await pipeline.deliver(textUpdate(83, "a"));
@@ -245,22 +270,34 @@ describe("pipeline boot recovery", () => {
     expect(handled.filter((h) => h.startsWith("2:"))).toEqual(["2:301", "2:302"]);
   });
 
-  test("pages through more than one page, each page finished before the next", async () => {
+  test("25 recoverable events of one chat all run, in order (no live-queue cap)", async () => {
+    const handled: number[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      handled.push(event.sequence);
+    }, { maxPerChat: 20 });
+    for (let i = 24; i >= 0; i--) stored(finance, 3000 + i, "x"); // listed newest first
+    expect(await pipeline.recover()).toBe(25);
+    expect(handled).toEqual(Array.from({ length: 25 }, (_, i) => 3000 + i));
+  });
+
+  test("pages until the list is empty", async () => {
     const handled: string[] = [];
     const { pipeline, finance } = setup(async (event) => {
       handled.push(event.eventId);
-    }, { maxConcurrent: 100 });
+    });
     for (let i = 0; i < 60; i++) stored(finance, 1000 + i, "x", 5000 + i);
     expect(await pipeline.recover()).toBe(60);
     expect(handled).toHaveLength(60);
-    expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(2);
+    expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(3);
   });
 
-  test("stops when a page brings nothing new (events whose status can't be updated)", async () => {
-    const { pipeline, finance } = setup(async () => {});
-    for (let i = 0; i < 50; i++) stored(finance, 2000 + i, "x", 6000 + i);
+  test("stops when a page holds only events this boot already ran (their status can't be updated)", async () => {
+    const handle = vi.fn(async () => {});
+    const { pipeline, finance } = setup(handle);
+    for (let i = 0; i < 5; i++) stored(finance, 2000 + i, "x", 6000 + i);
     finance.fail("POST /agent/events/status", "network", 1000);
-    expect(await pipeline.recover()).toBe(50);
+    expect(await pipeline.recover()).toBe(5);
+    expect(handle).toHaveBeenCalledTimes(5); // handled despite the failing status updates, and only once
     expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(2);
   });
 

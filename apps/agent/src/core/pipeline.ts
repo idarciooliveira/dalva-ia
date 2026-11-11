@@ -5,7 +5,7 @@ import type { ChannelAdapter, DeliverResult, InboundEvent } from "../channels/ch
 import { errorFields, type Logger } from "../log";
 import type { FinanceServiceClient } from "./finance";
 import { isFinanceError } from "./finance";
-import { ChatQueues, type ChatQueueLimits } from "./queue";
+import { ChatQueues, Semaphore, type ChatQueueLimits } from "./queue";
 
 export type EventHandler = (event: InboundEvent) => Promise<void>;
 
@@ -42,8 +42,10 @@ export interface Pipeline {
 
 const DEFAULT_LIMITS: ChatQueueLimits = { maxPerChat: 20, maxTotal: 1000, maxConcurrent: 32 };
 const CLAIM_ATTEMPTS = 3;
+const STATUS_ATTEMPTS = 3;
 const RECOVER_PAGE = 50;
-const RECOVER_MAX_PAGES = 20;
+const RECOVER_MAX_PAGES = 100;
+const RECOVER_CONCURRENCY = 4;
 const RECOVER_MAX_ATTEMPTS = 3;
 
 const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
@@ -111,20 +113,41 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     }
   }
 
+  /**
+   * Final status, best effort: a few tries, then give up. A missed update
+   * leaves the event recoverable, so the next boot runs it again; that's fine
+   * because commands are read-only or idempotent.
+   */
+  async function settle(event: InboundEvent, status: "done" | "failed", log: Logger, error?: string) {
+    for (let attempt = 1; attempt <= STATUS_ATTEMPTS; attempt++) {
+      try {
+        await setStatus(event, status, error);
+        return;
+      } catch (statusError) {
+        if (isFinanceError(statusError, "conflict", "not_found")) return; // already final, or purged
+        if (attempt === STATUS_ATTEMPTS) {
+          log.error("event_status_failed", { ...errorFields(statusError), status });
+          return;
+        }
+        await sleep(retryDelayMs * attempt);
+      }
+    }
+  }
+
   async function process(event: InboundEvent) {
     const log = eventLogger(event);
     const started = Date.now();
 
+    // Bookkeeping (counts an attempt toward maxAttempts); it never gates handling.
     try {
       await setStatus(event, "processing");
     } catch (error) {
-      // conflict: already finished; not_found: purged. Either way there's nothing to do.
-      if (isFinanceError(error, "conflict", "not_found")) {
-        log.info("event_already_settled", errorFields(error));
+      // conflict: the event is already done or failed, so there's nothing left to do.
+      if (isFinanceError(error, "conflict")) {
+        log.info("event_already_settled");
         return;
       }
-      log.error("event_status_failed", { ...errorFields(error), status: "processing" });
-      return; // Left as received: the next boot recovers it.
+      log.warn("event_status_failed", { ...errorFields(error), status: "processing" });
     }
 
     try {
@@ -136,28 +159,11 @@ export function createPipeline(options: PipelineOptions): Pipeline {
       } catch (noticeError) {
         log.warn("failure_notice_failed", errorFields(noticeError));
       }
-      try {
-        await setStatus(event, "failed", failureCode(error));
-      } catch (statusError) {
-        log.error("event_status_failed", { ...errorFields(statusError), status: "failed" });
-      }
+      await settle(event, "failed", log, failureCode(error));
       return;
     }
 
-    // A missed `done` means the next boot handles the event again (a duplicate reply), so retry once.
-    for (let attempt = 1; ; attempt++) {
-      try {
-        await setStatus(event, "done");
-        break;
-      } catch (error) {
-        if (isFinanceError(error, "conflict", "not_found")) break;
-        if (attempt >= 2) {
-          log.error("event_status_failed", { ...errorFields(error), status: "done" });
-          return;
-        }
-        await sleep(retryDelayMs);
-      }
-    }
+    await settle(event, "done", log);
     log.info("event_done", { ms: Date.now() - started });
   }
 
@@ -168,7 +174,8 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     });
   }
 
-  async function recoverPage(seen: Set<string>): Promise<{ listed: number; queued: number }> {
+  /** One page of `listRecoverable`, parsed. Unparseable events are marked failed. */
+  async function recoverablePage(): Promise<{ ids: string[]; events: InboundEvent[] }> {
     const { items } = await service.agentEvents.listRecoverable({
       channel,
       olderThanSeconds: 0,
@@ -177,8 +184,6 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     });
     const events: InboundEvent[] = [];
     for (const item of items) {
-      if (seen.has(item.eventId)) continue;
-      seen.add(item.eventId);
       let event: InboundEvent | null = null;
       try {
         event = adapter.parse(JSON.parse(item.payload));
@@ -196,14 +201,22 @@ export function createPipeline(options: PipelineOptions): Pipeline {
         logger.warn("event_status_failed", { ...errorFields(error), eventId: item.eventId, status: "failed" });
       }
     }
-    // Arrival order, not last-update order (the backend's): a chat's /forget must not run before its older messages.
-    events.sort((a, b) => a.sequence - b.sequence);
-    let queued = 0;
-    for (const event of events) {
-      if (enqueue(event, Promise.resolve(true)) === "accepted") queued += 1;
-    }
-    await queues.drain(Number.POSITIVE_INFINITY);
-    return { listed: items.length, queued };
+    return { ids: items.map((item) => item.eventId), events };
+  }
+
+  /** Run events one by one per chat, in arrival order; a few chats at a time. */
+  async function runRecovered(events: InboundEvent[]) {
+    const byChat = new Map<string, InboundEvent[]>();
+    for (const event of events) byChat.set(event.chatId, [...(byChat.get(event.chatId) ?? []), event]);
+    const slots = new Semaphore(RECOVER_CONCURRENCY);
+    await Promise.all(
+      [...byChat.values()].map((chatEvents) =>
+        slots.run(async () => {
+          // Arrival order, not the backend's last-update order: a chat's /forget must not run before its older messages.
+          for (const event of chatEvents.sort((a, b) => a.sequence - b.sequence)) await process(event);
+        }),
+      ),
+    );
   }
 
   return {
@@ -234,16 +247,24 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     },
 
     async recover() {
-      const seen = new Set<string>();
-      let queued = 0;
-      for (let page = 0; page < RECOVER_MAX_PAGES; page++) {
-        const result = await recoverPage(seen);
-        queued += result.queued;
-        // No cursor: stop at a short page, or when a page brought nothing new.
-        if (result.listed < RECOVER_PAGE || result.queued === 0) break;
+      // Intake is closed, so recovered events bypass the bounded live queues.
+      const attempted = new Set<string>();
+      let processed = 0;
+      for (let page = 1; ; page++) {
+        if (page > RECOVER_MAX_PAGES) {
+          logger.warn("recover_page_cap", { pages: RECOVER_MAX_PAGES, processed });
+          break;
+        }
+        const { ids, events } = await recoverablePage();
+        const fresh = events.filter((event) => !attempted.has(event.eventId));
+        for (const id of ids) attempted.add(id);
+        // Empty, or only events this boot already ran (their status update failed): done.
+        if (fresh.length === 0) break;
+        await runRecovered(fresh);
+        processed += fresh.length;
       }
-      logger.info("recover_done", { queued });
-      return queued;
+      logger.info("recover_done", { processed });
+      return processed;
     },
 
     async shutdown(timeoutMs) {
