@@ -2,7 +2,6 @@ import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
 import { recordDebtPayment } from "../../domain/debtPayments";
-import { deleteAccount } from "../../domain/accounts";
 import { MIXED_CURRENCIES_MESSAGE, UNKNOWN_CURRENCY_MESSAGE } from "./shared";
 import { clientFor, expectApiError, expectConforms, raw, seedAccount, seedCategory, seedUser, setupApi, tokenFor, twoUsers, type T } from "./test.helpers";
 
@@ -144,7 +143,7 @@ describe("api/v1 reports", () => {
       const t = setupApi();
       const { user, eur, client } = await mixedUser(t);
       await client.transactions.create({ type: "expense", amount: { amountMinor: 100, currency: "EUR" }, accountId: eur, date: "2026-04-02" });
-      await t.run((ctx) => deleteAccount(ctx, user, { id: eur }));
+      await t.run((ctx) => ctx.db.delete(eur));
       for (const call of [
         client.reports.transactionSummary({ month: "2026-04" }),
         client.reports.spendingByCategory({ month: "2026-04" }),

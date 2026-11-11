@@ -128,7 +128,7 @@ export async function restoreAccount(
 }
 
 /**
- * Permanently delete an account.
+ * Permanently delete an account. Only allowed while nothing references it.
  */
 export async function deleteAccount(
   ctx: MutationCtx,
@@ -138,6 +138,27 @@ export async function deleteAccount(
   const account = await ctx.db.get(args.id);
   if (!account || account.userId !== userId) {
     throw new Error("Account not found");
+  }
+
+  // Transfer legs, goal contributions and debt payments all hang off a
+  // transaction on this account, so one indexed lookup covers them.
+  const referenced =
+    (await ctx.db
+      .query("transactions")
+      .withIndex("by_accountId", (q) => q.eq("accountId", args.id))
+      .first()) ??
+    (await ctx.db
+      .query("savingsGoals")
+      .withIndex("by_linkedAccountId", (q) => q.eq("linkedAccountId", args.id))
+      .first()) ??
+    (await ctx.db
+      .query("debts")
+      .withIndex("by_linkedAccountId", (q) => q.eq("linkedAccountId", args.id))
+      .first());
+  if (referenced) {
+    throw new Error(
+      "Account has transactions, goals or debts linked to it. Archive it instead of deleting",
+    );
   }
 
   await ctx.db.delete(args.id);

@@ -7,6 +7,19 @@ export type TransactionType = "income" | "expense" | "adjustment" | "transfer";
 /*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
+/** Transfer legs (incl. goal-contribution transfers) are owned by the transfer flow. */
+function isTransferLeg(tx: Doc<"transactions">): boolean {
+  return tx.type === "transfer" || !!tx.transferGroupId || !!tx.linkedTransactionId;
+}
+
+/** Income/expense/transfer amounts are positive integers; only adjustments are signed. */
+function assertAmount(type: TransactionType, amount: number) {
+  if (type === "adjustment") return;
+  if (!Number.isInteger(amount) || amount <= 0) {
+    throw new Error("Amount must be positive");
+  }
+}
+
 /** Compute the signed balance delta for a transaction. */
 function balanceDelta(
   type: TransactionType,
@@ -67,6 +80,8 @@ export async function createTransaction(
     payee?: string;
   },
 ) {
+  assertAmount(args.type, args.amount);
+
   // Validate account ownership
   const account = await ctx.db.get(args.accountId);
   if (!account || account.userId !== userId) {
@@ -145,6 +160,9 @@ export async function updateTransaction(
   if (!tx || tx.userId !== userId) {
     throw new Error("Transaction not found");
   }
+  if (isTransferLeg(tx)) {
+    throw new Error("Use the transfer update for transfers");
+  }
 
   if (args.type === "adjustment") {
     if (args.categoryId) {
@@ -171,6 +189,7 @@ export async function updateTransaction(
 
   const newType = args.type ?? oldType;
   const newAmount = args.amount ?? oldAmount;
+  assertAmount(newType, newAmount);
 
   if (newType === "adjustment") {
     const nextCategoryId = args.categoryId ?? tx.categoryId;
@@ -234,6 +253,9 @@ export async function deleteTransaction(
   const tx = await ctx.db.get(args.id);
   if (!tx || tx.userId !== userId) {
     throw new Error("Transaction not found");
+  }
+  if (isTransferLeg(tx)) {
+    throw new Error("Use the transfer delete for transfers");
   }
 
   // Reverse balance effect

@@ -142,7 +142,9 @@ export default defineSchema({
     color: v.optional(v.string()), // Hex color, default "#a3e635"
     archived: v.optional(v.boolean()),
     createdAt: v.string(), // ISO date of creation
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_linkedAccountId", ["linkedAccountId"]),
 
   /* ------------------------------------------------------------------ */
   /*  Goal contributions                                                 */
@@ -182,7 +184,9 @@ export default defineSchema({
     linkedAccountId: v.optional(v.id("accounts")),
     archived: v.optional(v.boolean()),
     createdAt: v.string(),
-  }).index("by_userId", ["userId"]),
+  })
+    .index("by_userId", ["userId"])
+    .index("by_linkedAccountId", ["linkedAccountId"]),
 
   /* ------------------------------------------------------------------ */
   /*  Debt payments                                                      */
