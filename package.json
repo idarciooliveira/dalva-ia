@@ -2,6 +2,9 @@
   "name": "my-personal-finance",
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
+  "overrides": {
+    "lightningcss": "1.33.0"
+  },
   "scripts": {
     "dev": "bun run --filter './apps/*' dev",
     "dev:web": "bun run --filter '@mpf/web' dev",
