@@ -75,7 +75,8 @@ describe("channelLinks (web)", () => {
     await as.action(api.channelLinks.createLinkCode, { channel: TG, consent: true });
     await as.action(api.channelLinks.createLinkCode, { channel: TG, consent: true });
     const rows = await t.run((ctx) => ctx.db.query("channelLinkCodes").collect());
-    expect(rows.filter((r) => r.usedAt === undefined)).toHaveLength(1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.usedAt).toBeUndefined();
   });
 
   it("refuses a new code while the channel is linked", async () => {

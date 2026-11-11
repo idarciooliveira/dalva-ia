@@ -20,7 +20,7 @@ export const CHANNEL_ALREADY_LINKED = "Channel is already linked. Unlink it firs
 export const IDENTITY_NOT_FOUND = "Channel identity not found";
 export const PRIVATE_CHAT_REQUIRED = "Link codes must be sent in a private chat with the bot";
 
-const MAX_PENDING_CODES = 50;
+const CODE_DELETE_BATCH = 50;
 
 export async function findActiveByExternal(ctx: QueryCtx, channel: Channel, externalUserId: string) {
   return await ctx.db
@@ -59,11 +59,15 @@ export async function storeLinkCode(
   args: { channel: Channel; codeHash: string; consentAt: number; now: number },
 ) {
   if (await findActiveByUser(ctx, userId, args.channel)) throw new Error(CHANNEL_ALREADY_LINKED);
-  const previous = await ctx.db
-    .query("channelLinkCodes")
-    .withIndex("by_userId_and_channel", (q) => q.eq("userId", userId).eq("channel", args.channel))
-    .take(MAX_PENDING_CODES);
-  for (const code of previous) await ctx.db.delete(code._id);
+  // Normally zero or one row; loop so no earlier code can survive however many exist.
+  for (;;) {
+    const previous = await ctx.db
+      .query("channelLinkCodes")
+      .withIndex("by_userId_and_channel", (q) => q.eq("userId", userId).eq("channel", args.channel))
+      .take(CODE_DELETE_BATCH);
+    for (const code of previous) await ctx.db.delete(code._id);
+    if (previous.length < CODE_DELETE_BATCH) break;
+  }
   const expiresAt = args.now + LINK_CODE_TTL_MS;
   await ctx.db.insert("channelLinkCodes", {
     userId,
