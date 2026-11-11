@@ -37,7 +37,7 @@ Polling calls `deleteWebhook` first (pending updates are kept), so don't point a
 
 1. Adapter parses it into a channel-agnostic `InboundEvent` (`src/channels/channel.ts`). Only `src/channels/telegram/` knows grammY. Group messages other than commands are dropped here, before anything is stored.
 2. Per-chat serial queue (bounded: 20 per chat, 1000 total, 32 running at once). Chats run concurrently; a chat's messages run in order. Polling never fetches more than the queue can take.
-3. `agentEvents.claim` (duplicate: drop) → `updateStatus processing` → handle → `done` / `failed`.
+3. `agentEvents.claim` runs on delivery, before the event waits for its chat's turn (duplicate: drop; an ambiguous failure is retried). Polling confirms a batch to Telegram only once its claims landed. The stored payload keeps only what parsing needs (no names, no quoted messages). Then `updateStatus processing` → handle → `done` / `failed`.
 4. Handle: `/start <code>` redeems; anything else calls `resolve` (with `chatId`) for a 15-minute user token; group chats only get "use a private chat".
 5. User and bot messages are appended to the current session (`/unlink` and `/forget` record nothing).
 

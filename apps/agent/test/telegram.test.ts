@@ -80,6 +80,15 @@ describe("telegram parse", () => {
     expect(adapter.parse({ update_id: 1, message: { from: null } })).toBeNull();
   });
 
+  test("storable keeps exactly what parse needs", () => {
+    for (const name of ["private-text", "command-with-args", "callback-query", "group-message", "photo"]) {
+      const raw = fixture(name);
+      const stored = JSON.parse(JSON.stringify(adapter.storable(raw)));
+      expect(adapter.parse(stored)).toEqual(adapter.parse(raw));
+      expect(JSON.stringify(stored)).not.toContain("first_name");
+    }
+  });
+
   test("messages from bots are ignored", () => {
     const update = fixture("private-text");
     update.message.from.is_bot = true;

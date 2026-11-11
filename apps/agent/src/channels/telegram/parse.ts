@@ -68,3 +68,41 @@ export function parseTelegramUpdate(raw: unknown, botUsername: string): InboundE
   if (command) return { ...base, kind: "command", text: message.text, ...command };
   return { ...base, kind: "text", text: message.text };
 }
+
+const pick = (source: unknown, keys: string[]): Record<string, unknown> | undefined => {
+  if (!isObject(source)) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const key of keys) if (source[key] !== undefined) out[key] = source[key];
+  return out;
+};
+
+const USER_KEYS = ["id", "is_bot", "username"];
+const CHAT_KEYS = ["id", "type"];
+
+/**
+ * What we store for crash recovery: only the fields `parseTelegramUpdate`
+ * reads. Drops names, `reply_to_message` (another member's text), forwards, etc.
+ */
+export function storableUpdate(raw: unknown): unknown {
+  if (!isObject(raw)) return raw;
+  const out: Record<string, unknown> = { update_id: raw.update_id };
+  if (isObject(raw.message)) {
+    const message = raw.message;
+    out.message = {
+      ...pick(message, ["message_id", "date", "text", "entities", "caption"]),
+      from: pick(message.from, USER_KEYS),
+      chat: pick(message.chat, CHAT_KEYS),
+      ...(Array.isArray(message.photo) ? { photo: message.photo.slice(-1) } : {}),
+    };
+  }
+  if (isObject(raw.callback_query)) {
+    const query = raw.callback_query;
+    const message = isObject(query.message) ? query.message : undefined;
+    out.callback_query = {
+      ...pick(query, ["id", "data"]),
+      from: pick(query.from, USER_KEYS),
+      ...(message ? { message: { ...pick(message, ["message_id", "date"]), chat: pick(message.chat, CHAT_KEYS) } } : {}),
+    };
+  }
+  return out;
+}

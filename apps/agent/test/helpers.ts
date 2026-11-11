@@ -148,7 +148,7 @@ export function fakeFinance() {
   const messages: Json[] = [];
   let historyDeletes = 0;
   /** Force an error for `METHOD /path` (path without /api/v1), once or always. */
-  const failures = new Map<string, { code: ErrorCode | "network"; times: number }>();
+  const failures = new Map<string, { code: ErrorCode | "network" | "network_after"; times: number }>();
   /** Hold a route until the returned function is called. */
   const gates = new Map<string, Promise<void>>();
 
@@ -291,10 +291,13 @@ export function fakeFinance() {
     if (gate) await gate;
 
     const failure = failures.get(key);
+    let lostReply = false;
     if (failure && failure.times > 0) {
       failure.times -= 1;
       if (failure.code === "network") throw new TypeError("fetch failed");
-      return envelope({ ok: false, error: { code: failure.code, message: failure.code } }, STATUS[failure.code]);
+      // "network_after": the server applies the request, then the reply is lost.
+      if (failure.code === "network_after") lostReply = true;
+      else return envelope({ ok: false, error: { code: failure.code, message: failure.code } }, STATUS[failure.code]);
     }
 
     try {
@@ -303,7 +306,8 @@ export function fakeFinance() {
         if (auth !== `Bearer ${SERVICE_KEY}`) throw new ApiFailure("unauthorized");
         const items = [...events.values()]
           .filter((event) => (event.status === "received" || event.status === "processing") && event.attempts < Number(body.maxAttempts ?? 3))
-          .map((event) => ({ ...eventJson(event), payload: event.payload ?? "{}" }));
+          .map((event) => ({ ...eventJson(event), payload: event.payload ?? "{}" }))
+          .slice(0, Number(body.limit ?? 20));
         data = { items };
       } else if (path.startsWith("/channel-") || path.startsWith("/agent/events/")) {
         if (auth !== `Bearer ${SERVICE_KEY}`) throw new ApiFailure("unauthorized");
@@ -313,6 +317,7 @@ export function fakeFinance() {
         if (!identity) throw new ApiFailure("unauthorized");
         data = user(method, path, body, identity);
       }
+      if (lostReply) throw new TypeError("fetch failed");
       return envelope({ ok: true, data }, 200);
     } catch (error) {
       if (error instanceof ApiFailure) {
@@ -348,7 +353,7 @@ export function fakeFinance() {
       identities.set(externalUserId, identity);
       return identity;
     },
-    fail(key: string, code: ErrorCode | "network", times = 1) {
+    fail(key: string, code: ErrorCode | "network" | "network_after", times = 1) {
       failures.set(key, { code, times });
     },
     hold(key: string): () => void {

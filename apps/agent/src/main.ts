@@ -85,7 +85,12 @@ async function main() {
   }
   if (stopping) return;
   ready = true;
-  await adapter.start(pipeline.deliver, { available: pipeline.available, wait: pipeline.waitForCapacity });
+  await adapter.start(pipeline.deliver, {
+    available: pipeline.available,
+    wait: pipeline.waitForCapacity,
+    persisted: pipeline.persisted,
+  });
+  if (stopping) return;
 
   // Afterwards: events whose status update failed mid-way. Events queued here are skipped.
   let recovering = false;

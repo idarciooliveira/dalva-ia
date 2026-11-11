@@ -50,6 +50,8 @@ export interface IntakeCapacity {
   available(): number;
   /** Resolves when `available() > 0`. */
   wait(): Promise<void>;
+  /** Resolves when every delivered event is stored; confirm a batch to the platform only after this. */
+  persisted(): Promise<void>;
 }
 
 export interface WebhookIngress {
@@ -63,6 +65,11 @@ export interface ChannelAdapter {
   readonly id: Channel;
   /** Platform payload -> event, or null for payloads the agent ignores. Never throws. */
   parse(raw: unknown): InboundEvent | null;
+  /**
+   * The part of a raw payload worth storing for crash recovery: enough for
+   * `parse` to rebuild the same event, nothing else (no quoted messages).
+   */
+  storable(raw: unknown): unknown;
   send(to: ChatAddress, message: OutboundMessage): Promise<void>;
   /** Acknowledge a button press (stops the client spinner). */
   answerButton(buttonId: string, text?: string): Promise<void>;

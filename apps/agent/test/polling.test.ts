@@ -38,7 +38,7 @@ describe("telegram polling", () => {
         delivered.push((raw as { update_id: number }).update_id);
         return "accepted";
       },
-      { available: () => 100, wait: async () => {} },
+      { available: () => 100, wait: async () => {}, persisted: async () => {} },
     );
     await waitFor(() => telegram.requests.length >= 2);
     await adapter.stop();
@@ -58,7 +58,7 @@ describe("telegram polling", () => {
         delivered.push((raw as { update_id: number }).update_id);
         return results.shift() ?? "accepted";
       },
-      { available: () => room, wait: async () => {} },
+      { available: () => room, wait: async () => {}, persisted: async () => {} },
     );
     await waitFor(() => delivered.length >= 3);
     room = 100;
@@ -73,8 +73,38 @@ describe("telegram polling", () => {
   test("stop() returns while waiting for capacity", async () => {
     const telegram = pollingApi([]);
     const adapter = adapterWith(telegram.api);
-    await adapter.start(() => "accepted", { available: () => 0, wait: () => new Promise(() => {}) });
+    await adapter.start(() => "accepted", { available: () => 0, wait: () => new Promise(() => {}), persisted: async () => {} });
     await adapter.stop();
+    expect(telegram.requests).toHaveLength(0);
+  });
+
+  test("the next poll (which confirms the batch) waits until the batch is stored", async () => {
+    const telegram = pollingApi([textUpdate(1, "a")]);
+    const adapter = adapterWith(telegram.api);
+    let release!: () => void;
+    const stored = new Promise<void>((resolve) => (release = resolve));
+    await adapter.start(() => "accepted", { available: () => 100, wait: async () => {}, persisted: () => stored });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(telegram.requests).toHaveLength(1);
+    release();
+    await waitFor(() => telegram.requests.length === 2);
+    await adapter.stop();
+    expect(telegram.requests[1]).toMatchObject({ offset: 2 });
+  });
+
+  test("stop() during start() keeps polling from starting", async () => {
+    const telegram = pollingApi([textUpdate(1, "a")]);
+    let releaseDelete!: () => void;
+    const api = {
+      ...(telegram.api as object),
+      deleteWebhook: () => new Promise<true>((resolve) => (releaseDelete = () => resolve(true))),
+    } as unknown as TelegramApi;
+    const adapter = adapterWith(api);
+    const starting = adapter.start(() => "accepted", { available: () => 100, wait: async () => {}, persisted: async () => {} });
+    await adapter.stop();
+    releaseDelete();
+    await starting;
+    await new Promise((resolve) => setTimeout(resolve, 10));
     expect(telegram.requests).toHaveLength(0);
   });
 });

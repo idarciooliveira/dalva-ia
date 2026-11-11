@@ -7,6 +7,30 @@ export interface ChatQueueLimits {
   maxConcurrent: number;
 }
 
+/** Counting semaphore; waiters are served in arrival order. */
+export class Semaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(private readonly max: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) {
+      // The releasing task hands its slot straight to us, so `active` stays counted.
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    } else {
+      this.active += 1;
+    }
+    try {
+      return await task();
+    } finally {
+      const next = this.waiters.shift();
+      if (next) next();
+      else this.active -= 1;
+    }
+  }
+}
+
 export type EnqueueResult = "accepted" | "chat_full" | "full";
 
 interface Lane {
@@ -22,14 +46,15 @@ interface Lane {
 export class ChatQueues {
   private readonly lanes = new Map<string, Lane>();
   private total = 0;
-  private running = 0;
   private capacityWaiters: Array<() => void> = [];
-  private slotWaiters: Array<() => void> = [];
+  private readonly slots: Semaphore;
 
   constructor(
     private readonly limits: ChatQueueLimits,
     private readonly onTaskError: (error: unknown) => void = () => {},
-  ) {}
+  ) {
+    this.slots = new Semaphore(limits.maxConcurrent);
+  }
 
   get size(): number {
     return this.total;
@@ -47,7 +72,7 @@ export class ChatQueues {
     this.total += 1;
     this.lanes.set(key, lane);
     lane.tail = lane.tail
-      .then(() => this.runWithSlot(task))
+      .then(() => this.slots.run(task))
       .catch((error) => this.onTaskError(error))
       .finally(() => {
         lane.size -= 1;
@@ -81,19 +106,6 @@ export class ChatQueues {
       clearTimeout(timer);
     }
     return true;
-  }
-
-  private async runWithSlot(task: () => Promise<void>): Promise<void> {
-    while (this.running >= this.limits.maxConcurrent) {
-      await new Promise<void>((resolve) => this.slotWaiters.push(resolve));
-    }
-    this.running += 1;
-    try {
-      await task();
-    } finally {
-      this.running -= 1;
-      this.slotWaiters.shift()?.();
-    }
   }
 
   private notifyCapacity() {

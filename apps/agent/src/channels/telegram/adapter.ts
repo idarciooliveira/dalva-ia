@@ -8,7 +8,7 @@ import { errorFields, type Logger } from "../../log";
 import { encodeButtonPayload } from "../channel";
 import type { ChannelAdapter, ChatAddress, Deliver, IntakeCapacity, OutboundMessage, WebhookIngress } from "../channel";
 import { renderHtml } from "./format";
-import { parseTelegramUpdate } from "./parse";
+import { parseTelegramUpdate, storableUpdate } from "./parse";
 
 export const TELEGRAM_WEBHOOK_PATH = "/webhooks/telegram";
 export const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
@@ -100,6 +100,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
   }
 
   let polling: { controller: AbortController; loop: Promise<void> } | null = null;
+  let stopped = false;
 
   async function pollLoop(deliver: Deliver, capacity: IntakeCapacity, signal: AbortSignal) {
     const aborted = new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
@@ -120,6 +121,8 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
           if (deliver(update) === "overloaded") break; // Not confirmed: Telegram hands it out again next poll.
           offset = update.update_id + 1;
         }
+        // The next getUpdates confirms everything below `offset`; make sure it's stored first.
+        await capacity.persisted();
       } catch (error) {
         if (signal.aborted) return;
         logger.warn("poll_failed", errorFields(error));
@@ -131,6 +134,8 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
   return {
     id: "telegram",
     webhook: options.mode === "webhook" ? webhookIngress(options.webhookSecret!, logger) : undefined,
+
+    storable: (raw) => storableUpdate(raw),
 
     parse: (raw) => {
       try {
@@ -158,15 +163,17 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
     },
 
     async start(deliver, capacity) {
-      if (options.mode !== "polling" || polling) return;
+      if (options.mode !== "polling" || polling || stopped) return;
       // getUpdates fails while a webhook is set; keep pending updates so nothing is lost.
       await api.deleteWebhook({ drop_pending_updates: false });
+      if (stopped) return; // stop() ran while we were waiting
       const controller = new AbortController();
       polling = { controller, loop: pollLoop(deliver, capacity, controller.signal) };
       logger.info("polling_started");
     },
 
     async stop() {
+      stopped = true;
       if (!polling) return;
       polling.controller.abort();
       await polling.loop;
