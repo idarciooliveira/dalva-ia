@@ -17,6 +17,7 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 | `PORT` | Default `8080` |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error`, default `info` |
 | `SESSION_IDLE_MINUTES` | Idle time before a chat starts a new session, default `30` |
+| `RECOVERY_MAX_AGE_SECONDS` | Boot recovery replays only events received within this window, default `120` |
 
 ## Local dev
 
@@ -43,7 +44,9 @@ Polling calls `deleteWebhook` first (pending updates are kept), so don't point a
 
 Polling (dev only) takes one update at a time and moves its offset past an update only once it is stored.
 
-**Boot:** before any intake, `listRecoverable` re-processes events a dead process left unfinished, sorted per chat by arrival (`InboundEvent.sequence`, Telegram's `update_id`; the backend lists by last update), and waits for them to finish. Recovered events skip the live queues (intake is closed): one at a time per chat, 4 chats at a time, paging until the list is empty or holds only events this boot already ran. If the backend is unreachable, boot fails and the container restarts. **Shutdown:** SIGTERM closes intake, then drains the queues for 8s, under Docker's default 10s stop timeout.
+**Boot:** before any intake, `listRecoverable` re-processes events a dead process left unfinished, sorted per chat by arrival (`InboundEvent.sequence`, Telegram's `update_id`; the backend lists by last update), and waits for them to finish. Recovered events skip the live queues (intake is closed): one at a time per chat, 4 chats at a time, paging until the list is empty or holds only events this boot already ran. Events older than `RECOVERY_MAX_AGE_SECONDS` are not replayed: they're marked `failed` (`stale`) and each private chat gets one "I restarted and missed your recent message(s). Please send it again." If the backend is unreachable, boot fails and the container restarts. **Shutdown:** SIGTERM closes intake (and stops recovery from starting more events), then waits for running recovery work and the queues, together bounded at 8s, under Docker's default 10s stop timeout.
+
+**Known edge case (accepted):** an event that was already handled but whose final status update failed 3 times stays recoverable. If the bot restarts within `RECOVERY_MAX_AGE_SECONDS`, it is replayed: the user gets a duplicate reply, and if they sent `/forget` in between, the replayed message is recorded again in a fresh session. It needs a backend failure on the status call plus a restart inside the window; commands are read-only or idempotent, and writes (pending actions) carry idempotency keys.
 
 Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Other text and photos get a "coming soon" reply. Confirm/cancel buttons are only acknowledged. Replies over Telegram's 4096-character limit are split at line breaks.
 

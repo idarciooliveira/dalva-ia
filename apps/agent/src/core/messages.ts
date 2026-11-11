@@ -56,5 +56,6 @@ export const texts = {
   rateLimited: (): RichText => "Too many requests. Please wait a moment and try again.",
   unavailable: (): RichText => "That isn't available right now. Please try again later.",
   failed: (): RichText => "Something went wrong. Please try again in a moment.",
+  missedWhileRestarting: (): RichText => "I restarted and missed your recent message(s). Please send it again.",
   buttonUnavailable: () => "This action isn't available yet.",
 };

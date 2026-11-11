@@ -42,7 +42,15 @@ async function main() {
     logger,
     sessionIdleMinutes: config.SESSION_IDLE_MINUTES,
   });
-  const pipeline = createPipeline({ adapter, service: clients.service, handle, onFailure, accept, logger });
+  const pipeline = createPipeline({
+    adapter,
+    service: clients.service,
+    handle,
+    onFailure,
+    accept,
+    logger,
+    recoveryMaxAgeSeconds: config.RECOVERY_MAX_AGE_SECONDS,
+  });
 
   /** Intake opens only after boot recovery finished; the webhook answers 503 until then. */
   let accepting = false;

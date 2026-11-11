@@ -301,6 +301,42 @@ describe("pipeline boot recovery", () => {
     expect(finance.callsTo("/agent/events/recoverable")).toHaveLength(2);
   });
 
+  test("stale events are not replayed: marked failed, one notice per private chat; fresh ones run", async () => {
+    const handled: string[] = [];
+    const { logger } = captureLogger();
+    const { adapter, telegram } = telegramAdapter(logger);
+    const finance = fakeFinance();
+    const pipeline = createPipeline({
+      adapter,
+      service: finance.clients.service,
+      handle: async (event) => {
+        handled.push(event.eventId);
+      },
+      logger,
+      retryDelayMs: 1,
+      recoveryMaxAgeSeconds: 120,
+      now: () => Date.parse("2026-11-11T12:00:00.000Z"),
+    });
+    const at = (iso: string, id: number, chat: number) =>
+      finance.events.set(String(id), {
+        eventId: String(id),
+        status: "received",
+        attempts: 0,
+        receivedAt: iso,
+        payload: JSON.stringify(textUpdate(id, "x", chat)),
+      });
+    at("2026-11-11T09:00:00.000Z", 600, 1); // 3h old
+    at("2026-11-11T11:57:00.000Z", 601, 1); // 3 min old
+    at("2026-11-11T11:59:00.000Z", 602, 2); // 1 min old: fresh
+    at("2026-11-11T11:00:00.000Z", 603, 3); // stale, group chat: no notice
+    finance.events.get("603")!.payload = JSON.stringify(textUpdate(603, "/help", 7, -100));
+    expect(await pipeline.recover()).toBe(1);
+    expect(handled).toEqual(["602"]);
+    for (const id of ["600", "601", "603"]) expect(finance.events.get(id)).toMatchObject({ status: "failed", error: "stale" });
+    expect(telegram.sent.map((m) => m.chatId)).toEqual(["1"]);
+    expect(telegram.sent[0]!.html).toContain("I restarted and missed your recent message(s)");
+  });
+
   test("a backend outage fails recovery (boot is fatal, the container restarts)", async () => {
     const { pipeline, finance } = setup(async () => {});
     finance.fail("GET /agent/events/recoverable", "network");
@@ -326,6 +362,38 @@ describe("pipeline shutdown", () => {
     expect(await draining).toBe(true);
     expect(handled.sort()).toEqual(["60", "61", "62"]);
     expect(await pipeline.deliver(textUpdate(63, "d"))).toBe("overloaded");
+  });
+
+  test("SIGTERM during boot recovery waits for the running recovered event and starts no more", async () => {
+    const gate = deferred();
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      if (event.eventId === "500") await gate.promise;
+      handled.push(event.eventId);
+    });
+    stored(finance, 500, "a");
+    stored(finance, 501, "b");
+    const recovering = pipeline.recover();
+    await waitFor(() => finance.events.get("500")?.status === "processing");
+    let drained: boolean | undefined;
+    const stopping = pipeline.shutdown(1000).then((d) => (drained = d));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(drained).toBeUndefined(); // still waiting for event 500
+    gate.resolve();
+    await stopping;
+    await recovering;
+    expect(drained).toBe(true);
+    expect(handled).toEqual(["500"]);
+    expect(finance.events.get("500")).toMatchObject({ status: "done" });
+    expect(finance.events.get("501")).toMatchObject({ status: "received" }); // left for the next boot
+  });
+
+  test("shutdown during a hung recovery gives up after the timeout", async () => {
+    const { pipeline, finance } = setup(() => new Promise(() => {}));
+    stored(finance, 510, "a");
+    void pipeline.recover();
+    await waitFor(() => finance.events.get("510")?.status === "processing");
+    expect(await pipeline.shutdown(30)).toBe(false);
   });
 
   test("gives up after the timeout", async () => {

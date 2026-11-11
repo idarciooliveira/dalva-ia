@@ -5,6 +5,7 @@ import type { ChannelAdapter, DeliverResult, InboundEvent } from "../channels/ch
 import { errorFields, type Logger } from "../log";
 import type { FinanceServiceClient } from "./finance";
 import { isFinanceError } from "./finance";
+import { texts } from "./messages";
 import { ChatQueues, Semaphore, type ChatQueueLimits } from "./queue";
 
 export type EventHandler = (event: InboundEvent) => Promise<void>;
@@ -21,6 +22,9 @@ export interface PipelineOptions {
   accept?: (event: InboundEvent) => boolean;
   /** Pause before retrying an ambiguous claim or status update. */
   retryDelayMs?: number;
+  /** Boot recovery replays only events received within this window (default 120s); older ones are failed as stale. */
+  recoveryMaxAgeSeconds?: number;
+  now?: () => number;
 }
 
 export interface Pipeline {
@@ -68,10 +72,14 @@ export function createPipeline(options: PipelineOptions): Pipeline {
   const { adapter, service, handle, logger } = options;
   const channel: Channel = adapter.id;
   const retryDelayMs = options.retryDelayMs ?? 250;
+  const recoveryMaxAgeMs = (options.recoveryMaxAgeSeconds ?? 120) * 1000;
+  const now = options.now ?? Date.now;
   const queues = new ChatQueues({ ...DEFAULT_LIMITS, ...options.limits }, (error) =>
     logger.error("queue_task_crashed", errorFields(error)),
   );
   let accepting = true;
+  /** Boot recovery in progress (it runs outside the queues, so shutdown waits for it separately). */
+  let recovery: Promise<unknown> | null = null;
 
   const eventLogger = (event: InboundEvent) =>
     logger.child({ eventId: event.eventId, chatId: event.chatId, kind: event.kind });
@@ -175,7 +183,7 @@ export function createPipeline(options: PipelineOptions): Pipeline {
   }
 
   /** One page of `listRecoverable`, parsed. Unparseable events are marked failed. */
-  async function recoverablePage(): Promise<{ ids: string[]; events: InboundEvent[] }> {
+  async function recoverablePage(): Promise<{ ids: string[]; events: InboundEvent[]; stale: InboundEvent[] }> {
     const { items } = await service.agentEvents.listRecoverable({
       channel,
       olderThanSeconds: 0,
@@ -183,6 +191,7 @@ export function createPipeline(options: PipelineOptions): Pipeline {
       limit: RECOVER_PAGE,
     });
     const events: InboundEvent[] = [];
+    const stale: InboundEvent[] = [];
     for (const item of items) {
       let event: InboundEvent | null = null;
       try {
@@ -191,7 +200,9 @@ export function createPipeline(options: PipelineOptions): Pipeline {
         event = null;
       }
       if (event && event.eventId === item.eventId) {
-        events.push(event);
+        const receivedAt = Date.parse(item.receivedAt);
+        if (Number.isFinite(receivedAt) && now() - receivedAt > recoveryMaxAgeMs) stale.push(event);
+        else events.push(event);
         continue;
       }
       logger.warn("recover_unparseable", { eventId: item.eventId });
@@ -201,7 +212,25 @@ export function createPipeline(options: PipelineOptions): Pipeline {
         logger.warn("event_status_failed", { ...errorFields(error), eventId: item.eventId, status: "failed" });
       }
     }
-    return { ids: items.map((item) => item.eventId), events };
+    return { ids: items.map((item) => item.eventId), events, stale };
+  }
+
+  /**
+   * Too old to replay (a long outage): answering it now would surprise the
+   * user. Fail it and ask each private chat, once, to send it again.
+   */
+  async function dropStale(stale: InboundEvent[], notified: Set<string>) {
+    for (const event of stale) {
+      logger.info("recover_stale", { eventId: event.eventId, chatId: event.chatId, kind: event.kind });
+      await settle(event, "failed", eventLogger(event), "stale");
+      if (event.chatType !== "private" || notified.has(event.chatId)) continue;
+      notified.add(event.chatId);
+      try {
+        await adapter.send({ chatId: event.chatId }, { type: "text", text: texts.missedWhileRestarting() });
+      } catch (error) {
+        logger.warn("stale_notice_failed", { ...errorFields(error), chatId: event.chatId });
+      }
+    }
   }
 
   /** Run events one by one per chat, in arrival order; a few chats at a time. */
@@ -213,10 +242,37 @@ export function createPipeline(options: PipelineOptions): Pipeline {
       [...byChat.values()].map((chatEvents) =>
         slots.run(async () => {
           // Arrival order, not the backend's last-update order: a chat's /forget must not run before its older messages.
-          for (const event of chatEvents.sort((a, b) => a.sequence - b.sequence)) await process(event);
+          for (const event of chatEvents.sort((a, b) => a.sequence - b.sequence)) {
+            if (!accepting) return; // shutting down: the rest stays recoverable for the next boot
+            await process(event);
+          }
         }),
       ),
     );
+  }
+
+  async function recoverAll(): Promise<number> {
+    // Intake is closed, so recovered events bypass the bounded live queues.
+    const attempted = new Set<string>();
+    const notified = new Set<string>();
+    let processed = 0;
+    for (let page = 1; accepting; page++) {
+      if (page > RECOVER_MAX_PAGES) {
+        logger.warn("recover_page_cap", { pages: RECOVER_MAX_PAGES, processed });
+        break;
+      }
+      const { ids, events, stale } = await recoverablePage();
+      const fresh = events.filter((event) => !attempted.has(event.eventId));
+      const freshStale = stale.filter((event) => !attempted.has(event.eventId));
+      for (const id of ids) attempted.add(id);
+      // Empty, or only events this boot already saw (their status update failed): done.
+      if (fresh.length === 0 && freshStale.length === 0) break;
+      await dropStale(freshStale, notified);
+      await runRecovered(fresh);
+      processed += fresh.length;
+    }
+    logger.info("recover_done", { processed });
+    return processed;
   }
 
   return {
@@ -246,30 +302,31 @@ export function createPipeline(options: PipelineOptions): Pipeline {
       return outcome === "new" ? "accepted" : outcome;
     },
 
-    async recover() {
-      // Intake is closed, so recovered events bypass the bounded live queues.
-      const attempted = new Set<string>();
-      let processed = 0;
-      for (let page = 1; ; page++) {
-        if (page > RECOVER_MAX_PAGES) {
-          logger.warn("recover_page_cap", { pages: RECOVER_MAX_PAGES, processed });
-          break;
-        }
-        const { ids, events } = await recoverablePage();
-        const fresh = events.filter((event) => !attempted.has(event.eventId));
-        for (const id of ids) attempted.add(id);
-        // Empty, or only events this boot already ran (their status update failed): done.
-        if (fresh.length === 0) break;
-        await runRecovered(fresh);
-        processed += fresh.length;
-      }
-      logger.info("recover_done", { processed });
-      return processed;
+    recover() {
+      const run = recoverAll();
+      // Settles either way (the caller gets the error from `run`), so shutdown can wait on it safely.
+      recovery = run.then(
+        () => (recovery = null),
+        () => (recovery = null),
+      );
+      return run;
     },
 
     async shutdown(timeoutMs) {
       accepting = false;
-      const drained = await queues.drain(timeoutMs);
+      const deadline = Date.now() + timeoutMs;
+      let recovered = true;
+      if (recovery) {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        recovered = await Promise.race([
+          recovery.then(() => true),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(false), timeoutMs);
+          }),
+        ]);
+        clearTimeout(timer);
+      }
+      const drained = (await queues.drain(Math.max(0, deadline - Date.now()))) && recovered;
       logger.info("pipeline_drained", { drained, remaining: queues.size });
       return drained;
     },

@@ -123,6 +123,8 @@ export interface FakeEvent {
   attempts: number;
   payload?: string;
   error?: string;
+  /** ISO; defaults to when the fake lists it (i.e. fresh). */
+  receivedAt?: string;
 }
 
 export interface Call {
@@ -171,7 +173,7 @@ export function fakeFinance() {
     status: event.status,
     attempts: event.attempts,
     ...(event.error ? { error: event.error } : {}),
-    receivedAt: ISO,
+    receivedAt: event.receivedAt ?? new Date().toISOString(),
     updatedAt: ISO,
   });
 
