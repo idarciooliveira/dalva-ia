@@ -145,11 +145,11 @@ describe("api/v1 reports", () => {
       await client.transactions.create({ type: "expense", amount: { amountMinor: 100, currency: "EUR" }, accountId: eur, date: "2026-04-02" });
       await t.run((ctx) => ctx.db.delete(eur));
       for (const call of [
-        client.reports.transactionSummary({ month: "2026-04" }),
-        client.reports.spendingByCategory({ month: "2026-04" }),
-        client.reports.cashflow({ month: "2026-04", trendMonths: 1 }),
+        () => client.reports.transactionSummary({ month: "2026-04" }),
+        () => client.reports.spendingByCategory({ month: "2026-04" }),
+        () => client.reports.cashflow({ month: "2026-04", trendMonths: 1 }),
       ]) {
-        const error = await expectApiError(call, "conflict", 409);
+        const error = await expectApiError(call(), "conflict", 409);
         expect(error.message).toBe(UNKNOWN_CURRENCY_MESSAGE);
         expect(error.details).toEqual({ reason: "unknown_currency" });
       }
