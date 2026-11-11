@@ -36,11 +36,14 @@ export const texts = {
     ".",
   ],
   alreadyLinked: (): RichText => [
-    "This Telegram account or your DALVA account is already connected. Send ",
+    "This Telegram account is already connected to DALVA. To connect a different account, send ",
     { code: "/unlink" },
-    " here, or unlink in DALVA → ",
+    " first, then use a new link code.",
+  ],
+  accountTaken: (): RichText => [
+    "Your DALVA account is already connected to another Telegram account. Unlink it in DALVA → ",
     { bold: "Settings → Telegram" },
-    ", then try again.",
+    ", then create a new link code.",
   ],
   privateOnly: (): RichText => "I only work in a private chat. Message me directly.",
   comingSoon: (): RichText => ["Chat is coming soon. For now I understand these commands:\n", ...COMMANDS],

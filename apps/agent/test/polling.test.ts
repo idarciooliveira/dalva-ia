@@ -107,4 +107,17 @@ describe("telegram polling", () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(telegram.requests).toHaveLength(0);
   });
+
+  test("stop() interrupts a slow persist wait and leaves the batch unconfirmed", async () => {
+    const telegram = pollingApi([textUpdate(1, "a")]);
+    const adapter = adapterWith(telegram.api);
+    await adapter.start(() => "accepted", { available: () => 100, wait: async () => {}, persisted: () => new Promise(() => {}) });
+    await waitFor(() => telegram.requests.length === 1);
+    const started = Date.now();
+    await adapter.stop();
+    expect(Date.now() - started).toBeLessThan(200);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // Only the first fetch: no getUpdates with offset 2 ever confirmed update 1.
+    expect(telegram.requests).toEqual([{ offset: 0, limit: 100 }]);
+  });
 });

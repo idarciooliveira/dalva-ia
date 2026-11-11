@@ -4,12 +4,19 @@ import type { InboundEvent } from "../channels/channel";
 import type { FinanceClient, FinanceClients } from "./finance";
 import { isFinanceError } from "./finance";
 
-export type LinkResult = "linked" | "invalid" | "already_linked";
+/**
+ * - `linked`: this redeem call linked the chat.
+ * - `already_linked`: this Telegram account is linked already (and this code didn't do it).
+ * - `account_taken`: the code's DALVA account is linked to another Telegram account.
+ * - `invalid`: unknown, used, expired or superseded code.
+ */
+export type LinkResult = "linked" | "invalid" | "already_linked" | "account_taken";
 
 /**
  * `/start <code>`: link this chat to the DALVA user who created the code.
- * Redeem is single-use, so after an ambiguous failure (network, timeout) we
- * ask `resolve` whether the link went through before reporting an error.
+ * Only a successful redeem counts as `linked`. When the redeem failed, or its
+ * answer was lost, an existing link only proves the chat was linked at some
+ * point, not by this code: that is `already_linked`.
  */
 export async function redeemLink(clients: FinanceClients, event: InboundEvent, code: string): Promise<LinkResult> {
   if (!linkCodeSchema.safeParse(code).success) return "invalid";
@@ -24,17 +31,14 @@ export async function redeemLink(clients: FinanceClients, event: InboundEvent, c
     return "linked";
   } catch (error) {
     if (isFinanceError(error, "validation_failed")) return "invalid"; // e.g. not a private chat
-    // Unknown, used, expired or superseded codes are all not_found. "Used" can be our own
-    // earlier redeem of this same event (re-processed after a crash), so check the link first.
-    if (isFinanceError(error, "not_found")) {
-      const user = await resolveUser(clients, event).catch(() => null);
-      return user ? "linked" : "invalid";
-    }
-    // This Telegram account or this DALVA user already has a link.
-    if (isFinanceError(error, "conflict")) return "already_linked";
+    const isLinked = async () => (await resolveUser(clients, event).catch(() => null)) !== null;
+    // The backend checks the code before existing links, so a linked user with a stale code lands here.
+    if (isFinanceError(error, "not_found")) return (await isLinked()) ? "already_linked" : "invalid";
+    // Either this Telegram account or the code's DALVA account already has a link.
+    if (isFinanceError(error, "conflict")) return (await isLinked()) ? "already_linked" : "account_taken";
+    // Redeem is single-use and not retry-safe: after a lost answer, an existing link is all we can know.
     if (isFinanceError(error, "network_error", "timeout", "aborted", "internal", "invalid_response")) {
-      const user = await resolveUser(clients, event).catch(() => null);
-      if (user) return "linked";
+      if (await isLinked()) return "already_linked";
     }
     throw error;
   }

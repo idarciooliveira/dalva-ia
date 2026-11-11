@@ -7,7 +7,7 @@ import type { InlineKeyboardMarkup, Update } from "grammy/types";
 import { errorFields, type Logger } from "../../log";
 import { encodeButtonPayload } from "../channel";
 import type { ChannelAdapter, ChatAddress, Deliver, IntakeCapacity, OutboundMessage, WebhookIngress } from "../channel";
-import { renderHtml } from "./format";
+import { renderHtmlChunks } from "./format";
 import { parseTelegramUpdate, storableUpdate } from "./parse";
 
 export const TELEGRAM_WEBHOOK_PATH = "/webhooks/telegram";
@@ -15,6 +15,7 @@ export const TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token";
 const ALLOWED_UPDATES = ["message", "callback_query"] as const;
 const MAX_CALLBACK_DATA_BYTES = 64;
 const MAX_UPDATES_PER_POLL = 100;
+const MAX_MESSAGE_CHARS = 4096;
 /** Long-poll wait inside getUpdates; the HTTP timeout must exceed it. */
 const POLL_TIMEOUT_SECONDS = 25;
 /** grammY's default is 500s: one hung call would block a chat's queue for minutes. */
@@ -122,7 +123,8 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
           offset = update.update_id + 1;
         }
         // The next getUpdates confirms everything below `offset`; make sure it's stored first.
-        await capacity.persisted();
+        // Stopping interrupts the wait and returns before that next call, so nothing unstored is confirmed.
+        await Promise.race([capacity.persisted(), aborted]);
       } catch (error) {
         if (signal.aborted) return;
         logger.warn("poll_failed", errorFields(error));
@@ -150,12 +152,16 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
         await api.sendChatAction(to.chatId, "typing");
         return;
       }
-      const html = renderHtml(message.text);
-      await api.sendMessage(to.chatId, html, {
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true },
-        ...(message.type === "confirm" ? { reply_markup: inlineKeyboard(message.actionId) } : {}),
-      });
+      // Telegram caps a message at 4096 characters: long texts go out as several, buttons on the last.
+      const chunks = renderHtmlChunks(message.text, MAX_MESSAGE_CHARS);
+      for (const [index, html] of chunks.entries()) {
+        const last = index === chunks.length - 1;
+        await api.sendMessage(to.chatId, html, {
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true },
+          ...(last && message.type === "confirm" ? { reply_markup: inlineKeyboard(message.actionId) } : {}),
+        });
+      }
     },
 
     async answerButton(buttonId: string, text?: string) {

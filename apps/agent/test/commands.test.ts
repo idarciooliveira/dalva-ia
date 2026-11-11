@@ -60,28 +60,55 @@ describe("identity", () => {
     expect(finance.callsTo("/channel-links/redeem")).toHaveLength(0);
   });
 
-  test("already linked", async () => {
+  test("already linked, with a valid code (conflict)", async () => {
     const { finance, run, lastReply } = setup();
     finance.link(USER);
     finance.codes.set(CODE, "valid");
     await run(`/start ${CODE}`);
-    expect(lastReply()).toContain("already connected");
+    expect(lastReply()).toContain("This Telegram account is already connected");
+    expect(lastReply()).toContain("To connect a different account");
+    expect(lastReply()).not.toContain("Connected.");
   });
 
-  test("an ambiguous redeem failure is settled with resolve", async () => {
+  test("already linked, with an expired or used code: not reported as connected", async () => {
+    const { finance, run, lastReply } = setup();
+    finance.link(USER);
+    await run(`/start ${CODE}`);
+    expect(lastReply()).toContain("This Telegram account is already connected");
+    expect(lastReply()).not.toContain("Connected.");
+  });
+
+  test("the code's DALVA account is linked to another Telegram account", async () => {
+    const { finance, run, lastReply } = setup();
+    finance.codes.set(CODE, "valid");
+    finance.fail("POST /channel-links/redeem", "conflict");
+    await run(`/start ${CODE}`);
+    expect(lastReply()).toContain("already connected to another Telegram account");
+  });
+
+  test("a lost redeem answer with an existing link is reported as already linked, not connected", async () => {
+    const { finance, run, lastReply } = setup();
+    finance.codes.set(CODE, "valid");
+    finance.fail("POST /channel-links/redeem", "network_after");
+    await run(`/start ${CODE}`);
+    expect(finance.identities.has(USER)).toBe(true);
+    expect(lastReply()).toContain("This Telegram account is already connected");
+    expect(lastReply()).not.toContain("Connected.");
+  });
+
+  test("a lost redeem answer without a link fails the event", async () => {
     const { finance, run, lastReply } = setup();
     finance.fail("POST /channel-links/redeem", "network");
-    finance.link(USER); // the redeem went through before the connection dropped
     await run(`/start ${CODE}`);
-    expect(lastReply()).toContain("Connected.");
+    expect(lastReply()).toContain("Something went wrong");
   });
 
-  test("a re-processed /start <code> that already linked says connected, not invalid", async () => {
+  test("a re-processed /start <code> that already linked says already connected, not invalid", async () => {
     const { finance, run, lastReply } = setup();
     finance.link(USER); // our first attempt redeemed the code, then the process crashed
     await run(`/start ${CODE}`);
     expect(finance.callsTo("/channel-links/redeem")).toHaveLength(1);
-    expect(lastReply()).toContain("Connected.");
+    expect(lastReply()).toContain("already connected");
   });
 
   test("rate limiting on resolve gets its own reply", async () => {
@@ -159,6 +186,32 @@ describe("commands", () => {
     expect(html).toContain("<b>Total: </b><code>1,500,000 JPY</code>");
     expect(telegram.actions).toContainEqual({ chatId: USER, action: "typing" });
     expect(finance.callsTo("/accounts")[0]!.auth).toBe(`Bearer tok_${USER}`);
+  });
+
+  test("/balance with 200 accounts is split into messages under 4096 chars with balanced tags", async () => {
+    const { finance, run, telegram } = setup();
+    finance.link(USER);
+    for (let i = 0; i < 200; i++) {
+      finance.accounts.push({
+        id: `acc_${i}`,
+        name: `Account <${i}> & savings with a fairly long descriptive name`,
+        type: "bank",
+        balance: { amountMinor: 1_000_000 + i, currency: "USD" },
+      });
+    }
+    await run("/balance");
+    const chunks = telegram.sent.map((m) => m.html);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const html of chunks) {
+      expect(html.length).toBeLessThanOrEqual(4096);
+      for (const tag of ["b", "code", "i"]) {
+        expect(html.split(`<${tag}>`).length).toBe(html.split(`</${tag}>`).length);
+      }
+      expect(html).not.toMatch(/&[a-z]*$/); // no cut entity at the end
+    }
+    const all = chunks.join("\n");
+    for (let i = 0; i < 200; i++) expect(all).toContain(`Account &lt;${i}&gt; &amp; savings`);
+    expect(all).toContain("<b>Total: </b><code>2,000,199.00 USD</code>");
   });
 
   test("/balance with no accounts", async () => {
@@ -322,7 +375,7 @@ describe("chats and buttons", () => {
 });
 
 describe("userMessageContent", () => {
-  const base = { channel: "telegram" as const, eventId: "1", externalUserId: "1", chatId: "1", chatType: "private" as const };
+  const base = { channel: "telegram" as const, eventId: "1", sequence: 1, externalUserId: "1", chatId: "1", chatType: "private" as const };
 
   test("drops /start args (they can hold a link code), keeps other args", () => {
     expect(JSON.parse(userMessageContent({ ...base, kind: "command", command: "start", args: [CODE], text: `/start ${CODE}` }))).toEqual({

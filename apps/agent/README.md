@@ -41,9 +41,9 @@ Polling calls `deleteWebhook` first (pending updates are kept), so don't point a
 4. Handle: `/start <code>` redeems; anything else calls `resolve` (with `chatId`) for a 15-minute user token; group chats only get "use a private chat".
 5. User and bot messages are appended to the current session (`/unlink` and `/forget` record nothing).
 
-On boot, `listRecoverable` re-queues events a crashed run left unfinished before the webhook opens; every 60s it picks up events whose status update failed (untouched for 2 minutes, not queued in this process). SIGTERM stops intake and drains the queues for 8s, under Docker's default 10s stop timeout.
+On boot, `listRecoverable` re-queues events a crashed run left unfinished before the webhook opens; every 60s it picks up events whose status update failed (untouched for 2 minutes, not queued in this process). Recovered events are queued in arrival order (`InboundEvent.sequence`, Telegram's `update_id`), since the backend lists them by last update; live events that arrive while recovery is listing are stored at once and queued after the recovered ones. Order is guaranteed within one recovery page (50 events). SIGTERM stops intake and drains the queues for 8s, under Docker's default 10s stop timeout.
 
-Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Other text and photos get a "coming soon" reply. Confirm/cancel buttons are only acknowledged.
+Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Replies over Telegram's 4096-character limit are split at line breaks. Other text and photos get a "coming soon" reply. Confirm/cancel buttons are only acknowledged.
 
 ## Logs
 

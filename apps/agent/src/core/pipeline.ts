@@ -191,8 +191,19 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     log.info("event_done", { ms: Date.now() - started });
   }
 
-  /** `raw` set: a new event, claimed right away. `raw` null: a recovered event, already claimed. */
-  function enqueue(event: InboundEvent, raw: unknown | null): DeliverResult {
+  function startClaim(event: InboundEvent, raw: unknown): Promise<ClaimOutcome> {
+    const log = logger.child({ eventId: event.eventId, chatId: event.chatId, kind: event.kind });
+    const pending = claim(event, raw, log);
+    pendingClaims.add(pending);
+    void pending.finally(() => pendingClaims.delete(pending));
+    return pending;
+  }
+
+  /**
+   * `startClaim` runs only once the event is queued; null for a recovered
+   * event, which is claimed already.
+   */
+  function enqueue(event: InboundEvent, startClaimFor: (() => Promise<ClaimOutcome>) | null): DeliverResult {
     let claimed: Promise<ClaimOutcome> | null = null;
     const result = queues.enqueue(`${channel}:${event.chatId}`, async () => {
       try {
@@ -205,14 +216,8 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     });
     if (result === "accepted") {
       inFlight.set(event.eventId, (inFlight.get(event.eventId) ?? 0) + 1);
-      if (raw !== null) {
-        // Claim now, not when the chat's turn comes: an acknowledged event must be stored quickly.
-        const log = logger.child({ eventId: event.eventId, chatId: event.chatId, kind: event.kind });
-        const pending = claim(event, raw, log);
-        claimed = pending;
-        pendingClaims.add(pending);
-        void pending.finally(() => pendingClaims.delete(pending));
-      }
+      // Claim now, not when the chat's turn comes: an acknowledged event must be stored quickly.
+      if (startClaimFor) claimed = startClaimFor();
       return "accepted";
     }
     const fields = { eventId: event.eventId, chatId: event.chatId, kind: event.kind, queued: queues.size };
@@ -223,6 +228,72 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     }
     logger.warn("queue_full", fields);
     return "overloaded";
+  }
+
+  /** Live events that arrived while recovery was listing: they queue after the recovered ones. */
+  let recovering = 0;
+  let held: Array<{ event: InboundEvent; claimed: Promise<ClaimOutcome> }> = [];
+
+  function releaseHeld() {
+    const waiting = held;
+    held = [];
+    for (const { event, claimed } of waiting) {
+      // Already claimed: if it can't be queued now it stays recoverable.
+      if (enqueue(event, () => claimed) !== "accepted") logger.warn("held_event_not_queued", { eventId: event.eventId });
+    }
+  }
+
+  async function recoverPages(olderThanSeconds: number): Promise<{ found: number; queued: number }> {
+    let found = 0;
+    let queued = 0;
+    for (let page = 0; page < RECOVER_MAX_PAGES && accepting; page++) {
+      const { items } = await service.agentEvents.listRecoverable({
+        channel,
+        olderThanSeconds,
+        maxAttempts: RECOVER_MAX_ATTEMPTS,
+        limit: RECOVER_PAGE,
+      });
+      found += items.length;
+      const events: InboundEvent[] = [];
+      for (const item of items) {
+        if (inFlight.has(item.eventId)) continue;
+        let event: InboundEvent | null = null;
+        try {
+          event = adapter.parse(JSON.parse(item.payload));
+        } catch {
+          event = null;
+        }
+        if (!event || event.eventId !== item.eventId) {
+          logger.warn("recover_unparseable", { eventId: item.eventId });
+          try {
+            await service.agentEvents.updateStatus({ channel, eventId: item.eventId, status: "failed", error: "unparseable" });
+          } catch (error) {
+            logger.warn("event_status_failed", { ...errorFields(error), eventId: item.eventId, status: "failed" });
+          }
+          continue;
+        }
+        events.push(event);
+      }
+      // Arrival order, not last-update order: a chat's /forget must not run before its older messages.
+      events.sort((a, b) => a.sequence - b.sequence);
+
+      let queuedThisPage = 0;
+      let full = false;
+      for (const event of events) {
+        if (!accepting) break; // Shutting down: leave the rest for the next run.
+        const result = enqueue(event, null);
+        if (result === "accepted") queuedThisPage += 1;
+        if (result === "overloaded") {
+          full = true;
+          break;
+        }
+        // "dropped": that chat is full; its event stays recoverable for the next pass.
+      }
+      queued += queuedThisPage;
+      // No cursor: a short page is the end, and a page with nothing new would repeat itself.
+      if (full || items.length < RECOVER_PAGE || queuedThisPage === 0) break;
+    }
+    return { found, queued };
   }
 
   return {
@@ -237,7 +308,13 @@ export function createPipeline(options: PipelineOptions): Pipeline {
         logger.debug("event_ignored", event ? { eventId: event.eventId, kind: event.kind } : {});
         return "ignored";
       }
-      return enqueue(event, raw);
+      if (recovering > 0) {
+        // Store it now (it's acknowledged), queue it once the recovered events are in.
+        if (queues.available() - held.length <= 0) return "overloaded";
+        held.push({ event, claimed: startClaim(event, raw) });
+        return "accepted";
+      }
+      return enqueue(event, () => startClaim(event, raw));
     },
 
     async persisted() {
@@ -245,53 +322,18 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     },
 
     async recover({ olderThanSeconds }) {
-      let found = 0;
-      let queued = 0;
-      for (let page = 0; page < RECOVER_MAX_PAGES && accepting; page++) {
-        const { items } = await service.agentEvents.listRecoverable({
-          channel,
-          olderThanSeconds,
-          maxAttempts: RECOVER_MAX_ATTEMPTS,
-          limit: RECOVER_PAGE,
-        });
-        found += items.length;
-        let queuedThisPage = 0;
-        let full = false;
-        for (const item of items) {
-          if (!accepting) break; // Shutting down: leave the rest for the next run.
-          if (inFlight.has(item.eventId)) continue;
-          let event: InboundEvent | null = null;
-          try {
-            event = adapter.parse(JSON.parse(item.payload));
-          } catch {
-            event = null;
-          }
-          if (!event || event.eventId !== item.eventId) {
-            logger.warn("recover_unparseable", { eventId: item.eventId });
-            try {
-              await service.agentEvents.updateStatus({ channel, eventId: item.eventId, status: "failed", error: "unparseable" });
-            } catch (error) {
-              logger.warn("event_status_failed", { ...errorFields(error), eventId: item.eventId, status: "failed" });
-            }
-            continue;
-          }
-          const result = enqueue(event, null);
-          if (result === "accepted") queuedThisPage += 1;
-          if (result === "overloaded") {
-            full = true;
-            break;
-          }
-          // "dropped": that chat is full; its event stays recoverable for the next pass.
-        }
-        queued += queuedThisPage;
-        // No cursor: a short page is the end, and a page with nothing new would repeat itself.
-        if (full || items.length < RECOVER_PAGE || queuedThisPage === 0) break;
+      recovering += 1;
+      try {
+        const { found, queued } = await recoverPages(olderThanSeconds);
+        if (found > 0) logger.info("recover_queued", { found, queued });
+        return queued;
+      } finally {
+        recovering -= 1;
+        if (recovering === 0) releaseHeld();
       }
-      if (found > 0) logger.info("recover_queued", { found, queued });
-      return queued;
     },
 
-    available: () => queues.available(),
+    available: () => Math.max(0, queues.available() - held.length),
     waitForCapacity: () => queues.waitForCapacity(),
 
     async shutdown(timeoutMs) {

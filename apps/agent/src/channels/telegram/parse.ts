@@ -38,6 +38,7 @@ export function parseTelegramUpdate(raw: unknown, botUsername: string): InboundE
     return {
       channel: "telegram",
       eventId,
+      sequence: update.update_id,
       externalUserId: String(query.from.id),
       chatId: String(chat.id),
       chatType: chatTypeOf(chat.type),
@@ -53,6 +54,7 @@ export function parseTelegramUpdate(raw: unknown, botUsername: string): InboundE
   const base = {
     channel: "telegram" as const,
     eventId,
+    sequence: update.update_id,
     externalUserId: String(message.from.id),
     chatId: String(message.chat.id),
     chatType: chatTypeOf(message.chat.type),

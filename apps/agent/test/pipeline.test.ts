@@ -298,6 +298,47 @@ describe("pipeline recovery and failures", () => {
     expect(handled).toHaveLength(60);
   });
 
+  test("recovered events run in arrival (update_id) order per chat, not in last-update order", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      handled.push(`${event.chatId}:${event.eventId}`);
+    });
+    // Listed by updatedAt: the backend returns them shuffled relative to arrival.
+    const listed = [
+      [205, 1, "/forget"],
+      [201, 1, "first"],
+      [302, 2, "b"],
+      [203, 1, "third"],
+      [301, 2, "a"],
+      [202, 1, "second"],
+    ] as const;
+    for (const [id, chat, text] of listed) {
+      finance.events.set(String(id), { eventId: String(id), status: "received", attempts: 0, payload: JSON.stringify(textUpdate(id, text, chat)) });
+    }
+    expect(await pipeline.recover({ olderThanSeconds: 0 })).toBe(6);
+    await pipeline.shutdown(1000);
+    expect(handled.filter((h) => h.startsWith("1:"))).toEqual(["1:201", "1:202", "1:203", "1:205"]);
+    expect(handled.filter((h) => h.startsWith("2:"))).toEqual(["2:301", "2:302"]);
+  });
+
+  test("live events arriving while recovery lists queue after the recovered ones", async () => {
+    const handled: string[] = [];
+    const { pipeline, finance } = setup(async (event) => {
+      handled.push(event.eventId);
+    });
+    finance.events.set("400", { eventId: "400", status: "received", attempts: 0, payload: JSON.stringify(textUpdate(400, "old")) });
+    const release = finance.hold("GET /agent/events/recoverable");
+    const recovering = pipeline.recover({ olderThanSeconds: 0 });
+    await waitFor(() => finance.calls.some((call) => call.path === "/agent/events/recoverable"));
+    expect(pipeline.deliver(textUpdate(401, "new"))).toBe("accepted");
+    await pipeline.persisted();
+    expect(finance.events.get("401")).toMatchObject({ status: "received" }); // stored right away
+    release();
+    await recovering;
+    await pipeline.shutdown(1000);
+    expect(handled).toEqual(["400", "401"]);
+  });
+
   test("recovery queues nothing once shutdown started", async () => {
     const { pipeline, finance } = setup(async () => {});
     finance.events.set("99", { eventId: "99", status: "received", attempts: 0, payload: JSON.stringify(textUpdate(99, "x")) });

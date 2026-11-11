@@ -12,6 +12,11 @@ export interface InboundEvent {
   channel: Channel;
   /** Platform event id, unique per channel (Telegram `update_id`). Dedupe key. */
   eventId: string;
+  /**
+   * Increases with delivery order (Telegram `update_id`). Recovery sorts by it:
+   * the backend lists unfinished events by last update, not by arrival.
+   */
+  sequence: number;
   externalUserId: string;
   chatId: string;
   chatType: ChatType;

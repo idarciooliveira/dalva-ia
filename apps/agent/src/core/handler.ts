@@ -148,7 +148,13 @@ export function createHandler(options: HandlerOptions): {
       const result = await withServiceErrors(event, log, () => redeemLink(clients, event, code));
       if (!result) return;
       log.info("link_redeem", { result });
-      await reply(event, result === "linked" ? texts.linked() : result === "invalid" ? texts.linkInvalid() : texts.alreadyLinked());
+      const answers = {
+        linked: texts.linked,
+        invalid: texts.linkInvalid,
+        already_linked: texts.alreadyLinked,
+        account_taken: texts.accountTaken,
+      };
+      await reply(event, answers[result]());
       return;
     }
 

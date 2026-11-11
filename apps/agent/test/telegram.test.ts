@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import { decodeButtonPayload, encodeButtonPayload } from "../src/channels/channel";
-import { escapeHtml, renderHtml } from "../src/channels/telegram/format";
+import { escapeHtml, renderHtml, renderHtmlChunks } from "../src/channels/telegram/format";
 import { captureLogger, fixture, telegramAdapter } from "./helpers";
 
 describe("telegram parse", () => {
@@ -12,6 +12,7 @@ describe("telegram parse", () => {
     expect(adapter.parse(fixture("private-text"))).toEqual({
       channel: "telegram",
       eventId: "900000001",
+      sequence: 900000001,
       externalUserId: "424242",
       chatId: "424242",
       chatType: "private",
@@ -49,6 +50,7 @@ describe("telegram parse", () => {
     expect(adapter.parse(fixture("callback-query"))).toEqual({
       channel: "telegram",
       eventId: "900000003",
+      sequence: 900000003,
       externalUserId: "424242",
       chatId: "424242",
       chatType: "private",
@@ -102,6 +104,24 @@ describe("telegram send", () => {
     expect(renderHtml(["Hi ", { bold: "<you>" }, " ", { code: "1 < 2" }, { italic: "&" }])).toBe(
       "Hi <b>&lt;you&gt;</b> <code>1 &lt; 2</code><i>&amp;</i>",
     );
+  });
+
+  test("a single line longer than a message is cut between characters, never inside tags or entities", () => {
+    const chunks = renderHtmlChunks([{ bold: "&".repeat(5000) }], 4096);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const html of chunks) {
+      expect(html.length).toBeLessThanOrEqual(4096);
+      expect(html).toMatch(/^(<b>(&amp;)+<\/b>)+$/);
+    }
+  });
+
+  test("short text is one chunk; confirm buttons go on the last chunk", async () => {
+    expect(renderHtmlChunks(["a\n", { code: "b" }], 4096)).toEqual(["a\n<code>b</code>"]);
+    const { adapter, telegram } = telegramAdapter(captureLogger().logger);
+    await adapter.send({ chatId: "42" }, { type: "confirm", text: Array.from({ length: 300 }, (_, i) => `line ${i} `.repeat(3)).join("\n"), actionId: "a1" });
+    expect(telegram.sent.length).toBeGreaterThan(1);
+    expect(telegram.sent.slice(0, -1).every((m) => m.replyMarkup === undefined)).toBe(true);
+    expect(telegram.sent.at(-1)!.replyMarkup).toBeDefined();
   });
 
   test("text uses HTML parse mode", async () => {
