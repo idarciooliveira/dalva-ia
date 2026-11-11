@@ -77,6 +77,23 @@ const boundedInput = (input: unknown): Json => {
   return utf8Bytes(JSON.stringify(json)) <= TOOL_INPUT_MAX_BYTES ? json : { too_large: true };
 };
 
+/** Assistant record within the per-message limit: drop tool inputs first, then shorten the text. */
+function fitAssistant(text: string, toolCalls: StoredToolCall[]): string {
+  const build = (body: string, calls: StoredToolCall[]) =>
+    JSON.stringify({ v, ...(body ? { text: body } : {}), ...(calls.length ? { toolCalls: calls } : {}) });
+  let body = text.slice(0, ASSISTANT_TEXT_MAX);
+  let calls = toolCalls;
+  let content = build(body, calls);
+  if (utf8Bytes(content) <= AGENT_MESSAGE_CONTENT_MAX_BYTES) return content;
+  calls = toolCalls.map((call) => ({ ...call, input: { too_large: true } }));
+  content = build(body, calls);
+  while (utf8Bytes(content) > AGENT_MESSAGE_CONTENT_MAX_BYTES && body.length > 0) {
+    body = body.slice(0, Math.floor(body.length / 2));
+    content = build(body, calls);
+  }
+  return content;
+}
+
 /** AI SDK response messages (assistant + tool) -> stored records. */
 export function encodeResponseMessages(messages: ModelMessage[]): StoredMessage[] {
   const stored: StoredMessage[] = [];
@@ -91,10 +108,7 @@ export function encodeResponseMessages(messages: ModelMessage[]): StoredMessage[
         .filter((part) => part.type === "tool-call")
         .map((part) => ({ id: part.toolCallId, name: part.toolName.slice(0, 64), input: boundedInput(part.input) }));
       if (!text && toolCalls.length === 0) continue;
-      stored.push({
-        role: "assistant",
-        content: JSON.stringify({ v, ...(text ? { text: text.slice(0, ASSISTANT_TEXT_MAX) } : {}), ...(toolCalls.length ? { toolCalls } : {}) }),
-      });
+      stored.push({ role: "assistant", content: fitAssistant(text, toolCalls) });
     } else if (message.role === "tool") {
       const results: StoredToolResult[] = message.content
         .filter((part): part is ToolResultPart => part.type === "tool-result")

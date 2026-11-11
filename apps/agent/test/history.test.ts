@@ -62,6 +62,15 @@ describe("history format", () => {
     expect(parsed.toolCalls[0].input).toEqual({ too_large: true });
   });
 
+  test("an assistant record stays under 32 KB even with many parallel calls and multi-byte text", () => {
+    const calls = Array.from({ length: 30 }, (_, i) => call(`c${i}`, "search_transactions", { text: "é".repeat(900) }));
+    const [assistant] = encodeResponseMessages([{ role: "assistant", content: [{ type: "text", text: "😀".repeat(8000) }, ...calls] }]);
+    expect(new TextEncoder().encode(assistant!.content).length).toBeLessThanOrEqual(32 * 1024);
+    const parsed = JSON.parse(assistant!.content);
+    expect(parsed.toolCalls).toHaveLength(30);
+    expect(parsed.toolCalls[0].input).toEqual({ too_large: true });
+  });
+
   test("trimHistory cuts at user messages and always keeps the newest turn", () => {
     const turn = (n: number): ModelMessage[] => [
       { role: "user", content: `q${n}` },
