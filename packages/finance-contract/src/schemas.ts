@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   accountIdSchema,
   categoryIdSchema,
+  channelIdentityIdSchema,
   debtIdSchema,
   debtPaymentIdSchema,
   goalContributionIdSchema,
@@ -491,6 +492,71 @@ export const debtPaymentRemoveRequestSchema = z.strictObject({ id: debtPaymentId
 export const debtPaymentRemoveResponseSchema = deleted(debtPaymentIdSchema);
 
 /* -------------------------------------------------------------------------- */
+/*  Channels (service routes: called by the chat agent with the service key)  */
+/* -------------------------------------------------------------------------- */
+
+export const channelSchema = z.enum(["telegram"]);
+export const channelScopeSchema = z.enum(["finance:read", "finance:write"]);
+
+/** Single-use link code: 43 chars of base64url today, Telegram `start`-param safe. */
+export const linkCodeSchema = z.string().regex(/^[A-Za-z0-9_-]{16,64}$/, "Invalid link code");
+
+/** Platform ids (Telegram user/chat ids are integers; chats can be negative). Kept as strings. */
+const externalIdSchema = z.string().regex(/^-?[A-Za-z0-9_]{1,64}$/, "Invalid external id");
+
+export const channelIdentitySchema = z.object({
+  id: channelIdentityIdSchema,
+  channel: channelSchema,
+  externalUserId: z.string(),
+  chatId: z.string(),
+  username: z.string().optional(),
+  scopes: z.array(channelScopeSchema),
+  /** ISO 8601 timestamps. */
+  linkedAt: z.string(),
+  consentAt: z.string(),
+});
+
+/** Agent receives `/start <code>` from a chat and links it to the user who created the code. */
+export const channelLinkRedeemRequestSchema = z.strictObject({
+  channel: channelSchema,
+  code: linkCodeSchema,
+  externalUserId: externalIdSchema,
+  chatId: externalIdSchema,
+  username: z.string().min(1).max(64).optional(),
+});
+export const channelLinkRedeemResponseSchema = z.object({ identity: channelIdentitySchema });
+
+/**
+ * Turn a chat sender into a short-lived user token. `chatId` must be the chat
+ * the identity was linked from (`not_found` otherwise), so a linked user's data
+ * is never served into another chat (e.g. a group).
+ */
+export const channelIdentityResolveRequestSchema = z.strictObject({
+  channel: channelSchema,
+  externalUserId: externalIdSchema,
+  chatId: externalIdSchema,
+});
+export const channelIdentityResolveResponseSchema = z.object({
+  /** User token for the user routes (`Authorization: Bearer <token>`). */
+  token: z.string(),
+  /** ISO 8601; mint a new one on the next message rather than caching past this. */
+  expiresAt: z.string(),
+  scopes: z.array(channelScopeSchema),
+  identity: channelIdentitySchema,
+  profile: z.object({
+    displayName: z.string().optional(),
+    /** ISO 4217 code as stored on the profile. */
+    baseCurrency: z.string().optional(),
+  }),
+});
+
+export const channelIdentityUnlinkRequestSchema = z.strictObject({
+  channel: channelSchema,
+  externalUserId: externalIdSchema,
+});
+export const channelIdentityUnlinkResponseSchema = deleted(channelIdentityIdSchema);
+
+/* -------------------------------------------------------------------------- */
 /*  Inferred types                                                            */
 /* -------------------------------------------------------------------------- */
 
@@ -506,3 +572,5 @@ export type DebtPayment = z.output<typeof debtPaymentSchema>;
 export type AccountType = z.output<typeof accountTypeSchema>;
 export type TransactionType = z.output<typeof transactionTypeSchema>;
 export type DebtType = z.output<typeof debtTypeSchema>;
+export type Channel = z.output<typeof channelSchema>;
+export type ChannelIdentity = z.output<typeof channelIdentitySchema>;

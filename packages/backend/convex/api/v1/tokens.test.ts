@@ -103,4 +103,14 @@ describe("api/v1 tokens", () => {
     await expect(mintUserToken("u", ["finance:read"], 1.5)).rejects.toThrow();
     await expect(mintUserToken("u", ["finance:read"], 400 * 24 * 3600)).rejects.toThrow();
   });
+
+  it("carries the channel identity id as cid and rejects a malformed one", async () => {
+    const token = await mintUserToken("user-1", ["finance:read"], 600, { channelIdentityId: "ci-1" });
+    expect(await verifyUserToken(token)).toMatchObject({ ok: true, claims: { sub: "user-1", cid: "ci-1" } });
+    const plain = await verifyUserToken(await mintUserToken("user-1", ["finance:read"], 600));
+    expect(plain.ok && "cid" in plain.claims).toBe(false);
+    for (const cid of [123, "", "x".repeat(300)]) {
+      expect(await verifyUserToken(await sign({ alg: "HS256" }, claims({ cid })))).toEqual({ ok: false, reason: "invalid" });
+    }
+  });
 });

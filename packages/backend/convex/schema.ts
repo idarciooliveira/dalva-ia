@@ -2,6 +2,10 @@ import { defineSchema, defineTable } from "convex/server";
 import { authTables } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 
+/** Chat channels a user can link. Add a literal to support another one. */
+export const channelValidator = v.literal("telegram");
+export const channelScopeValidator = v.union(v.literal("finance:read"), v.literal("finance:write"));
+
 export default defineSchema({
   ...authTables,
 
@@ -192,4 +196,39 @@ export default defineSchema({
   })
     .index("by_userId_and_key", ["userId", "key"])
     .index("by_createdAt", ["createdAt"]),
+
+  /* ------------------------------------------------------------------ */
+  /*  Chat channel linking                                               */
+  /* ------------------------------------------------------------------ */
+  // Single-use codes the web app hands to the user (`/start <code>`). Only the
+  // SHA-256 of the code is stored. Purged by a cron once expired.
+  channelLinkCodes: defineTable({
+    userId: v.string(),
+    channel: channelValidator,
+    codeHash: v.string(), // hex sha256 of the code
+    expiresAt: v.number(), // ms epoch
+    usedAt: v.optional(v.number()),
+    consentAt: v.number(), // when the user ticked consent before creating the code
+  })
+    .index("by_codeHash", ["codeHash"])
+    .index("by_userId_and_channel", ["userId", "channel"])
+    .index("by_expiresAt", ["expiresAt"]),
+
+  // A linked chat account. Active while `unlinkedAt` is unset: at most one
+  // active row per (channel, externalUserId) and per (userId, channel),
+  // enforced in the redeem mutation (serializable, so concurrent redeems retry).
+  channelIdentities: defineTable({
+    userId: v.string(),
+    channel: channelValidator,
+    externalUserId: v.string(),
+    chatId: v.string(),
+    username: v.optional(v.string()),
+    scopes: v.array(channelScopeValidator),
+    linkedAt: v.number(),
+    consentAt: v.number(),
+    unlinkedAt: v.optional(v.number()),
+  })
+    .index("by_channel_and_externalUserId_and_unlinkedAt", ["channel", "externalUserId", "unlinkedAt"])
+    .index("by_userId_and_channel_and_unlinkedAt", ["userId", "channel", "unlinkedAt"])
+    .index("by_userId_and_unlinkedAt", ["userId", "unlinkedAt"]),
 });

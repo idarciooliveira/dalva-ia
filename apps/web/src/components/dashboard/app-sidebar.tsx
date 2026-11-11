@@ -43,7 +43,7 @@ const mainNav = [
 ] as const;
 
 const settingsNav = [
-  { label: "Settings", icon: Settings, href: "/dashboard" },
+  { label: "Settings", icon: Settings, href: "/settings" },
 ] as const;
 
 /* -------------------------------------------------------------------------- */

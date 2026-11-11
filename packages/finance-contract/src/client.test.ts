@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createFinanceClient, FinanceApiError } from "./client";
+import { createFinanceClient, createFinanceServiceClient, FinanceApiError } from "./client";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
@@ -440,5 +440,65 @@ describe("edge cases", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("service client", () => {
+  const identity = {
+    id: "ci1",
+    channel: "telegram",
+    externalUserId: "42",
+    chatId: "42",
+    scopes: ["finance:read", "finance:write"],
+    linkedAt: "2026-11-11T10:00:00.000Z",
+    consentAt: "2026-11-11T09:59:00.000Z",
+  };
+
+  function serviceSetup(respond: (req: Request) => Response) {
+    const calls: Request[] = [];
+    const service = createFinanceServiceClient({
+      baseUrl: "https://api.example.test",
+      getServiceKey: () => "svc_key",
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        const req = new Request(input, init);
+        calls.push(req);
+        return respond(req);
+      }) as typeof fetch,
+    });
+    return { service, calls };
+  }
+
+  it("sends the service key as bearer and no Idempotency-Key", async () => {
+    const { service, calls } = serviceSetup(() => json({ ok: true, data: { identity } }));
+    const result = await service.channelLinks.redeem({
+      channel: "telegram",
+      code: "A".repeat(43),
+      externalUserId: "42",
+      chatId: "42",
+    });
+    expect(result.identity.id).toBe("ci1");
+    const req = calls[0]!;
+    expect(req.method).toBe("POST");
+    expect(req.url).toBe("https://api.example.test/api/v1/channel-links/redeem");
+    expect(req.headers.get("authorization")).toBe("Bearer svc_key");
+    expect(req.headers.get("idempotency-key")).toBeNull();
+  });
+
+  it("maps not_found from resolve", async () => {
+    const { service } = serviceSetup(() =>
+      json({ ok: false, error: { code: "not_found", message: "Channel identity not found" } }, 404),
+    );
+    await expect(
+      service.channelIdentities.resolve({ channel: "telegram", externalUserId: "42", chatId: "42" }),
+    ).rejects.toMatchObject({ code: "not_found", status: 404 });
+  });
+
+  it("exposes only service routes, and the user client only user routes", () => {
+    const { service } = serviceSetup(() => json({}));
+    expect(Object.keys(service).sort()).toEqual(["channelIdentities", "channelLinks"]);
+    const user = createFinanceClient({ baseUrl: "https://x.test", getToken: () => "t" });
+    expect(user).not.toHaveProperty("channelLinks");
+    expect(user).not.toHaveProperty("channelIdentities");
+    expect(user).toHaveProperty("transactions");
   });
 });

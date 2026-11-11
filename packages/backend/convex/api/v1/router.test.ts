@@ -3,7 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 
 import { implementationFor } from "./registry";
 import { BodyTooLargeError, readBodyText } from "./router";
-import { raw, seedUser, setupApi, tokenFor, type RawResponse } from "./test.helpers";
+import { SERVICE_KEY_ENV } from "./serviceAuth";
+import { serviceImplementationFor } from "./serviceRegistry";
+import { raw, seedUser, setupApi, TEST_SERVICE_KEY, TEST_SECRET, tokenFor, type RawResponse } from "./test.helpers";
 import { mintUserToken, TOKEN_SECRET_ENV } from "./tokens";
 
 const KEY = "router-test-key-0001";
@@ -23,11 +25,50 @@ async function forgedToken(userId: string) {
 }
 
 describe("api/v1 router", () => {
-  it("maps every contract route to an implementation", () => {
-    for (const { group, op } of allRoutes()) expect(implementationFor(group, op), `${group}.${op}`).not.toBeNull();
+  it("maps every contract route to an implementation of its auth kind", () => {
+    for (const { group, op, route } of allRoutes()) {
+      const user = implementationFor(group, op);
+      const service = serviceImplementationFor(group, op);
+      expect(route.auth === "user" ? user : service, `${group}.${op}`).not.toBeNull();
+      expect(route.auth === "user" ? service : user, `${group}.${op}`).toBeNull();
+    }
   });
 
-  describe.each(allRoutes().map((r) => [r.name, r] as const))("%s auth", (_name, { route }) => {
+  const userRoutes = allRoutes().filter((r) => r.route.auth === "user");
+  const serviceRoutes = allRoutes().filter((r) => r.route.auth === "service");
+
+  describe.each(serviceRoutes.map((r) => [r.name, r] as const))("%s service auth", (_name, { route }) => {
+    const path = pathOf(route.path);
+
+    it("rejects no credential, a wrong key and user tokens with 401", async () => {
+      const t = setupApi();
+      const user = await seedUser(t);
+      expectError(await raw(t, route.method, path, { body: {} }), "unauthorized", 401);
+      expectError(await raw(t, route.method, path, { body: {}, token: "x".repeat(48) }), "unauthorized", 401);
+      expectError(await raw(t, route.method, path, { body: {}, token: TEST_SERVICE_KEY.slice(0, -1) }), "unauthorized", 401);
+      for (const scopes of [["finance:read"], ["finance:read", "finance:write"]] as const) {
+        const token = await tokenFor(user, [...scopes]);
+        expectError(await raw(t, route.method, path, { body: {}, token }), "unauthorized", 401);
+      }
+      // The token secret is not the service key either.
+      expectError(await raw(t, route.method, path, { body: {}, token: TEST_SECRET }), "unauthorized", 401);
+    });
+
+    it("accepts the service key without an Idempotency-Key and validates the body", async () => {
+      const t = setupApi();
+      expectError(await raw(t, route.method, path, { body: {}, token: TEST_SERVICE_KEY }), "validation_failed", 400);
+    });
+
+    it("returns 500 internal when the service key is missing, short or equal to the token secret", async () => {
+      const t = setupApi();
+      for (const value of ["", "too-short", TEST_SECRET]) {
+        vi.stubEnv(SERVICE_KEY_ENV, value);
+        expectError(await raw(t, route.method, path, { body: {}, token: value || "anything" }), "internal", 500);
+      }
+    });
+  });
+
+  describe.each(userRoutes.map((r) => [r.name, r] as const))("%s auth", (_name, { route }) => {
     const path = pathOf(route.path);
     const options = isWriteRoute(route) ? { idempotencyKey: KEY, body: {} } : {};
 
@@ -46,6 +87,11 @@ describe("api/v1 router", () => {
       const expiredResponse = await raw(t, route.method, path, { ...options, token: expired });
       expectError(expiredResponse, "unauthorized", 401);
       expect(expiredResponse.body.error?.message).toBe("Token expired");
+    });
+
+    it("rejects the service key with 401", async () => {
+      const t = setupApi();
+      expectError(await raw(t, route.method, path, { ...options, token: TEST_SERVICE_KEY }), "unauthorized", 401);
     });
 
     it("rejects a token without the required scope with 403", async () => {

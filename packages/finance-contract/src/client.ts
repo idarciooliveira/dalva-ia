@@ -11,8 +11,8 @@ import {
   validationIssues,
 } from "./envelope";
 import type { ErrorCode } from "./envelope";
-import { buildRequestParts, isWriteRoute, routes } from "./routes";
-import type { RouteDef, RouteInput, RouteOutput, Routes } from "./routes";
+import { buildRequestParts, requiresIdempotencyKey, routes } from "./routes";
+import type { RouteAuth, RouteDef, RouteInput, RouteOutput, ServiceRoutes, UserRoutes } from "./routes";
 
 /**
  * Server error codes plus the ones raised locally by the client:
@@ -55,7 +55,7 @@ const looseErrorEnvelope = z.object({
 });
 
 export interface CallOptions {
-  /** Writes only. Reuse the same key to safely retry a request; generated when omitted. */
+  /** User-route writes only. Reuse the same key to safely retry a request; generated when omitted. */
   idempotencyKey?: string;
   signal?: AbortSignal;
 }
@@ -70,14 +70,27 @@ export interface FinanceClientOptions {
   generateIdempotencyKey?: () => string;
 }
 
+export interface FinanceServiceClientOptions {
+  /** Origin only, e.g. `https://finance.example.com`. `/api/v1` is appended. */
+  baseUrl: string;
+  /** The service key (`FINANCE_API_SERVICE_KEY`). Server-side only: never ship it to a browser. */
+  getServiceKey: () => string | Promise<string>;
+  fetch?: typeof fetch;
+}
+
 type OperationFn<R extends RouteDef> = {} extends RouteInput<R>
   ? (input?: RouteInput<R>, options?: CallOptions) => Promise<RouteOutput<R>>
   : (input: RouteInput<R>, options?: CallOptions) => Promise<RouteOutput<R>>;
 
-/** One method per operation: `client.transactions.search({ ... })`. */
-export type FinanceClient = {
-  [G in keyof Routes]: { [O in keyof Routes[G]]: Routes[G][O] extends RouteDef ? OperationFn<Routes[G][O]> : never };
+type ClientFor<M> = {
+  [G in keyof M]: { [O in keyof M[G]]: M[G][O] extends RouteDef ? OperationFn<M[G][O]> : never };
 };
+
+/** One method per user operation: `client.transactions.search({ ... })`. */
+export type FinanceClient = ClientFor<UserRoutes>;
+
+/** One method per service operation: `service.channelIdentities.resolve({ ... })`. */
+export type FinanceServiceClient = ClientFor<ServiceRoutes>;
 
 /** `crypto.randomUUID()` where available; random hex otherwise (e.g. insecure browser contexts). */
 function defaultIdempotencyKey(): string {
@@ -85,7 +98,15 @@ function defaultIdempotencyKey(): string {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function createFinanceClient(options: FinanceClientOptions): FinanceClient {
+interface TransportOptions {
+  baseUrl: string;
+  getCredential: () => string | Promise<string>;
+  fetch?: typeof fetch;
+  generateIdempotencyKey?: () => string;
+}
+
+/** Only the routes for `auth`: a user client has no service methods and vice versa. */
+function buildClient(auth: RouteAuth, options: TransportOptions): unknown {
   const baseUrl = options.baseUrl.replace(/\/+$/, "") + API_BASE_PATH;
   const doFetch: typeof fetch = options.fetch ?? ((...args) => globalThis.fetch(...args));
   const newKey = options.generateIdempotencyKey ?? defaultIdempotencyKey;
@@ -106,7 +127,7 @@ export function createFinanceClient(options: FinanceClientOptions): FinanceClien
     ) => new FinanceApiError(code, message, status, details, { cause, idempotencyKey });
 
     const headers = new Headers({ Accept: "application/json" });
-    const token = await options.getToken();
+    const token = await options.getCredential();
     try {
       headers.set(AUTHORIZATION_HEADER, bearerAuthorization(token));
     } catch (error) {
@@ -114,7 +135,7 @@ export function createFinanceClient(options: FinanceClientOptions): FinanceClien
     }
 
     const { path, query, body } = buildRequestParts(route, parsed.data as Record<string, unknown>);
-    if (isWriteRoute(route)) {
+    if (requiresIdempotencyKey(route)) {
       const key = callOptions.idempotencyKey ?? newKey();
       const keyCheck = idempotencyKeySchema.safeParse(key);
       if (!keyCheck.success) {
@@ -186,15 +207,37 @@ export function createFinanceClient(options: FinanceClientOptions): FinanceClien
     return envelope.data.data;
   }
 
+  const groups = Object.entries(routes as Record<string, Record<string, RouteDef>>).filter(([, ops]) =>
+    Object.values(ops).every((route) => route.auth === auth),
+  );
   return Object.fromEntries(
-    Object.entries(routes).map(([group, ops]) => [
+    groups.map(([group, ops]) => [
       group,
       Object.fromEntries(
-        Object.entries(ops as Record<string, RouteDef>).map(([op, route]) => [
+        Object.entries(ops).map(([op, route]) => [
           op,
           (input?: unknown, callOptions?: CallOptions) => call(route, input, callOptions),
         ]),
       ),
     ]),
-  ) as unknown as FinanceClient;
+  );
+}
+
+/** Client for the user routes, authenticated with a user token. */
+export function createFinanceClient(options: FinanceClientOptions): FinanceClient {
+  return buildClient("user", {
+    baseUrl: options.baseUrl,
+    getCredential: options.getToken,
+    fetch: options.fetch,
+    generateIdempotencyKey: options.generateIdempotencyKey,
+  }) as FinanceClient;
+}
+
+/**
+ * Client for the service routes (channel linking), authenticated with the
+ * service key. Calls take no `Idempotency-Key`: `redeem` is single-use, so
+ * after an ambiguous failure call `resolve` to see whether the link exists.
+ */
+export function createFinanceServiceClient(options: FinanceServiceClientOptions): FinanceServiceClient {
+  return buildClient("service", { baseUrl: options.baseUrl, getCredential: options.getServiceKey, fetch: options.fetch }) as FinanceServiceClient;
 }

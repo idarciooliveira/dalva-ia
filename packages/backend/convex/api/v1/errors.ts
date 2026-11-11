@@ -1,6 +1,15 @@
 import { errorCodeSchema, type ErrorCode } from "@mpf/finance-contract";
 import { ConvexError, type Value } from "convex/values";
 
+import {
+  CHANNEL_ALREADY_LINKED,
+  EXTERNAL_ALREADY_LINKED,
+  IDENTITY_NOT_FOUND,
+  INVALID_LINK_CODE,
+  PRIVATE_CHAT_REQUIRED,
+  USER_ALREADY_LINKED,
+} from "../../domain/channelLinks";
+
 export interface ApiErrorData {
   code: ErrorCode;
   message: string;
@@ -75,6 +84,12 @@ const DOMAIN_ERRORS: Readonly<Record<string, ErrorCode>> = {
   "Principal and interest must add up to the payment amount": "validation_failed",
   "Principal amount cannot exceed the remaining balance": "validation_failed",
   "Invalid cursor": "validation_failed",
+  [INVALID_LINK_CODE]: "not_found",
+  [IDENTITY_NOT_FOUND]: "not_found",
+  [EXTERNAL_ALREADY_LINKED]: "conflict",
+  [USER_ALREADY_LINKED]: "conflict",
+  [CHANNEL_ALREADY_LINKED]: "conflict",
+  [PRIVATE_CHAT_REQUIRED]: "validation_failed",
 };
 
 export async function mapDomainErrors<T>(fn: () => Promise<T>): Promise<T> {
