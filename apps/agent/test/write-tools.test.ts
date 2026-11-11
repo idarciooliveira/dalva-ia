@@ -109,9 +109,23 @@ describe("create_transaction", () => {
     expect(usd.finance.actions[0]!.summary).toBe("Income · 1,240.50 USD · Freelance · Wise USD · yesterday");
 
     const kwd = setup();
-    await kwd.run("create_transaction", { type: "expense", amount: "12.345", accountId: "acc_kwd", language: "pt", date: "2026-10-01" });
-    expect(kwd.finance.actions[0]!.input.amount).toEqual({ amountMinor: 12_345, currency: "KWD" });
-    expect(kwd.finance.actions[0]!.summary).toBe("Despesa · 12,345 KWD · Kuwait Bank · 01/10/2026");
+    await kwd.run("create_transaction", { type: "expense", amount: "12.340", accountId: "acc_kwd", language: "pt", date: "2026-10-01" });
+    expect(kwd.finance.actions[0]!.input.amount).toEqual({ amountMinor: 12_340, currency: "KWD" });
+    expect(kwd.finance.actions[0]!.summary).toBe("Despesa · 12,340 KWD · Kuwait Bank · 01/10/2026");
+  });
+
+  test("3-decimal amounts DALVA can't store exactly (x100) are refused at proposal time, never rounded", async () => {
+    const kwd = setup();
+    expect(await kwd.run("create_transaction", { type: "expense", amount: "12.345", accountId: "acc_kwd", language: "pt" })).toMatchObject({
+      error: "invalid_input",
+      message: expect.stringMatching(/KWD only supports 2 decimal places in DALVA/),
+    });
+    expect(kwd.finance.actions).toHaveLength(0);
+    // "12.34" and "12.340" are the same storable amount.
+    expect(await kwd.run("create_transaction", { type: "expense", amount: "12.34", accountId: "acc_kwd", language: "pt" })).toMatchObject({
+      status: "awaiting_confirmation",
+    });
+    expect(kwd.finance.actions[0]!.input.amount).toEqual({ amountMinor: 12_340, currency: "KWD" });
   });
 
   test("bad input fails at proposal time and creates nothing", async () => {
@@ -217,14 +231,94 @@ describe("update_transaction and delete_transaction", () => {
       input: { id: "tx_1", amount: { amountMinor: 2_000_000, currency: "AOA" }, date: TODAY },
     });
     expect(result.summary).toBe(
-      "Editar despesa · 18 450,00 AOA · Alimentação › Supermercado · BAI Conta Ordem · ontem · “Kero Talatona” → valor: 20 000,00 AOA, data: hoje",
+      "Editar despesa · valor: 18 450,00 AOA → 20 000,00 AOA · data: ontem → hoje · Alimentação › Supermercado · BAI Conta Ordem · “Kero Talatona”",
     );
   });
 
   test("update in English, moving to another category", async () => {
     const { run } = setup();
     const result = await run("update_transaction", { id: "tx_2", categoryId: "cat_fun", language: "en" });
-    expect(result.summary).toBe("Edit expense · 6,500.00 AOA · Transporte › Táxi / Yango · Carteira · Nov 9, 2026 · “Yango” → category: Lazer");
+    expect(result.summary).toBe("Edit expense · category: Transporte › Táxi / Yango → Lazer · 6,500.00 AOA · Carteira · Nov 9, 2026 · “Yango”");
+  });
+
+  test("every changed field stays visible: long context is cut, then dropped; too many changes are refused", async () => {
+    const { run, finance } = setup();
+    const long = (prefix: string) => `${prefix} ${"x".repeat(70)}`;
+    // Copies: the fixture objects are shared between tests.
+    const rename = (id: string, name: string) => {
+      const index = finance.accounts.findIndex((a) => a.id === id);
+      finance.accounts[index] = { ...finance.accounts[index], name };
+    };
+    rename("acc_bai", long("Conta principal"));
+    rename("acc_cash", long("Carteira de casa"));
+    finance.reads.set("/transactions/tx_long", {
+      transaction: { id: "tx_long", type: "expense", amount: { amountMinor: 100, currency: "AOA" }, accountId: "acc_bai", categoryId: "cat_food", subcategoryId: "sub_rest", date: "2026-11-01", description: "d".repeat(200), payee: "p".repeat(100) },
+    });
+    const newDescription = `Novo ${"n".repeat(190)}`;
+    const result = await run("update_transaction", {
+      id: "tx_long",
+      amount: "20000",
+      accountId: "acc_cash",
+      categoryId: "cat_transport",
+      subcategoryId: "sub_fuel",
+      date: "2026-11-11",
+      description: newDescription,
+      language: "pt",
+    });
+    expect(result.status).toBe("awaiting_confirmation");
+    const summary: string = result.summary;
+    expect(summary.length).toBeLessThanOrEqual(500);
+    expect(summary.startsWith("Editar despesa · valor: 1,00 AOA → 20 000,00 AOA")).toBe(true);
+    for (const shown of ["conta:", "categoria:", "Transporte › Combustível", "data: 01/11/2026 → hoje", `“${newDescription}”`]) {
+      expect(summary, shown).toContain(shown);
+    }
+    expect(finance.actions[0]!.input).toMatchObject({ description: newDescription, accountId: "acc_cash", subcategoryId: "sub_fuel" });
+
+    const tooMuch = await run("update_transaction", {
+      id: "tx_long",
+      type: "income",
+      amount: "20000",
+      accountId: "acc_cash",
+      categoryId: "cat_freelance",
+      date: "2026-11-11",
+      description: newDescription,
+      payee: "q".repeat(100),
+      language: "pt",
+    });
+    expect(tooMuch).toMatchObject({ error: "one_at_a_time" }); // the slot is taken by the first proposal
+    // Long category names plus long new texts: even without the old values it can't all fit.
+    const categories = (finance.reads.get("/categories") as { items: any[] }).items;
+    const subcategories = (finance.reads.get("/subcategories") as { items: any[] }).items;
+    finance.reads.set("/categories", { items: [...categories, { id: "cat_long", name: "c".repeat(80), type: "income", isDefault: false }] });
+    finance.reads.set("/subcategories", { items: [...subcategories, { id: "sub_long", categoryId: "cat_long", name: "s".repeat(80), archived: false, sortOrder: 1 }] });
+    const fresh = setup({ finance, eventId: "5002" });
+    expect(
+      await fresh.run("update_transaction", {
+        id: "tx_long",
+        type: "income",
+        amount: "20000",
+        accountId: "acc_cash",
+        categoryId: "cat_long",
+        subcategoryId: "sub_long",
+        date: "2026-11-11",
+        description: newDescription,
+        payee: "q".repeat(100),
+        language: "pt",
+      }),
+    ).toMatchObject({ error: "too_long", message: expect.stringMatching(/fewer/) });
+    expect(finance.actions).toHaveLength(1);
+  });
+
+  test("written free text is shown in full in every summary (description, payee, note)", async () => {
+    const { run } = setup();
+    const description = `Jantar ${"a".repeat(180)}`;
+    const payee = `Restaurante ${"b".repeat(80)}`;
+    const result = await run("create_transaction", expense({ description, payee }));
+    expect(result.summary).toContain(`“${description}”`);
+    expect(result.summary).toContain(payee);
+    const goal = setup();
+    const note = `Nota ${"c".repeat(190)}`;
+    expect((await goal.run("add_goal_contribution", { goalId: "goal_trip", amount: "1", note, language: "pt" })).summary).toContain(`“${note}”`);
   });
 
   test("update refuses no-op, managed rows and a cross-currency move without an amount", async () => {
@@ -248,7 +342,7 @@ describe("update_transaction and delete_transaction", () => {
     const { run, finance } = setup();
     const result = await run("delete_transaction", { id: "tx_1", language: "pt" });
     expect(finance.actions[0]).toMatchObject({ operation: "transactions.delete", input: { id: "tx_1" } });
-    expect(result.summary).toBe("Apagar despesa · 18 450,00 AOA · Alimentação › Supermercado · BAI Conta Ordem · ontem · “Kero Talatona”");
+    expect(result.summary).toBe("Apagar despesa · 18 450,00 AOA · ontem · Alimentação › Supermercado · BAI Conta Ordem · “Kero Talatona”");
     const managed = setup();
     expect(await managed.run("delete_transaction", { id: "tx_tr_in", language: "en" })).toMatchObject({ error: "managed" });
     expect(await managed.run("delete_transaction", { id: "tx_missing", language: "en" })).toMatchObject({ error: "not_found" });
@@ -319,6 +413,15 @@ describe("goal contributions and debt payments", () => {
       },
     });
     expect(result.summary).toBe("Debt payment · 95,000.00 AOA · Crédito automóvel · from BAI Conta Ordem · today · interest 5,000.00 AOA");
+    const over = setup();
+    expect(await over.run("record_debt_payment", { debtId: "debt_car", amount: "2000000.01", fromAccountId: "acc_bai", language: "pt" })).toMatchObject({
+      error: "invalid_input",
+      message: expect.stringMatching(/2 000 000,00 AOA/),
+    });
+    // Interest doesn't count against the balance.
+    expect(
+      await over.run("record_debt_payment", { debtId: "debt_car", amount: "2100000", interest: "100000", fromAccountId: "acc_bai", language: "pt" }),
+    ).toMatchObject({ status: "awaiting_confirmation" });
     const bad = setup();
     expect(await bad.run("record_debt_payment", { debtId: "debt_car", amount: "100", interest: "200", fromAccountId: "acc_bai", language: "en" })).toMatchObject({
       error: "invalid_input",

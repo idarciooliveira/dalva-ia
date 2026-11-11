@@ -144,7 +144,7 @@ describe("Confirm", () => {
     await press("c:action_1");
     expect(finance.callsTo("/transactions").filter((c) => c.method === "POST")).toHaveLength(4);
     expect(action()).toMatchObject({ status: "failed", result: { error: "network_error", uncertain: true } });
-    expect(lastEdit()!.html).toContain("Não consegui confirmar");
+    expect(lastEdit()!.html).toContain("Pode ter sido guardado. Verifica no DALVA antes de tentar de novo.");
   });
 
   test("an ambiguous attempt followed by a refusal is still reported as uncertain, not 'not saved'", async () => {
@@ -154,7 +154,7 @@ describe("Confirm", () => {
     await press("c:action_1");
     expect(finance.callsTo("/transactions").filter((c) => c.method === "POST")).toHaveLength(2);
     expect(action()).toMatchObject({ status: "failed", result: { uncertain: true } });
-    expect(lastEdit()!.html).toContain("Não consegui confirmar");
+    expect(lastEdit()!.html).toContain("Pode ter sido guardado. Verifica no DALVA antes de tentar de novo.");
   });
 
   test("a confirmed action older than the idempotency window is not run again", async () => {
@@ -163,7 +163,24 @@ describe("Confirm", () => {
     await press("c:action_1");
     expect(finance.writes).toHaveLength(0);
     expect(action()).toMatchObject({ status: "failed", result: { uncertain: true } });
-    expect(lastEdit()!.html).toContain("Não consegui confirmar");
+    expect(lastEdit()!.html).toContain("Pode ter sido guardado. Verifica no DALVA antes de tentar de novo.");
+  });
+
+  test("a later press on an action that failed uncertainly keeps the warning", async () => {
+    const { finance, press, lastEdit } = setup();
+    finance.fail("POST /transactions", "network", 10);
+    await press("c:action_1");
+    await press("c:action_1");
+    expect(lastEdit()!.html).toBe(`<b>⚠️ Pode ter sido guardado. Verifica no DALVA antes de tentar de novo.</b>\n${PT_SUMMARY}`);
+    expect(lastEdit()!.html).not.toContain("falhou");
+  });
+
+  test("a definite failure shown again later still says it failed", async () => {
+    const { finance, press, lastEdit } = setup();
+    finance.fail("POST /transactions", "validation_failed", 1);
+    await press("c:action_1");
+    await press("c:action_1");
+    expect(lastEdit()!.html).toContain("❌ Esta alteração falhou");
   });
 
   test("a definite failure is not retried: marked failed with the reason", async () => {

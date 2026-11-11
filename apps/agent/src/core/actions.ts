@@ -48,7 +48,7 @@ const ACTION_TEXTS = {
     alreadySaved: "✅ Já guardado",
     notSaved: "❌ Não guardado",
     failedBefore: "❌ Esta alteração falhou",
-    uncertain: "⚠️ Não consegui confirmar se foi guardado. Verifica no DALVA antes de tentar de novo.",
+    uncertain: "⚠️ Pode ter sido guardado. Verifica no DALVA antes de tentar de novo.",
     cancelled: "Cancelado",
     expired: "⌛ Expirou. Pede-me de novo se ainda quiseres.",
     confirming: "⏳ Já confirmado, a guardar.",
@@ -67,7 +67,7 @@ const ACTION_TEXTS = {
     alreadySaved: "✅ Already saved",
     notSaved: "❌ Not saved",
     failedBefore: "❌ This change failed",
-    uncertain: "⚠️ I couldn't confirm it was saved. Check DALVA before trying again.",
+    uncertain: "⚠️ This may have been saved. Check DALVA before trying again.",
     cancelled: "Cancelled",
     expired: "⌛ Expired. Ask me again if you still want it.",
     confirming: "⏳ Already confirmed, saving.",
@@ -93,9 +93,14 @@ function operationCall(finance: FinanceClient, operation: string) {
   return fn as (input: unknown, options: { idempotencyKey: string }) => Promise<unknown>;
 }
 
-/** Message for an action that can't be confirmed any more. */
-function stateLine(status: AgentActionStatus, language: Language): string {
+/** A stored failure whose write may still have landed (ambiguous attempts, or a rerun refused too late). */
+const isUncertain = (result: unknown) =>
+  typeof result === "object" && result !== null && (result as { uncertain?: unknown }).uncertain === true;
+
+/** Message for an action that can't be confirmed any more. Keeps an uncertain failure's warning. */
+function stateLine(status: AgentActionStatus, language: Language, result?: unknown): string {
   const t = ACTION_TEXTS[language];
+  if (status === "failed" && isUncertain(result)) return t.uncertain;
   switch (status) {
     case "executed":
       return t.alreadySaved;
@@ -120,8 +125,8 @@ const resultMessage = (header: string, summary: string, detail?: string): RichTe
 ];
 
 /** Text for an action that is no longer pending, as the chat shows it (also used when a turn is replayed). */
-export function actionStateMessage(action: Pick<AgentPendingAction, "status" | "summary">): RichText {
-  return resultMessage(stateLine(action.status, summaryLanguage(action.summary)), action.summary);
+export function actionStateMessage(action: Pick<AgentPendingAction, "status" | "summary" | "result">): RichText {
+  return resultMessage(stateLine(action.status, summaryLanguage(action.summary), action.result), action.summary);
 }
 
 export async function handleButton(event: InboundEvent, user: ResolvedUser | null, options: ButtonOptions): Promise<void> {
@@ -197,7 +202,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
       action = await current();
       if (!action) return gone();
       log.info("action_cancel_conflict", { status: action.status });
-      const line = stateLine(action.status, summaryLanguage(action.summary));
+      const line = stateLine(action.status, summaryLanguage(action.summary), action.result);
       return finish(resultMessage(line, action.summary), line);
     }
     log.info("action_cancelled");
@@ -223,7 +228,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
     if (!action) return gone();
     log.info("action_confirm_conflict", { status: action.status });
     if (action.status !== "confirmed") {
-      const line = stateLine(action.status, summaryLanguage(action.summary));
+      const line = stateLine(action.status, summaryLanguage(action.summary), action.result);
       return finish(resultMessage(line, action.summary), line);
     }
     // Confirmed but never completed (a crash, or a lost reply): run it again with the same key,
@@ -232,7 +237,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
       log.warn("action_rerun_too_late");
       const t = ACTION_TEXTS[summaryLanguage(action.summary)];
       await complete(finance, action.id, { status: "failed", code: "rerun_window_passed", uncertain: true }, log);
-      return finish(resultMessage("⚠️", action.summary, t.uncertain), t.uncertain);
+      return finish(resultMessage(t.uncertain, action.summary), t.uncertain);
     }
   }
 
@@ -241,7 +246,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
 
   const t = ACTION_TEXTS[summaryLanguage(action.summary)];
   if (outcome.status === "executed") return finish(resultMessage(t.saved, action.summary), t.saved);
-  if (outcome.uncertain) return finish(resultMessage("⚠️", action.summary, t.uncertain), t.uncertain);
+  if (outcome.uncertain) return finish(resultMessage(t.uncertain, action.summary), t.uncertain);
   const reason = t.reasons[outcome.code as keyof typeof t.reasons] ?? t.reasons.other;
   return finish(resultMessage(t.notSaved, action.summary, reason), t.notSaved);
 }

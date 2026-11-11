@@ -13,7 +13,7 @@ import {
 } from "@mpf/finance-contract";
 import { z } from "zod";
 
-import { shortText, type Language } from "../core/summary";
+import { shortText, SummaryTooLongError, type Language } from "../core/summary";
 import { call, toToolError, type ToolContext, type ToolError } from "./shared";
 
 /**
@@ -136,6 +136,12 @@ export async function propose(context: ToolContext, write: WriteContext, build: 
     };
   } catch (error) {
     if (error instanceof ProposalError) return { error: error.code, message: error.message };
+    if (error instanceof SummaryTooLongError) {
+      return {
+        error: "too_long",
+        message: "The confirmation can't show all of these changes at once. Ask the user to change fewer things at once (for example, the amount and date now, the rest next).",
+      };
+    }
     return toToolError(error, context);
   } finally {
     if (!proposals.current) proposals.release();
@@ -165,6 +171,9 @@ export const currencyInput = z
 
 const DECIMAL = /^\d+(?:\.\d+)?$/;
 
+/** Decimals DALVA stores for every currency (amounts are kept as value x 100); the backend refuses finer ones. */
+const STORED_DECIMALS = 2;
+
 /** Decimal string -> positive minor units. Rejects extra decimals instead of rounding: the user confirms the exact amount. */
 export function toMinor(amount: string, currency: string, field = "amount", allowZero = false): number {
   const value = amount.trim();
@@ -186,6 +195,13 @@ export function toMinor(amount: string, currency: string, field = "amount", allo
     throw error;
   }
   if (minor === 0 && !allowZero) throw new ProposalError("invalid_input", `${field} must be greater than zero.`);
+  // DALVA stores every currency with 2 decimals (value x 100): a finer amount would be saved rounded.
+  if (exponent > STORED_DECIMALS && minor % 10 ** (exponent - STORED_DECIMALS) !== 0) {
+    throw new ProposalError(
+      "invalid_input",
+      `${currency} only supports ${STORED_DECIMALS} decimal places in DALVA for now (${field}). Tell the user and ask for the amount rounded to ${STORED_DECIMALS} decimals.`,
+    );
+  }
   return minor;
 }
 

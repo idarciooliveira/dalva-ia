@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { formatAmount, formatDay, joinSummary, labels, quoted, shortText } from "../core/summary";
+import { fitSummary, formatAmount, formatDay, labels, quoted, shortText } from "../core/summary";
 import { MANAGED_MESSAGES } from "./describe-transaction";
 import { languageInput, lookups, propose, ProposalError, type WriteContext } from "./proposals";
 import { call, idInput, type ToolContext } from "./shared";
@@ -42,13 +42,15 @@ export const deleteTransfer = (context: ToolContext, write: WriteContext) =>
         return {
           operation: "transfers.delete",
           input: { id: input.id },
-          summary: joinSummary([
-            `${words.delete} ${words.transfer.toLowerCase()}`,
-            formatAmount(tx.amount.amountMinor, tx.amount.currency, input.language),
-            `${from} → ${to}`,
-            formatDay(tx.date, context.today, input.language),
-            tx.description ? quoted(tx.description) : undefined,
-          ]),
+          summary: fitSummary(
+            [
+              `${words.delete} ${words.transfer.toLowerCase()}`,
+              formatAmount(tx.amount.amountMinor, tx.amount.currency, input.language),
+              `${from} → ${to}`,
+              formatDay(tx.date, context.today, input.language),
+            ],
+            [tx.description ? quoted(shortText(tx.description, 60)) : undefined],
+          ),
         };
       }),
   });

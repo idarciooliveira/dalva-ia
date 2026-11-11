@@ -33,6 +33,14 @@ export const recordDebtPayment = (context: ToolContext, write: WriteContext) =>
         const amountMinor = toMinor(input.amount, currency);
         const interestMinor = input.interest === undefined ? 0 : toMinor(input.interest, currency, "interest", true);
         if (interestMinor > amountMinor) throw new ProposalError("invalid_input", "The interest can't be more than the payment.");
+        // The backend refuses a principal above what is still owed: don't offer a button that can only fail.
+        const remaining = debt.currentBalance.amountMinor;
+        if (amountMinor - interestMinor > remaining) {
+          throw new ProposalError(
+            "invalid_input",
+            `The remaining balance of this debt is ${formatAmount(remaining, currency, input.language)}; the payment (without interest) can't be more than that. Tell the user the remaining balance.`,
+          );
+        }
         const date = input.date ?? context.today;
         const note = optionalText(input.note, 200);
         const words = labels(input.language);

@@ -51,7 +51,7 @@ export const createTransaction = (context: ToolContext, write: WriteContext) =>
             categoryLabel(classification.names?.category, classification.names?.subcategory),
             shortText(account.name),
             formatDay(date, context.today, input.language),
-            payee && shortText(payee),
+            payee,
             description && quoted(description),
           ]),
         };

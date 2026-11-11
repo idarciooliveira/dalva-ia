@@ -1,7 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { joinSummary, labels } from "../core/summary";
+import { fitSummary, labels } from "../core/summary";
 import { describeTransaction, MANAGED_MESSAGES } from "./describe-transaction";
 import { languageInput, lookups, propose, ProposalError, type WriteContext } from "./proposals";
 import { call, idInput, type ToolContext } from "./shared";
@@ -24,7 +24,11 @@ export const deleteTransaction = (context: ToolContext, write: WriteContext) =>
         return {
           operation: "transactions.delete",
           input: { id: input.id },
-          summary: joinSummary([`${words.delete} ${words[tx.type].toLowerCase()}`, ...parts]),
+          // Amount and date always identify the row; the rest is cut first if names are long.
+          summary: fitSummary(
+            [`${words.delete} ${words[tx.type].toLowerCase()}`, parts.amount, parts.date],
+            [parts.category, parts.account, parts.payee, parts.description],
+          ),
         };
       }),
   });

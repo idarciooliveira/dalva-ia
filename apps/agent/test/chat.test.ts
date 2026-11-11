@@ -202,6 +202,17 @@ describe("chat: proposing a change", () => {
     expect(telegram.edited.at(-1)).toMatchObject({ messageId: telegram.sent.length, html: `<b>✅ Guardado</b>\n${summary}` });
   });
 
+  test("a replayed turn whose change failed uncertainly keeps the 'may have been saved' warning", async () => {
+    const proposal = { tools: [{ name: "create_transaction", input: create }] };
+    const { telegram, finance, handle, adapter } = setup([proposal, { text: "Confirma." }, proposal, { text: "Pronto." }]);
+    const event = adapter.parse(textUpdate(7100, "gastei 5000 no almoço"))!;
+    await handle(event);
+    Object.assign(finance.actions[0]!, { status: "failed", result: { error: "network_error", uncertain: true } });
+    await handle(event);
+    expect(telegram.sent.at(-1)!.replyMarkup).toBeUndefined();
+    expect(telegram.sent.at(-1)!.html).toBe(`<b>⚠️ Pode ter sido guardado. Verifica no DALVA antes de tentar de novo.</b>\n${summary}\n\nPronto.`);
+  });
+
   test("a replayed turn whose change was already saved shows that, without buttons", async () => {
     const proposal = { tools: [{ name: "create_transaction", input: create }] };
     const { telegram, finance, handle, adapter } = setup([proposal, { text: "Confirma." }, proposal, { text: "Pronto." }]);

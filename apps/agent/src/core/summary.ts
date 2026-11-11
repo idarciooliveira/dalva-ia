@@ -90,15 +90,37 @@ export function shortText(text: string, max = 40): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }
 
-export const quoted = (text: string) => `“${shortText(text, 60)}”`;
+/** Free text that will be written: shown in full (one line), never cut. */
+export const quoted = (text: string) => `“${text.replace(/\s+/g, " ").trim()}”`;
 
 export const SUMMARY_MAX = 500;
 
-/** Join the non-empty parts. Capped at the backend's 500 characters. */
-export function joinSummary(parts: Array<string | undefined | false>): string {
-  const text = parts.filter((part): part is string => typeof part === "string" && part.length > 0).join(" · ");
-  return text.length > SUMMARY_MAX ? `${text.slice(0, SUMMARY_MAX - 1)}…` : text;
+/** The summary can't show everything that would be written. */
+export class SummaryTooLongError extends Error {}
+
+type Part = string | undefined | false;
+const present = (parts: Part[]) => parts.filter((part): part is string => typeof part === "string" && part.length > 0);
+
+/**
+ * Summary within the backend's 500 characters. `written` parts (what the
+ * change writes) are always shown in full; `context` parts (what identifies
+ * the existing row) are cut shorter, then dropped from the end, to make room.
+ * When `written` alone doesn't fit, throws `SummaryTooLongError`: the caller
+ * refuses the proposal rather than hide part of it.
+ */
+export function fitSummary(written: Part[], context: Part[] = []): string {
+  const required = present(written);
+  let extra = present(context);
+  const join = () => [...required, ...extra].join(" · ");
+  if (join().length <= SUMMARY_MAX) return join();
+  extra = extra.map((part) => shortText(part, 20));
+  while (extra.length > 0 && join().length > SUMMARY_MAX) extra = extra.slice(0, -1);
+  if (join().length > SUMMARY_MAX) throw new SummaryTooLongError();
+  return join();
 }
+
+/** Every part is written by the change: none may be cut. */
+export const joinSummary = (parts: Part[]) => fitSummary(parts);
 
 /** `Alimentação › Restaurantes`. */
 export const categoryLabel = (category?: string, subcategory?: string) =>
