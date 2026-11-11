@@ -283,13 +283,18 @@ export async function createPendingAction(
   session: Doc<"agentSessions">,
   args: { operation: string; input: string; summary: string; ttlMs: number; now: number; clientKey?: string },
 ) {
-  // A repeated create (the caller replayed the same proposal) returns what the first one stored, in any status.
+  // A repeated create (the caller replayed the same proposal) returns what the first one stored, in any
+  // status. Per user, not per session: a replay can land in a newer session of the same chat.
   if (args.clientKey !== undefined) {
     const existing = await ctx.db
       .query("agentPendingActions")
-      .withIndex("by_sessionId_and_clientKey", (q) => q.eq("sessionId", session._id).eq("clientKey", args.clientKey))
-      .first();
-    if (existing) return existing;
+      .withIndex("by_userId_and_clientKey", (q) => q.eq("userId", session.userId).eq("clientKey", args.clientKey))
+      .take(10);
+    // Event ids are only unique per channel: match within this chat identity.
+    for (const action of existing) {
+      const owner = action.sessionId === session._id ? session : await ctx.db.get(action.sessionId);
+      if (owner?.identityId === session.identityId) return action;
+    }
   }
   if (session.endedAt !== undefined) throw new Error(SESSION_ENDED);
   await assertRoomForAction(ctx, session._id, args.now);

@@ -213,6 +213,7 @@ export function fakeFinance() {
   let historyDeletes = 0;
   /** Force an error for `METHOD /path` (path without /api/v1), once or always. */
   const failures = new Map<string, { code: ErrorCode | "network" | "network_after"; times: number; details?: unknown }>();
+  const sequences = new Map<string, Array<ErrorCode | "network" | "network_after">>();
   /** Hold a route until the returned function is called. */
   const gates = new Map<string, Promise<void>>();
 
@@ -309,7 +310,7 @@ export function fakeFinance() {
       if (!canWrite(identity)) throw new ApiFailure("forbidden");
       if (!sessions.some((s) => s.id === body.sessionId)) throw new ApiFailure("not_found");
       if (body.clientKey) {
-        const existing = actions.find((a) => a.sessionId === body.sessionId && a.clientKey === body.clientKey);
+        const existing = actions.find((a) => a.owner === identity.externalUserId && a.clientKey === body.clientKey);
         if (existing) return { action: actionJson(existing) };
       }
       const parsed = routeOf(String(body.operation)).request.safeParse(body.input);
@@ -514,7 +515,8 @@ export function fakeFinance() {
       ]);
     }
 
-    const failure = failures.get(key);
+    const queued = sequences.get(key)?.shift();
+    const failure = queued ? { code: queued, times: 1, details: undefined } : failures.get(key);
     let lostReply = false;
     if (failure && failure.times > 0) {
       failure.times -= 1;
@@ -585,6 +587,10 @@ export function fakeFinance() {
     },
     fail(key: string, code: ErrorCode | "network" | "network_after", times = 1, details?: unknown) {
       failures.set(key, { code, times, details });
+    },
+    /** Fail the next calls to `key` with these codes, in order. */
+    failSequence(key: string, codes: Array<ErrorCode | "network" | "network_after">) {
+      sequences.set(key, [...codes]);
     },
     hold(key: string): () => void {
       let release!: () => void;

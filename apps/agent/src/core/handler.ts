@@ -113,14 +113,15 @@ export function createHandler(options: HandlerOptions): {
       },
       reply: async ({ text: answer, action }) => {
         const to = { chatId: event.chatId };
-        const lead: RichPart[] = answer ? [answer, "\n\n"] : [];
+        // The code-built summary comes first, so model text (which tool results could steer) never frames it.
+        const tail: RichPart[] = answer ? ["\n\n", answer] : [];
         if (action?.status === "pending") {
           // The turn proposed a change (or a replay found it still pending): Confirm/Cancel buttons.
-          await adapter.send(to, { type: "confirm", text: [...lead, { bold: action.summary }], actionId: action.id });
+          await adapter.send(to, { type: "confirm", text: [{ bold: action.summary }, ...tail], actionId: action.id });
         } else if (action) {
           // A replayed turn whose change was already confirmed, cancelled or expired: show where it stands, no buttons.
           const state = actionStateMessage(action);
-          await adapter.send(to, { type: "text", text: [...lead, ...(typeof state === "string" ? [state] : state)] });
+          await adapter.send(to, { type: "text", text: [...(typeof state === "string" ? [state] : state), ...tail] });
         } else {
           await reply(event, answer);
         }

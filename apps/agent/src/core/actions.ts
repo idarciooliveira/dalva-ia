@@ -28,6 +28,12 @@ export interface ButtonOptions {
   retryDelayMs?: number;
 }
 
+/**
+ * A `confirmed` action is only re-run while the API still holds its
+ * idempotency key (kept 7 days); 6 days leaves a margin.
+ */
+export const RERUN_WINDOW_MS = 6 * 24 * 60 * 60 * 1000;
+
 /** Ambiguous outcomes are retried this many times with the same key. */
 export const EXECUTE_RETRIES = 3;
 
@@ -220,7 +226,14 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
       const line = stateLine(action.status, summaryLanguage(action.summary));
       return finish(resultMessage(line, action.summary), line);
     }
-    // Confirmed but never completed (a crash, or a lost reply): run it again with the same key.
+    // Confirmed but never completed (a crash, or a lost reply): run it again with the same key,
+    // unless the API may have purged that key already: then a rerun could write twice.
+    if (Date.now() - Date.parse(action.updatedAt) > RERUN_WINDOW_MS) {
+      log.warn("action_rerun_too_late");
+      const t = ACTION_TEXTS[summaryLanguage(action.summary)];
+      await complete(finance, action.id, { status: "failed", code: "rerun_window_passed", uncertain: true }, log);
+      return finish(resultMessage("⚠️", action.summary, t.uncertain), t.uncertain);
+    }
   }
 
   const outcome = await execute(finance, action, retryDelayMs, log);
@@ -236,6 +249,8 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
 /** Run the stored operation; ambiguous failures are retried with the same key (the API replays a write it already did). */
 async function execute(finance: FinanceClient, action: AgentPendingAction, retryDelayMs: number, log: Logger): Promise<Outcome> {
   const run = operationCall(finance, action.operation);
+  // Once an attempt may have landed, a later refusal (read-only, unlink, rate limit) proves nothing about it.
+  let sawAmbiguous = false;
   for (let attempt = 0; ; attempt++) {
     try {
       const result = await run(action.input, { idempotencyKey: action.id });
@@ -243,13 +258,14 @@ async function execute(finance: FinanceClient, action: AgentPendingAction, retry
       return { status: "executed", result };
     } catch (error) {
       const ambiguous = isAmbiguous(error);
+      sawAmbiguous ||= ambiguous;
       if (ambiguous && attempt < EXECUTE_RETRIES) {
         await sleep(retryDelayMs * (attempt + 1));
         continue;
       }
       const code = isFinanceError(error) ? error.code : "internal";
-      log.warn("action_failed", { ...errorFields(error), operation: action.operation, attempts: attempt + 1, uncertain: ambiguous || undefined });
-      return { status: "failed", code, ...(ambiguous ? { uncertain: true } : {}) };
+      log.warn("action_failed", { ...errorFields(error), operation: action.operation, attempts: attempt + 1, uncertain: sawAmbiguous || undefined });
+      return { status: "failed", code, ...(sawAmbiguous ? { uncertain: true } : {}) };
     }
   }
 }

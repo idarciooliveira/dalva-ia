@@ -147,6 +147,25 @@ describe("Confirm", () => {
     expect(lastEdit()!.html).toContain("Não consegui confirmar");
   });
 
+  test("an ambiguous attempt followed by a refusal is still reported as uncertain, not 'not saved'", async () => {
+    const { finance, press, action, lastEdit } = setup();
+    // Attempt 1 may have landed (reply lost); attempt 2 is refused (e.g. switched to read-only in between).
+    finance.failSequence("POST /transactions", ["network_after", "forbidden"]);
+    await press("c:action_1");
+    expect(finance.callsTo("/transactions").filter((c) => c.method === "POST")).toHaveLength(2);
+    expect(action()).toMatchObject({ status: "failed", result: { uncertain: true } });
+    expect(lastEdit()!.html).toContain("Não consegui confirmar");
+  });
+
+  test("a confirmed action older than the idempotency window is not run again", async () => {
+    const { finance, press, action, lastEdit } = setup({ status: "confirmed" });
+    action().updatedAt = new Date(Date.now() - 8 * 86_400_000).toISOString();
+    await press("c:action_1");
+    expect(finance.writes).toHaveLength(0);
+    expect(action()).toMatchObject({ status: "failed", result: { uncertain: true } });
+    expect(lastEdit()!.html).toContain("Não consegui confirmar");
+  });
+
   test("a definite failure is not retried: marked failed with the reason", async () => {
     const { finance, press, action, lastEdit } = setup();
     finance.fail("POST /transactions", "validation_failed", 1);

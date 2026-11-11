@@ -575,15 +575,20 @@ describe("agentPendingActions", () => {
     expect(await t.run((ctx) => ctx.db.query("agentPendingActions").collect())).toHaveLength(2);
   });
 
-  it("a clientKey is scoped to the session, and a repeat still needs write access", async () => {
+  it("a clientKey is scoped to the user: a replay in a newer session finds the same action; a repeat still needs write access", async () => {
     const t = setupApi();
-    const chat = await linkedChat(t, { withAccount: true });
-    const first = await session(chat);
-    const input = { operation: "transactions.create" as const, input: expenseInput(chat.accountId!), summary: "x", clientKey: "k1" };
-    const a = (await chat.agent.agentPendingActions.create({ sessionId: first.id, ...input })).action;
-    const { session: second } = await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30, startNew: true });
-    const b = (await chat.agent.agentPendingActions.create({ sessionId: second.id, ...input })).action;
-    expect(b.id).not.toBe(a.id);
+    const { alice, bob } = await twoChats(t);
+    const first = await session(alice);
+    const input = { operation: "transactions.create" as const, input: expenseInput(alice.accountId!), summary: "x", clientKey: "k1" };
+    const a = (await alice.agent.agentPendingActions.create({ sessionId: first.id, ...input })).action;
+    const { session: second } = await alice.agent.agentSessions.current({ channel: TG, chatId: alice.chatId, idleTimeoutMinutes: 30, startNew: true });
+    const b = (await alice.agent.agentPendingActions.create({ sessionId: second.id, ...input })).action;
+    expect(b.id).toBe(a.id);
+    // Another user with the same key gets their own action.
+    const bobSession = await session(bob);
+    const c = (await bob.agent.agentPendingActions.create({ ...input, sessionId: bobSession.id, input: expenseInput(bob.accountId!) })).action;
+    expect(c.id).not.toBe(a.id);
+    const chat = alice;
 
     await chat.web.mutation(api.channelLinks.setReadOnly, { identityId: chat.identityId, readOnly: true });
     await expectApiError(chat.agent.agentPendingActions.create({ sessionId: second.id, ...input }), "forbidden", 403);

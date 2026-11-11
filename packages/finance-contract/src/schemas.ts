@@ -775,7 +775,7 @@ export const agentActionOperationSchema = z.enum([
 
 export const agentActionStatusSchema = z.enum(["pending", "confirmed", "cancelled", "expired", "executed", "failed"]);
 
-/** Caller's dedupe key for `create`, unique per session (e.g. inbound event id + tool call index). */
+/** Caller's dedupe key for `create`, unique per user (e.g. inbound event id + proposal index). */
 export const agentActionClientKeySchema = z.string().regex(/^[A-Za-z0-9:_-]{1,128}$/);
 
 export const agentPendingActionSchema = z.object({
@@ -798,8 +798,8 @@ const agentPendingActionResponse = z.object({ action: agentPendingActionSchema }
 /**
  * `input` is validated against the operation's own request schema, so a button
  * never leads to an action that can't run. `ttlSeconds` defaults to 10 minutes.
- * With `clientKey`, a second create with the same key in the same session
- * returns the existing action (whatever its status) and stores nothing.
+ * With `clientKey`, a second create with the same key by the same user (any
+ * session) returns the existing action (whatever its status) and stores nothing.
  */
 export const agentPendingActionCreateRequestSchema = z.strictObject({
   sessionId: agentSessionIdSchema,

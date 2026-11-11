@@ -183,7 +183,7 @@ describe("chat: proposing a change", () => {
     ]);
     await run("gastei 5000 kz no almoço hoje");
     const confirm = telegram.sent.at(-1)!;
-    expect(confirm.html).toBe(`Confirma abaixo para guardar.\n\n<b>${summary}</b>`);
+    expect(confirm.html).toBe(`<b>${summary}</b>\n\nConfirma abaixo para guardar.`);
     const buttons = (confirm.replyMarkup as { inline_keyboard: Array<Array<{ callback_data: string }>> }).inline_keyboard.flat();
     expect(buttons.map((b) => b.callback_data)).toEqual(["c:action_1", "x:action_1"]);
     expect(finance.writes).toHaveLength(0);
@@ -212,7 +212,7 @@ describe("chat: proposing a change", () => {
     await handle(event); // boot recovery replays the same event
     expect(finance.actions).toHaveLength(1);
     expect(telegram.sent.at(-1)!.replyMarkup).toBeUndefined();
-    expect(telegram.sent.at(-1)!.html).toBe(`Pronto.\n\n<b>✅ Já guardado</b>\n${summary}`);
+    expect(telegram.sent.at(-1)!.html).toBe(`<b>✅ Já guardado</b>\n${summary}\n\nPronto.`);
   });
 });
 

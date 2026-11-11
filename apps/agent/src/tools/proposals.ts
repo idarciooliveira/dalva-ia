@@ -1,5 +1,6 @@
 import {
   currencyExponent,
+  MoneyError,
   parseDecimalAmount,
   routes,
   type Account,
@@ -98,7 +99,7 @@ export type ProposalResult =
 const ONE_AT_A_TIME: ToolError = {
   error: "one_at_a_time",
   message:
-    "Only one change can be proposed per message, and one is already waiting for confirmation. Tell the user to confirm or cancel it first, then ask for the next one.",
+    "Only one change can be proposed per message. Propose the next one after the user answers the current proposal (if your other proposal in this message failed, fix it and try again).",
 };
 
 const routeOf = (operation: AgentActionOperation): RouteDef => {
@@ -171,11 +172,19 @@ export function toMinor(amount: string, currency: string, field = "amount", allo
     throw new ProposalError("invalid_input", `${field} must be a plain decimal like 5000 or 12.50 (dot for decimals, no thousands separators or signs).`);
   }
   const exponent = currencyExponent(currency);
-  const decimals = value.split(".")[1]?.length ?? 0;
-  if (decimals > exponent) {
+  // Trailing zeros change nothing ("1500.00" JPY is 1500); other extra decimals would need rounding.
+  const [whole, fraction = ""] = value.split(".");
+  const significant = fraction.replace(/0+$/, "");
+  if (significant.length > exponent) {
     throw new ProposalError("invalid_input", `${currency} amounts have at most ${exponent} decimal places (${field}).`);
   }
-  const minor = parseDecimalAmount(value, currency);
+  let minor: number;
+  try {
+    minor = parseDecimalAmount(significant ? `${whole}.${significant}` : whole!, currency);
+  } catch (error) {
+    if (error instanceof MoneyError) throw new ProposalError("invalid_input", `${field} is too large.`);
+    throw error;
+  }
   if (minor === 0 && !allowZero) throw new ProposalError("invalid_input", `${field} must be greater than zero.`);
   return minor;
 }

@@ -138,6 +138,15 @@ describe("create_transaction", () => {
     expect(await missing.run("create_transaction", expense({ accountId: "acc_nope" }))).toMatchObject({ error: "not_found" });
   });
 
+  test("trailing zeros past the currency's decimals are fine; an out-of-range amount is invalid input", async () => {
+    const jpy = setup();
+    await jpy.run("create_transaction", { type: "expense", amount: "1500.00", accountId: "acc_jpy", language: "en" });
+    expect(jpy.finance.actions[0]!.input.amount).toEqual({ amountMinor: 1500, currency: "JPY" });
+    const huge = setup();
+    expect(await huge.run("create_transaction", expense({ amount: "999999999999999999999" }))).toMatchObject({ error: "invalid_input" });
+    expect(huge.finance.actions).toHaveLength(0);
+  });
+
   test("a subcategory alone implies its category", async () => {
     const { run, finance } = setup();
     await run("create_transaction", expense({ categoryId: undefined, subcategoryId: "sub_taxi", language: "en" }));
