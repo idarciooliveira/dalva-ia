@@ -70,12 +70,18 @@ export function assertCurrency(money: Money, expected: string, field: string) {
 /** Contract money -> app amount, after the currency check. */
 export function appAmount(money: Money, expected: string, field: string): number {
   assertCurrency(money, expected, field);
+  let amount: number;
   try {
-    return minorToApp(money.amountMinor, money.currency);
+    amount = minorToApp(money.amountMinor, money.currency);
   } catch (error) {
     if (error instanceof MoneyRangeError) throw validationError(`${field}.amountMinor`, error.message);
     throw error;
   }
+  // 3-decimal currencies: 1-4 minor units round to 0 in the app's x100 storage.
+  if (amount === 0 && money.amountMinor !== 0) {
+    throw validationError(`${field}.amountMinor`, `Amount is below the smallest storable unit of ${money.currency}`);
+  }
+  return amount;
 }
 
 /* -------------------------------------------------------------------------- */

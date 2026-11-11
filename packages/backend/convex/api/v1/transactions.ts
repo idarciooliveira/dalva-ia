@@ -119,6 +119,11 @@ export const update = apiMutation(routes.transactions.update, async (ctx, userId
     ...(input.note ? { note: input.note } : {}),
     ...(input.payee ? { payee: input.payee } : {}),
   });
+  // A new category without a subcategory: the old subcategory belongs to the
+  // old category and the contract can't clear fields, so drop it here.
+  if (categoryId && categoryId !== tx.categoryId && !subcategoryId && tx.subcategoryId) {
+    await ctx.db.patch(tx._id, { subcategoryId: undefined });
+  }
   return await reread(ctx, tx._id);
 });
 

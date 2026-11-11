@@ -112,6 +112,23 @@ describe("api/v1 idempotency", () => {
     expect(record?.requestHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("re-executes a key older than the TTL even before the purge runs", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount } = await twoUsers(t);
+    const token = await tokenFor(alice);
+    const request = { token, idempotencyKey: "expired-key-0001", body: { ...body(), accountId: aliceAccount } };
+    await raw(t, "POST", "/transactions", request);
+    await t.run(async (ctx) => {
+      const [record] = await ctx.db.query("apiIdempotencyKeys").take(1);
+      await ctx.db.patch(record!._id, { createdAt: Date.now() - IDEMPOTENCY_TTL_MS - 1 });
+    });
+    const again = await raw(t, "POST", "/transactions", { ...request, body: { ...body(3_000), accountId: aliceAccount } });
+    expect(again.status).toBe(200);
+    expect(again.headers.get(REPLAYED_HEADER)).toBeNull();
+    expect((await getDoc(t, aliceAccount))?.balance).toBe(100_000 - 1_000 - 3_000);
+    expect(await t.run((ctx) => ctx.db.query("apiIdempotencyKeys").take(10))).toHaveLength(1);
+  });
+
   it("purges keys older than the TTL", async () => {
     const t = setupApi();
     const now = Date.now();

@@ -137,6 +137,34 @@ describe("api/v1 transactions: writes", () => {
     expect(transaction.amount).toEqual({ amountMinor: 90, currency: "EUR" });
   });
 
+  it("rejects amounts that round to zero in storage (3-decimal currencies)", async () => {
+    const t = setupApi();
+    const user = await seedUser(t, { baseCurrency: "KWD" });
+    const kwd = await seedAccount(t, user, { currency: "KWD" });
+    const kwd2 = await seedAccount(t, user, { currency: "KWD", name: "Second" });
+    const client = clientFor(t, await tokenFor(user));
+    const tiny = { amountMinor: 4, currency: "KWD" };
+    await expectApiError(client.transactions.create({ type: "expense", amount: tiny, accountId: kwd, date: "2026-01-01" }), "validation_failed");
+    await expectApiError(client.accounts.adjust({ id: kwd, amount: { amountMinor: -4, currency: "KWD" } }), "validation_failed");
+    const { transfer } = await client.transfers.create({ amount: { amountMinor: 10, currency: "KWD" }, fromAccountId: kwd, toAccountId: kwd2, date: "2026-01-01" });
+    await expectApiError(client.transfers.update({ id: transfer.outgoingId, amount: { amountMinor: 3, currency: "KWD" } }), "validation_failed");
+    expect((await client.accounts.adjust({ id: kwd, amount: { amountMinor: 5, currency: "KWD" } })).account.balance).toEqual({ amountMinor: 0, currency: "KWD" });
+  });
+
+  it("drops the old subcategory when only the category changes", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asAlice } = await twoUsers(t);
+    const food = await seedCategory(t, alice);
+    const transport = await seedCategory(t, alice, { name: "Transport" });
+    const groceries = await t.run((ctx) => ctx.db.insert("subcategories", { userId: alice, categoryId: food, name: "Groceries", archived: false, sortOrder: 0 }));
+    const { transaction } = await asAlice.transactions.create({ type: "expense", amount: usd(100), accountId: aliceAccount, categoryId: food, subcategoryId: groceries, date: "2026-01-01" });
+    const kept = await asAlice.transactions.update({ id: transaction.id, categoryId: food, note: "same" });
+    expect(kept.transaction.subcategoryId).toBe(groceries);
+    const moved = await asAlice.transactions.update({ id: transaction.id, categoryId: transport });
+    expect(moved.transaction).toMatchObject({ categoryId: transport });
+    expect(moved.transaction.subcategoryId).toBeUndefined();
+  });
+
   it("deletes a plain row and restores the balance", async () => {
     const t = setupApi();
     const { alice, aliceAccount, asAlice } = await twoUsers(t);
