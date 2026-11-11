@@ -146,11 +146,13 @@ export function fakeFinance() {
   const codes = new Map<string, "valid">();
   const events = new Map<string, FakeEvent>();
   const accounts: Json[] = [];
+  /** Read-route data. A function is called with the request (query) to build `data`. */
+  const reads = new Map<string, Json | ((query: Json) => Json)>();
   const sessions: Json[] = [];
   const messages: Json[] = [];
   let historyDeletes = 0;
   /** Force an error for `METHOD /path` (path without /api/v1), once or always. */
-  const failures = new Map<string, { code: ErrorCode | "network" | "network_after"; times: number }>();
+  const failures = new Map<string, { code: ErrorCode | "network" | "network_after"; times: number; details?: unknown }>();
   /** Hold a route until the returned function is called. */
   const gates = new Map<string, Promise<void>>();
 
@@ -231,6 +233,15 @@ export function fakeFinance() {
 
   function user(method: string, path: string, body: Json, identity: FakeIdentity): unknown {
     if (method === "GET" && path === "/accounts") return { items: accounts };
+    if (method === "GET" && reads.has(path)) {
+      const read = reads.get(path)!;
+      return typeof read === "function" ? read(body) : read;
+    }
+    const list = /^\/agent\/sessions\/([^/]+)\/messages$/.exec(path);
+    if (method === "GET" && list) {
+      const items = messages.filter((m) => m.sessionId === list[1]);
+      return { items: items.slice(-Number(body.limit ?? 50)) };
+    }
     if (method === "POST" && path === "/agent/sessions/current") {
       let session = sessions.find((s) => s.chatId === body.chatId && !s.endedAt);
       if (body.startNew && session) {
@@ -290,7 +301,17 @@ export function fakeFinance() {
 
     const key = `${method} ${path}`;
     const gate = gates.get(key);
-    if (gate) await gate;
+    if (gate) {
+      // Like real fetch: an aborted signal rejects a request that is still waiting.
+      const signal = init?.signal;
+      await Promise.race([
+        gate,
+        new Promise<never>((_, reject) => {
+          if (signal?.aborted) reject(signal.reason);
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+      ]);
+    }
 
     const failure = failures.get(key);
     let lostReply = false;
@@ -299,7 +320,10 @@ export function fakeFinance() {
       if (failure.code === "network") throw new TypeError("fetch failed");
       // "network_after": the server applies the request, then the reply is lost.
       if (failure.code === "network_after") lostReply = true;
-      else return envelope({ ok: false, error: { code: failure.code, message: failure.code } }, STATUS[failure.code]);
+      else {
+        const error = { code: failure.code, message: failure.code, ...(failure.details ? { details: failure.details } : {}) };
+        return envelope({ ok: false, error }, STATUS[failure.code]);
+      }
     }
 
     try {
@@ -339,6 +363,7 @@ export function fakeFinance() {
     codes,
     events,
     accounts,
+    reads,
     sessions,
     messages,
     get historyDeletes() {
@@ -355,8 +380,8 @@ export function fakeFinance() {
       identities.set(externalUserId, identity);
       return identity;
     },
-    fail(key: string, code: ErrorCode | "network" | "network_after", times = 1) {
-      failures.set(key, { code, times });
+    fail(key: string, code: ErrorCode | "network" | "network_after", times = 1, details?: unknown) {
+      failures.set(key, { code, times, details });
     },
     hold(key: string): () => void {
       let release!: () => void;

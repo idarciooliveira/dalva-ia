@@ -18,6 +18,14 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error`, default `info` |
 | `SESSION_IDLE_MINUTES` | Idle time before a chat starts a new session, default `30` |
 | `RECOVERY_MAX_AGE_SECONDS` | Boot recovery replays only events received within this window, default `120` |
+| `AI_PROVIDER` | `gateway` (Vercel AI Gateway) or `openrouter` |
+| `AGENT_MODEL` | Provider model id, e.g. `anthropic/claude-sonnet-5-5`. Required, no default |
+| `AI_GATEWAY_API_KEY` / `OPENROUTER_API_KEY` | Key of the selected provider |
+| `AGENT_MAX_STEPS` | Model calls per chat turn, default `6` (1-10). The last one can't call tools |
+| `AGENT_MAX_OUTPUT_TOKENS` | Output cap per model call, default `1024` |
+| `AGENT_TURN_TIMEOUT_SECONDS` | Whole-turn timeout, default `45` |
+| `AGENT_RATE_LIMIT_TURNS` / `AGENT_RATE_LIMIT_WINDOW_MINUTES` | Chat turns per user per window, default `20` / `10` |
+| `DEFAULT_TIMEZONE` | IANA zone for "today" and default report months, default `Africa/Luanda` |
 
 ## Local dev
 
@@ -47,7 +55,7 @@ bun run telegram:webhook:delete
 2. A slot in the chat's serial queue is reserved (bounded: 20 per chat, 1000 total, 32 running at once), then `agentEvents.claim` stores it (duplicate: acknowledged and dropped; an ambiguous failure is retried). The stored payload keeps only what parsing needs (no names, no quoted messages).
 3. Chats run concurrently; a chat's messages run in order: `updateStatus processing` → handle → `done` / `failed` (with a "something went wrong" reply). Status updates are bookkeeping and never block handling; a final status that still fails after 3 tries leaves the event to the next boot's recovery.
 4. Handle: `/start <code>` redeems; anything else calls `resolve` (with `chatId`) for a 15-minute user token; group chats only get "use a private chat".
-5. User and bot messages are appended to the current session (`/unlink` and `/forget` record nothing).
+5. Commands: user and bot messages are appended to the current session (`/unlink` and `/forget` record nothing). Plain text goes to the agent (below).
 
 Polling (dev only) takes one update at a time and moves its offset past an update only once it is stored.
 
@@ -55,7 +63,33 @@ Polling (dev only) takes one update at a time and moves its offset past an updat
 
 **Known edge case (accepted):** an event that was already handled but whose final status update failed 3 times stays recoverable. If the bot restarts within `RECOVERY_MAX_AGE_SECONDS`, it is replayed: the user gets a duplicate reply, and if they sent `/forget` in between, the replayed message is recorded again in a fresh session. It needs a backend failure on the status call plus a restart inside the window; commands are read-only or idempotent, and writes (pending actions) carry idempotency keys.
 
-Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Other text and photos get a "coming soon" reply. Confirm/cancel buttons are only acknowledged. Replies over Telegram's 4096-character limit are split at line breaks.
+Commands: `/start`, `/help`, `/balance`, `/unlink`, `/forget`. Plain text goes to the agent; photos get a "not supported yet" reply. Confirm/cancel buttons are only acknowledged. Replies over Telegram's 4096-character limit are split at line breaks.
+
+## Chat agent
+
+Read-only in this release. `src/core/agent.ts` runs one turn per text message:
+
+1. Over 2000 characters, or over the per-user rate limit (in memory): a fixed reply, nothing stored, no model call.
+2. Load the last 30 messages of the chat's session (trimmed to 24 KB at turn boundaries, newest turn always kept, with a cache breakpoint at its end), add the user message with a short context block (today in `DEFAULT_TIMEZONE`, base currency, display name), call the model with the read tools and `AGENT_MAX_STEPS`. The last step can't call tools, so a turn always ends with text. Typing indicator while it runs.
+3. Send the reply, then store the turn (user, assistant tool calls, tool results, answer). Storing is best effort and bounded by shutdown, not the turn deadline: a failed or aborted store is logged, the event still completes, and only that turn's history is lost (never a second paid turn from recovery). A turn that won't fit the session's 500 messages starts a new session first.
+4. Model or provider error, timeout: the event fails and the user gets the generic apology. One abort signal covers the turn (history load, model calls, tool API calls), fired by the timeout, a fatal tool error or shutdown (turns still running 5s into the drain). A revoked link or Finance API rate limit inside a tool ends the turn with the same replies as commands.
+
+**Providers.** `src/llm/` is the only place that imports a provider (`@ai-sdk/gateway`, `@openrouter/ai-sdk-provider`); the rest uses the AI SDK's `LanguageModel` (`ai`). A boundary test enforces it. The system prompt (`src/core/prompts/system.md`, bundled as text) never changes between turns and carries a cache breakpoint, so providers can cache it.
+
+**Tools** (`src/tools/`, one file each): `list_accounts`, `list_categories`, `search_transactions` (max 20 rows), `get_transaction_summary`, `get_spending_by_category`, `get_cashflow`, `get_net_worth`, `list_goals`, `list_debts`. They call the Finance API with the user-scoped token from `resolve`, held inside the client: tokens and user ids never appear in the prompt, tool schemas or tool inputs. Results are compact JSON with amounts as `{ amount: "12.50", currency }`; every list is bounded. `list_debts` reports `activeSummary` (non-archived debts only) and `list_categories` flags cut subcategories. API errors come back as `{ error, message }` with fixed wording (`mixed_currencies` explains that reports across currencies aren't supported yet).
+
+**History format** (`src/core/history.ts`): provider-agnostic JSON with a version field `v` (text, tool calls, JSON tool results; no provider metadata or reasoning), so switching provider keeps old history usable. Unversioned records from before the agent load as v1; newer versions are skipped; tool calls without results are dropped on load.
+
+**Logs** per turn (`agent_turn`): provider, model, steps, input/output/cached tokens, tools called, latency. Never text.
+
+### Eval
+
+```bash
+AGENT_MODEL=anthropic/claude-sonnet-5-5 AI_GATEWAY_API_KEY=... bun run eval   # or OPENROUTER_API_KEY (AI_PROVIDER picks when both are set)
+bun run eval 3                                                                # one case
+```
+
+About 20 Portuguese and English messages against the real model, with a fake Finance API serving `test/fixtures/finance.ts`. Checks the tool(s) and key arguments, prints pass/fail and token totals. Not in CI; skipped without a key.
 
 ## Logs
 

@@ -7,14 +7,28 @@ import { isFinanceError } from "./finance";
 import { redeemLink, resolveUser, type ResolvedUser } from "./identity";
 import { texts } from "./messages";
 import { formatMoney } from "./money";
+import type { Agent } from "./agent";
 import type { EventHandler } from "./pipeline";
+import type { RateLimiter } from "./rate-limit";
 import { SessionRecorder } from "./session";
+
+/** Longest chat message sent to the model, in characters. */
+export const DEFAULT_MESSAGE_MAX_CHARS = 2000;
+
+export interface ChatOptions {
+  agent: Agent;
+  /** Agent turns per user (keyed by channel + platform user id). */
+  limiter: RateLimiter;
+  maxChars?: number;
+}
 
 export interface HandlerOptions {
   adapter: ChannelAdapter;
   clients: FinanceClients;
   logger: Logger;
   sessionIdleMinutes: number;
+  /** Free-text chat with the agent. Without it, text gets the "coming soon" reply. */
+  chat?: ChatOptions;
 }
 
 export function formatBalances(accounts: Account[]): RichText {
@@ -63,9 +77,43 @@ export function createHandler(options: HandlerOptions): {
 
   const reply = (event: InboundEvent, text: RichText) => adapter.send({ chatId: event.chatId }, { type: "text", text });
 
+  /**
+   * Plain text for a linked user: one agent turn. The agent stores the turn
+   * itself (user, tool and assistant messages) once it has an answer. Over-long
+   * and rate-limited messages are answered here, never stored and never sent to the model.
+   */
+  async function chatTurn(event: InboundEvent, user: ResolvedUser, log: Logger, chat: ChatOptions): Promise<void> {
+    const text = (event.text ?? "").trim();
+    if (!text) return;
+    const maxChars = chat.maxChars ?? DEFAULT_MESSAGE_MAX_CHARS;
+    if ([...text].length > maxChars) {
+      log.info("chat_message_too_long", { chars: [...text].length });
+      await reply(event, texts.messageTooLong(maxChars));
+      return;
+    }
+    if (!chat.limiter.take(`${event.channel}:${event.externalUserId}`)) {
+      log.info("chat_rate_limited");
+      await reply(event, texts.chatRateLimited());
+      return;
+    }
+    await chat.agent.runAgentTurn({
+      text,
+      session: new SessionRecorder(user.finance, event, options.sessionIdleMinutes, log),
+      userContext: { displayName: user.displayName, baseCurrency: user.baseCurrency },
+      finance: user.finance,
+      typing: () => adapter.send({ chatId: event.chatId }, { type: "typing" }),
+      reply: (answer) => reply(event, answer),
+    });
+  }
+
   /** Commands for a linked user. `record: false` for commands that delete the history they'd be stored in. */
   async function linkedCommand(event: InboundEvent, user: ResolvedUser, log: Logger): Promise<void> {
     const command = event.kind === "command" ? event.command : undefined;
+
+    if (event.kind === "text" && options.chat) {
+      await chatTurn(event, user, log, options.chat);
+      return;
+    }
 
     if (command === "unlink") {
       try {
@@ -103,7 +151,7 @@ export function createHandler(options: HandlerOptions): {
         break;
       }
       case undefined:
-        answer = texts.comingSoon();
+        answer = options.chat ? texts.photosNotSupported() : texts.comingSoon();
         break;
       default:
         answer = texts.unknownCommand();

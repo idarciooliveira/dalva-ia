@@ -29,6 +29,27 @@ describe("module boundaries", () => {
     expect(offenders).toEqual([]);
   });
 
+  test("only src/llm imports a model provider SDK", () => {
+    const providerImport = /from\s+["'](@ai-sdk\/|@openrouter\/)[^"']*["']/;
+    // `ai` re-exports the gateway provider; only the provider-neutral API may be used outside src/llm.
+    const gatewayFromAi = /import\s*\{[^}]*\b(gateway|createGateway)\b[^}]*\}\s*from\s+["']ai["']/;
+    const offenders = files(SRC)
+      .filter((path) => !relative(SRC, path).startsWith("llm"))
+      .filter((path) => {
+        const source = readFileSync(path, "utf8");
+        return providerImport.test(source) || gatewayFromAi.test(source);
+      })
+      .map((path) => relative(SRC, path));
+    expect(offenders).toEqual([]);
+  });
+
+  test("tools never see tokens or user ids", () => {
+    const offenders = files(join(SRC, "tools"))
+      .filter((path) => /\b(token|userId|externalUserId|chatId|forToken)\b/.test(readFileSync(path, "utf8")))
+      .map((path) => relative(SRC, path));
+    expect(offenders).toEqual([]);
+  });
+
   test("nothing imports Convex", () => {
     const offenders = files(SRC).filter((path) => /from\s+["'](convex|@mpf\/backend)/.test(readFileSync(path, "utf8")));
     expect(offenders).toEqual([]);

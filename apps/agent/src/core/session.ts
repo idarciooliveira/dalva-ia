@@ -1,7 +1,10 @@
+import { AGENT_APPEND_MAX_MESSAGES, AGENT_SESSION_MAX_MESSAGES, type AgentMessage, type AgentSession } from "@mpf/finance-contract";
+
 import type { InboundEvent, RichText } from "../channels/channel";
 import { errorFields, type Logger } from "../log";
 import type { FinanceClient } from "./finance";
 import { isFinanceError } from "./finance";
+import { encodeAssistantText, HISTORY_FORMAT_VERSION, type StoredMessage } from "./history";
 
 export function plainText(text: RichText): string {
   if (typeof text === "string") return text;
@@ -12,6 +15,7 @@ export function plainText(text: RichText): string {
 export function userMessageContent(event: InboundEvent): string {
   const keepArgs = event.kind === "command" && event.command !== "start";
   return JSON.stringify({
+    v: HISTORY_FORMAT_VERSION,
     kind: event.kind,
     ...(event.kind === "command" ? { command: event.command } : {}),
     ...(keepArgs && event.args?.length ? { args: event.args } : {}),
@@ -21,11 +25,11 @@ export function userMessageContent(event: InboundEvent): string {
 
 /**
  * Records a conversation in the agent store (`sessions.current` +
- * `messages.append`) so the agent core can build on it. Best effort: a
- * failure is logged and never blocks the reply.
+ * `messages.append`) and reads it back for the agent. Recording is best
+ * effort: a failure is logged and never blocks the reply.
  */
 export class SessionRecorder {
-  private sessionId: string | null = null;
+  private current: AgentSession | null = null;
 
   constructor(
     private readonly finance: FinanceClient,
@@ -39,34 +43,66 @@ export class SessionRecorder {
   }
 
   async recordAssistant(text: RichText): Promise<void> {
-    await this.append("assistant", JSON.stringify({ text: plainText(text) }));
+    await this.recordAll([encodeAssistantText(plainText(text))]);
   }
 
-  private async session(startNew = false): Promise<string> {
-    if (this.sessionId && !startNew) return this.sessionId;
-    const { session } = await this.finance.agentSessions.current({
-      channel: this.event.channel,
-      chatId: this.event.chatId,
-      idleTimeoutMinutes: this.idleTimeoutMinutes,
-      ...(startNew ? { startNew: true } : {}),
-    });
-    this.sessionId = session.id;
-    return session.id;
+  /**
+   * The latest `limit` messages of the chat's current session, oldest first.
+   * Throws on API errors: the agent can't answer without its context.
+   */
+  async history(limit: number, signal?: AbortSignal): Promise<AgentMessage[]> {
+    const session = await this.session(false, signal);
+    if (session.messageCount === 0) return [];
+    const { items } = await this.finance.agentMessages.list({ sessionId: session.id, limit }, { signal });
+    return items;
+  }
+
+  /**
+   * Append one turn in order. A turn that would overflow the session starts a
+   * new one first; a `conflict` (session ended or full meanwhile) retries the
+   * remainder once in a fresh session, which can split a turn that spans
+   * batches (history loading drops the orphaned half).
+   */
+  async recordAll(messages: StoredMessage[], signal?: AbortSignal): Promise<void> {
+    if (messages.length === 0) return;
+    try {
+      let session = await this.session(false, signal);
+      if (session.messageCount + messages.length > AGENT_SESSION_MAX_MESSAGES) session = await this.session(true, signal);
+      let retried = false;
+      for (let start = 0; start < messages.length; ) {
+        const batch = messages.slice(start, start + AGENT_APPEND_MAX_MESSAGES);
+        try {
+          await this.finance.agentMessages.append({ sessionId: session.id, messages: batch }, { signal });
+        } catch (error) {
+          if (retried || !isFinanceError(error, "conflict", "not_found")) throw error;
+          retried = true;
+          session = await this.session(true, signal);
+          continue;
+        }
+        session.messageCount += batch.length;
+        start += batch.length;
+      }
+    } catch (error) {
+      this.logger.warn("session_record_failed", { ...errorFields(error), count: messages.length });
+    }
+  }
+
+  private async session(startNew = false, signal?: AbortSignal): Promise<AgentSession> {
+    if (this.current && !startNew) return this.current;
+    const { session } = await this.finance.agentSessions.current(
+      {
+        channel: this.event.channel,
+        chatId: this.event.chatId,
+        idleTimeoutMinutes: this.idleTimeoutMinutes,
+        ...(startNew ? { startNew: true } : {}),
+      },
+      { signal },
+    );
+    this.current = { ...session };
+    return this.current;
   }
 
   private async append(role: "user" | "assistant", content: string): Promise<void> {
-    try {
-      const sessionId = await this.session();
-      try {
-        await this.finance.agentMessages.append({ sessionId, messages: [{ role, content }] });
-      } catch (error) {
-        // Full or ended session (e.g. history deleted meanwhile): start a fresh one once.
-        if (!isFinanceError(error, "conflict", "not_found")) throw error;
-        const fresh = await this.session(true);
-        await this.finance.agentMessages.append({ sessionId: fresh, messages: [{ role, content }] });
-      }
-    } catch (error) {
-      this.logger.warn("session_record_failed", { ...errorFields(error), role });
-    }
+    await this.recordAll([{ role, content }]);
   }
 }
