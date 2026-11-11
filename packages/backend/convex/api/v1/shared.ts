@@ -62,6 +62,7 @@ export function currencyResolver(ctx: Ctx, userId: string) {
 }
 
 export const MIXED_CURRENCIES_MESSAGE = "Reports across multiple currencies are not supported yet";
+export const UNKNOWN_CURRENCY_MESSAGE = "Report includes rows from a deleted account whose currency is unknown";
 
 /**
  * Aggregates are labelled with the base currency and there is no FX, so a
@@ -74,9 +75,16 @@ export async function requireBaseCurrencyOnly(
   baseCurrency: string,
   sources: { accountIds?: Iterable<Id<"accounts">>; currencies?: Iterable<string> },
 ) {
-  const currencyOf = currencyResolver(ctx, userId);
   const currencies = new Set<string>(sources.currencies ?? []);
-  for (const accountId of sources.accountIds ?? []) currencies.add(await currencyOf(accountId));
+  for (const accountId of new Set(sources.accountIds ?? [])) {
+    const account = await ctx.db.get(accountId);
+    // Deleted accounts leave their rows behind; their currency is unknown, so
+    // the total can't be labelled with any currency.
+    if (!account || account.userId !== userId) {
+      throw apiError("conflict", UNKNOWN_CURRENCY_MESSAGE, { reason: "unknown_currency" });
+    }
+    currencies.add(account.currency);
+  }
   if ([...currencies].every((c) => c === baseCurrency)) return;
   currencies.add(baseCurrency);
   throw apiError("conflict", MIXED_CURRENCIES_MESSAGE, { reason: "mixed_currencies", currencies: [...currencies].sort() });

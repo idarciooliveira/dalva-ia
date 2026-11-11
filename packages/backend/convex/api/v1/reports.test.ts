@@ -2,7 +2,8 @@ import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
 import { recordDebtPayment } from "../../domain/debtPayments";
-import { MIXED_CURRENCIES_MESSAGE } from "./shared";
+import { deleteAccount } from "../../domain/accounts";
+import { MIXED_CURRENCIES_MESSAGE, UNKNOWN_CURRENCY_MESSAGE } from "./shared";
 import { clientFor, expectApiError, expectConforms, raw, seedAccount, seedCategory, seedUser, setupApi, tokenFor, twoUsers, type T } from "./test.helpers";
 
 describe("api/v1 reports", () => {
@@ -137,6 +138,24 @@ describe("api/v1 reports", () => {
       await seedAccount(t, user, { currency: "EUR", balance: 1 });
       const error = await expectApiError(client.reports.netWorth(), "conflict", 409);
       expect(error.details).toEqual(MIXED);
+    });
+
+    it("returns conflict when a summed row belongs to a deleted account", async () => {
+      const t = setupApi();
+      const { user, eur, client } = await mixedUser(t);
+      await client.transactions.create({ type: "expense", amount: { amountMinor: 100, currency: "EUR" }, accountId: eur, date: "2026-04-02" });
+      await t.run((ctx) => deleteAccount(ctx, user, { id: eur }));
+      for (const call of [
+        client.reports.transactionSummary({ month: "2026-04" }),
+        client.reports.spendingByCategory({ month: "2026-04" }),
+        client.reports.cashflow({ month: "2026-04", trendMonths: 1 }),
+      ]) {
+        const error = await expectApiError(call, "conflict", 409);
+        expect(error.message).toBe(UNKNOWN_CURRENCY_MESSAGE);
+        expect(error.details).toEqual({ reason: "unknown_currency" });
+      }
+      // Net worth only sums live accounts, so it works again once EUR is gone.
+      expect((await client.reports.netWorth()).totalAssets).toEqual({ amountMinor: 10_000, currency: "USD" });
     });
 
     it("debt summary: conflict when the recent payment left a non-base account", async () => {
