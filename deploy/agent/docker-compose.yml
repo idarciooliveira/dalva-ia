@@ -1,0 +1,72 @@
+# DALVA agent (Telegram bot). Paste as a stack in the Docker panel, or:
+#   docker compose --env-file .env up -d
+# Public traffic arrives through Cloudflare Tunnel: no ports are published here.
+# See docs/deploy-agent.md.
+
+name: dalva-agent
+
+services:
+  dalva-agent:
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER to the GitHub owner (lowercase)}/dalva-agent:${AGENT_IMAGE_TAG:-latest}
+    container_name: dalva-agent
+    # The bot exits at boot when the backend is unreachable; this brings it back.
+    restart: unless-stopped
+    # Re-pull on every (re)deploy so `latest` really is latest.
+    pull_policy: always
+    # The agent drains for 8s on SIGTERM; keep this above that.
+    stop_grace_period: 15s
+    env_file:
+      - .env
+    environment:
+      # Port the tunnel targets (http://dalva-agent:3000). Overrides PORT from .env.
+      PORT: "3000"
+    healthcheck:
+      # Distroless image: no curl or shell, so use bun. /health stays internal.
+      test:
+        - CMD
+        - bun
+        - -e
+        - fetch("http://127.0.0.1:3000/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    # Nothing to escalate: non-root, no shell, no writes needed.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    networks:
+      - dalva-agent
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # No `ports:` on purpose. Do not add any.
+
+  # Only if you don't already run cloudflared on this host. Create the tunnel in
+  # Cloudflare Zero Trust, put TUNNEL_TOKEN=<token> in tunnel.env next to this file (not in .env:
+  # the agent container loads .env and must not see the tunnel token), then uncomment.
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest  # pin a version once it works
+  #   container_name: cloudflared
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run
+  #   env_file:
+  #     - tunnel.env
+  #   networks:
+  #     - dalva-agent
+  #   logging:
+  #     driver: json-file
+  #     options:
+  #       max-size: "10m"
+  #       max-file: "3"
+
+networks:
+  # Fixed name so an existing cloudflared stack can join it:
+  #   networks: { dalva-agent: { external: true } }
+  # or: docker network connect dalva-agent cloudflared
+  dalva-agent:
+    name: dalva-agent
