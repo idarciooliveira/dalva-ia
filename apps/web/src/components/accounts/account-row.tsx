@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { ACCOUNT_IN_USE, convexErrorMessage } from "@/lib/convex-errors";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/format";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES } from "@/lib/accounts";
@@ -35,6 +36,7 @@ interface AccountRowProps {
 export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [canArchive, setCanArchive] = useState(false);
 
   const accountType = ACCOUNT_TYPES.find((t) => t.value === account.type);
   const Icon = accountType?.icon;
@@ -50,10 +52,14 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
     mutationFn: useConvexMutation(api.accounts.deleteAccount),
     onMutate: () => setDeleteError(null),
     // Accounts with transactions, goals or debts can't be deleted; archive instead.
-    onError: () =>
+    onError: (error) => {
       setDeleteError(
-        "This account has transactions, goals or debts linked to it, so it can't be deleted.",
-      ),
+        convexErrorMessage(error, ACCOUNT_IN_USE)
+          ? "This account has transactions, goals or debts linked to it, so it can't be deleted."
+          : "Couldn't delete the account. Try again.",
+      );
+      setCanArchive(convexErrorMessage(error, ACCOUNT_IN_USE) !== null);
+    },
   });
 
   const isNegative = account.balance < 0;
@@ -164,7 +170,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
         className="mt-2 flex flex-wrap items-center gap-2 px-3 text-sm text-destructive sm:px-5"
       >
         {deleteError}
-        {!account.archived && (
+        {canArchive && !account.archived && (
           <Button
             variant="outline"
             size="sm"

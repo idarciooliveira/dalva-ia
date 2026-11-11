@@ -1,5 +1,9 @@
+import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+
+/** `ConvexError` code for deleting an account that other records still reference. */
+export const ACCOUNT_IN_USE = "ACCOUNT_IN_USE";
 
 export type AccountType = Doc<"accounts">["type"];
 
@@ -156,9 +160,11 @@ export async function deleteAccount(
       .withIndex("by_linkedAccountId", (q) => q.eq("linkedAccountId", args.id))
       .first());
   if (referenced) {
-    throw new Error(
-      "Account has transactions, goals or debts linked to it. Archive it instead of deleting",
-    );
+    throw new ConvexError({
+      code: ACCOUNT_IN_USE,
+      message:
+        "Account has transactions, goals or debts linked to it. Archive it instead of deleting",
+    });
   }
 
   await ctx.db.delete(args.id);

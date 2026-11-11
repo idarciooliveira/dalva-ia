@@ -1,6 +1,7 @@
 import { errorCodeSchema, type ErrorCode } from "@mpf/finance-contract";
 import { ConvexError, type Value } from "convex/values";
 
+import { ACCOUNT_IN_USE } from "../../domain/accounts";
 import {
   ACTION_NOT_CONFIRMED,
   ACTION_NOT_FOUND,
@@ -137,6 +138,12 @@ export async function mapDomainErrors<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn();
   } catch (error) {
+    if (error instanceof ConvexError) {
+      const data = error.data as { code?: unknown; message?: unknown } | null;
+      if (data?.code === ACCOUNT_IN_USE && typeof data.message === "string") {
+        throw apiError("conflict", data.message);
+      }
+    }
     if (error instanceof Error && !(error instanceof ConvexError)) {
       const code = DOMAIN_ERRORS[error.message];
       if (code) throw apiError(code, error.message);

@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { CurrencyInput, parseCurrencyInputToCents } from "@/components/ui/currency-input";
 import { Switch } from "@/components/ui/switch";
+import { convexErrorMessage, TRANSACTION_MANAGED } from "@/lib/convex-errors";
 import { ACCOUNT_THEMES } from "@/lib/accounts";
 import { cn } from "@/lib/utils";
 
@@ -239,7 +240,8 @@ export function TransactionFormDialog({
       }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Something went wrong",
+        convexErrorMessage(err, TRANSACTION_MANAGED) ??
+          (err instanceof Error ? err.message : "Something went wrong"),
       );
     }
   }

@@ -1,5 +1,9 @@
+import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+
+/** `ConvexError` code for edits to rows owned by the transfer or debt-payment flows. */
+export const TRANSACTION_MANAGED = "TRANSACTION_MANAGED";
 
 export type TransactionType = "income" | "expense" | "adjustment" | "transfer";
 
@@ -7,9 +11,43 @@ export type TransactionType = "income" | "expense" | "adjustment" | "transfer";
 /*  Helpers                                                                   */
 /* -------------------------------------------------------------------------- */
 
-/** Transfer legs (incl. goal-contribution transfers) are owned by the transfer flow. */
-function isTransferLeg(tx: Doc<"transactions">): boolean {
-  return tx.type === "transfer" || !!tx.transferGroupId || !!tx.linkedTransactionId;
+/**
+ * Rows owned by another flow: transfer legs (incl. goal-contribution transfers)
+ * and debt-payment source/liability transactions. Plain create/update/delete
+ * would leave the owning records (or the paired leg) out of sync.
+ */
+export async function managedTransactionKind(
+  ctx: QueryCtx | MutationCtx,
+  tx: Doc<"transactions">,
+): Promise<"transfer" | "debt_payment" | null> {
+  if (tx.type === "transfer" || tx.transferGroupId || tx.linkedTransactionId) {
+    return "transfer";
+  }
+  const payment =
+    (await ctx.db
+      .query("debtPayments")
+      .withIndex("by_sourceTransactionId", (q) => q.eq("sourceTransactionId", tx._id))
+      .first()) ??
+    (await ctx.db
+      .query("debtPayments")
+      .withIndex("by_liabilityTransactionId", (q) => q.eq("liabilityTransactionId", tx._id))
+      .first());
+  return payment ? "debt_payment" : null;
+}
+
+async function assertNotManaged(
+  ctx: QueryCtx | MutationCtx,
+  tx: Doc<"transactions">,
+  action: "update" | "delete",
+) {
+  const kind = await managedTransactionKind(ctx, tx);
+  const message =
+    kind === "transfer"
+      ? `Use the transfer ${action} for transfers`
+      : kind === "debt_payment"
+        ? `Use the debt payment ${action} for debt payments`
+        : null;
+  if (message) throw new ConvexError({ code: TRANSACTION_MANAGED, message });
 }
 
 /** Income/expense/transfer amounts are positive integers; only adjustments are signed. */
@@ -160,9 +198,7 @@ export async function updateTransaction(
   if (!tx || tx.userId !== userId) {
     throw new Error("Transaction not found");
   }
-  if (isTransferLeg(tx)) {
-    throw new Error("Use the transfer update for transfers");
-  }
+  await assertNotManaged(ctx, tx, "update");
 
   if (args.type === "adjustment") {
     if (args.categoryId) {
@@ -254,9 +290,7 @@ export async function deleteTransaction(
   if (!tx || tx.userId !== userId) {
     throw new Error("Transaction not found");
   }
-  if (isTransferLeg(tx)) {
-    throw new Error("Use the transfer delete for transfers");
-  }
+  await assertNotManaged(ctx, tx, "delete");
 
   // Reverse balance effect
   const delta = balanceDelta(tx.type, tx.amount);

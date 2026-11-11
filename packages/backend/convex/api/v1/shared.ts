@@ -2,6 +2,7 @@ import type { Money } from "@mpf/finance-contract";
 
 import type { Doc, Id, TableNames } from "../../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../../_generated/server";
+import { managedTransactionKind } from "../../domain/transactions";
 import { getProfile } from "../../domain/userProfiles";
 import { apiError, notFound, validationError } from "./errors";
 import { minorToAppExact, MoneyPrecisionError, MoneyRangeError, toMoney } from "./money";
@@ -125,19 +126,10 @@ export function appAmount(money: Money, expected: string, field: string): number
  * are owned by their own endpoints. Returns a reason when `tx` is one of them.
  */
 export async function managedReason(ctx: Ctx, tx: Doc<"transactions">): Promise<string | null> {
-  if (tx.type === "transfer" || tx.transferGroupId || tx.linkedTransactionId) {
-    return "Transfer legs must be changed through the transfer endpoints";
-  }
-  const payment =
-    (await ctx.db
-      .query("debtPayments")
-      .withIndex("by_sourceTransactionId", (q) => q.eq("sourceTransactionId", tx._id))
-      .first()) ??
-    (await ctx.db
-      .query("debtPayments")
-      .withIndex("by_liabilityTransactionId", (q) => q.eq("liabilityTransactionId", tx._id))
-      .first());
-  return payment ? "Debt payment transactions must be changed through the debt payment endpoints" : null;
+  const kind = await managedTransactionKind(ctx, tx);
+  if (kind === "transfer") return "Transfer legs must be changed through the transfer endpoints";
+  if (kind === "debt_payment") return "Debt payment transactions must be changed through the debt payment endpoints";
+  return null;
 }
 
 /** Goal contribution that owns this transfer (either leg), if any. */
