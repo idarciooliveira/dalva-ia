@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { allRoutes, buildRequestParts, isWriteRoute, matchRoute, mergeRequestInput, pathParamNames, routes } from "./routes";
+import {
+  allRoutes,
+  buildRequestParts,
+  isWriteRoute,
+  matchRoute,
+  mergeRequestInput,
+  pathParamNames,
+  requiresIdempotencyKey,
+  routes,
+} from "./routes";
 
 describe("route map", () => {
   it("covers every v1 operation", () => {
@@ -11,6 +20,9 @@ describe("route map", () => {
         "accounts.get",
         "accounts.list",
         "categories.list",
+        "channelIdentities.resolve",
+        "channelIdentities.unlink",
+        "channelLinks.redeem",
         "debtPayments.list",
         "debtPayments.record",
         "debtPayments.remove",
@@ -44,11 +56,26 @@ describe("route map", () => {
   });
 
   it("only mutates through POST/PATCH/DELETE and reads through GET", () => {
-    for (const { name, route } of allRoutes()) {
+    for (const { name, route } of allRoutes().filter((r) => r.route.auth === "user")) {
       const read = name.endsWith(".list") || name.endsWith(".get") || name.endsWith(".search") || name.startsWith("reports.");
       expect(route.method === "GET", name).toBe(read);
       expect(isWriteRoute(route), name).toBe(!read);
     }
+  });
+
+  it("marks only the channel routes as service routes, one auth per group", () => {
+    const service = allRoutes().filter((r) => r.route.auth === "service").map((r) => r.name).sort();
+    expect(service).toEqual(["channelIdentities.resolve", "channelIdentities.unlink", "channelLinks.redeem"]);
+    for (const ops of Object.values(routes)) {
+      expect(new Set(Object.values(ops).map((r) => r.auth)).size).toBe(1);
+    }
+  });
+
+  it("requires an Idempotency-Key on user writes only", () => {
+    expect(requiresIdempotencyKey(routes.transactions.create)).toBe(true);
+    expect(requiresIdempotencyKey(routes.transactions.search)).toBe(false);
+    expect(requiresIdempotencyKey(routes.channelLinks.redeem)).toBe(false);
+    expect(requiresIdempotencyKey(routes.channelIdentities.unlink)).toBe(false);
   });
 
   it("declares every path param in the request schema", () => {

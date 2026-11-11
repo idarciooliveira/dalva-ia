@@ -5,6 +5,16 @@ import * as s from "./schemas";
 
 export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
+/**
+ * Who may call a route:
+ * - `user`: a user token (`finance:read` for GET, `finance:write` for writes),
+ *   writes need an `Idempotency-Key`.
+ * - `service`: the chat agent's service key (`FINANCE_API_SERVICE_KEY`). Acts on
+ *   no user's behalf, needs no scope and no `Idempotency-Key`.
+ * The two credentials are never interchangeable.
+ */
+export type RouteAuth = "user" | "service";
+
 export interface RouteDef {
   method: HttpMethod;
   /** Relative to `/api/v1`. `:name` segments are path params and must be keys of `request`. */
@@ -13,6 +23,7 @@ export interface RouteDef {
   request: z.ZodType;
   /** Shape of `data` in the success envelope. */
   response: z.ZodType;
+  auth: RouteAuth;
 }
 
 const route = <Req extends z.ZodType, Res extends z.ZodType>(
@@ -20,7 +31,14 @@ const route = <Req extends z.ZodType, Res extends z.ZodType>(
   path: string,
   request: Req,
   response: Res,
-) => ({ method, path, request, response }) satisfies RouteDef;
+) => ({ method, path, request, response, auth: "user" as const }) satisfies RouteDef;
+
+const serviceRoute = <Req extends z.ZodType, Res extends z.ZodType>(
+  method: HttpMethod,
+  path: string,
+  request: Req,
+  response: Res,
+) => ({ method, path, request, response, auth: "service" as const }) satisfies RouteDef;
 
 /**
  * The /api/v1 route map. Server and client both derive from this object:
@@ -110,16 +128,52 @@ export const routes = {
       s.debtPaymentRemoveResponseSchema,
     ),
   },
+  // Service routes. Every op in a group shares one `auth` (checked in routes.test.ts).
+  channelLinks: {
+    redeem: serviceRoute(
+      "POST",
+      "/channel-links/redeem",
+      s.channelLinkRedeemRequestSchema,
+      s.channelLinkRedeemResponseSchema,
+    ),
+  },
+  channelIdentities: {
+    resolve: serviceRoute(
+      "POST",
+      "/channel-identities/resolve",
+      s.channelIdentityResolveRequestSchema,
+      s.channelIdentityResolveResponseSchema,
+    ),
+    unlink: serviceRoute(
+      "POST",
+      "/channel-identities/unlink",
+      s.channelIdentityUnlinkRequestSchema,
+      s.channelIdentityUnlinkResponseSchema,
+    ),
+  },
 } as const satisfies Record<string, Record<string, RouteDef>>;
 
 export type Routes = typeof routes;
+
+type GroupsWithAuth<A extends RouteAuth> = {
+  [G in keyof Routes as Routes[G][keyof Routes[G]] extends { auth: A } ? G : never]: Routes[G];
+};
+/** Route groups called with a user token. */
+export type UserRoutes = GroupsWithAuth<"user">;
+/** Route groups called with the service key. */
+export type ServiceRoutes = GroupsWithAuth<"service">;
 export type RouteInput<R extends RouteDef> = z.input<R["request"]>;
 export type RouteParsedInput<R extends RouteDef> = z.output<R["request"]>;
 export type RouteOutput<R extends RouteDef> = z.output<R["response"]>;
 
-/** Writes (everything except GET) require an `Idempotency-Key` header. */
+/** Writes are everything except GET. */
 export function isWriteRoute(route: Pick<RouteDef, "method">): boolean {
   return route.method !== "GET";
+}
+
+/** User-route writes require an `Idempotency-Key` header; service routes never take one. */
+export function requiresIdempotencyKey(route: Pick<RouteDef, "method" | "auth">): boolean {
+  return route.auth === "user" && isWriteRoute(route);
 }
 
 export function pathParamNames(path: string): string[] {
@@ -135,7 +189,7 @@ export interface NamedRoute {
 }
 
 export function allRoutes(): NamedRoute[] {
-  return Object.entries(routes).flatMap(([group, ops]) =>
+  return Object.entries(routes as Record<string, Record<string, RouteDef>>).flatMap(([group, ops]) =>
     Object.entries(ops as Record<string, RouteDef>).map(([op, route]) => ({
       group,
       op,
