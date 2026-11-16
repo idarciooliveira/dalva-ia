@@ -6,10 +6,11 @@
     "lightningcss": "1.33.0"
   },
   "scripts": {
-    "dev": "bun run --filter './apps/*' dev",
+    "setup": "bun scripts/setup.ts",
+    "dev": "bun run --parallel --no-exit-on-error dev:backend dev:web dev:agent",
     "dev:web": "bun run --filter '@mpf/web' dev",
     "dev:backend": "bun run --filter '@mpf/backend' dev",
-    "dev:agent": "bun run --filter '@mpf/agent' dev",
+    "dev:agent": "bun scripts/wait-for-finance-api.ts && bun run --filter '@mpf/agent' dev",
     "build": "bun run --filter './apps/*' build",
     "build:web": "bun run --filter '@mpf/web' build",
     "typecheck": "bun run --filter '*' typecheck",

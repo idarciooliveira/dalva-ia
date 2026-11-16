@@ -30,9 +30,12 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 ## Local dev
 
 ```bash
-cp apps/agent/.env.example apps/agent/.env   # TELEGRAM_MODE=polling, fill the token and service key
-bun run dev:agent
+bun run setup   # writes .env.local (local FINANCE_API_URL + service key), creates .env if missing
+# fill TELEGRAM_BOT_TOKEN and an LLM key in apps/agent/.env, keep TELEGRAM_MODE=polling
+bun run dev     # or bun run dev:agent with the backend already running
 ```
+
+Bun loads `.env.local` over `.env`, so the bot uses the local backend even if `.env` points elsewhere. Delete `.env.local` to use the values in `.env`.
 
 Polling calls `deleteWebhook` first (pending updates are kept), so don't point a dev bot at a production webhook. Use a separate bot for dev.
 
