@@ -39,9 +39,12 @@ export function ownPid(database: string): number | null {
 export const templateName = (runId: string) => `${runId}_template`;
 export const workerDatabaseName = (runId: string, workerId: string) => `${runId}_w${workerId}`;
 
+/** The server URL pointed at `database`. postgres.js lets `?database=` / `?db=` override the path, so they go. */
 export function databaseUrl(serverUrl: string, database: string): string {
   const url = new URL(serverUrl);
   url.pathname = `/${database}`;
+  url.searchParams.delete("database");
+  url.searchParams.delete("db");
   return url.toString();
 }
 

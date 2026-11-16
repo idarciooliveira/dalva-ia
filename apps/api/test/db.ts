@@ -33,6 +33,14 @@ export async function connectTestDatabase(serverUrl: string, runId: string): Pro
   url = databaseUrl(serverUrl, name);
   handle = createDatabase({ url, max: 5, connectTimeoutSeconds: 5 });
 
+  // Every test truncates all tables: make sure that is this worker's throwaway database and nothing else.
+  const [current] = await handle.db.execute<{ name: string }>(sql`select current_database() as name`);
+  if (current?.name !== name) {
+    await handle.close();
+    handle = undefined;
+    throw new Error(`refusing to run tests: connected to "${current?.name}", expected "${name}"`);
+  }
+
   const tables = await handle.db.execute<{ name: string }>(sql`
     select quote_ident(tablename) as name from pg_tables where schemaname = 'public' order by tablename
   `);

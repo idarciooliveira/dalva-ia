@@ -12,7 +12,17 @@
 import type { TestProject } from "vitest/node";
 
 import { runMigrations } from "../src/db/migrate";
-import { adminClient, describeServer, isProcessAlive, ownPid, RUN_PREFIX, runId as makeRunId, templateName, testServerUrl } from "./databases";
+import {
+  adminClient,
+  databaseUrl,
+  describeServer,
+  isProcessAlive,
+  ownPid,
+  RUN_PREFIX,
+  runId as makeRunId,
+  templateName,
+  testServerUrl,
+} from "./databases";
 
 declare module "vitest" {
   export interface ProvidedContext {
@@ -48,10 +58,8 @@ export default async function setup(project: TestProject) {
 
     const template = templateName(runId);
     await admin.unsafe(`create database "${template}"`);
-    const templateUrl = new URL(serverUrl);
-    templateUrl.pathname = `/${template}`;
     // Closed before workers clone it: CREATE DATABASE ... TEMPLATE refuses a template with open connections.
-    await runMigrations(templateUrl.toString());
+    await runMigrations(databaseUrl(serverUrl, template));
   } finally {
     await admin.end({ timeout: 5 });
   }
