@@ -1,8 +1,7 @@
-import { randomUUID } from "node:crypto";
-
 import { and, eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { createTestUser } from "../../test/app";
 import { testDb } from "../../test/db";
 import { accounts, categories } from "./schema";
 import { isRetryableTxError, withTx } from "./tx";
@@ -32,7 +31,7 @@ describe("withTx", () => {
   });
 
   it("rolls back when the callback throws", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     await expect(
       withTx(testDb(), async (tx) => {
         await tx.insert(accounts).values({ userId, name: "Cash", type: "cash", balance: 0, currency: "USD" });
@@ -43,7 +42,7 @@ describe("withTx", () => {
   });
 
   it("retries a lost update between two concurrent transactions until both apply", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const [account] = await testDb()
       .insert(accounts)
       .values({ userId, name: "Bank", type: "bank", balance: 1_000, currency: "USD" })
@@ -73,7 +72,7 @@ describe("withTx", () => {
 
   it("retries write skew (no shared row) so a check-then-insert rule holds", async () => {
     // "At most one expense category named Food per user", enforced only in code, as Convex did.
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const bothChecked = barrier(2);
     const attempts = { a: 0, b: 0 };
     const createOnce = (name: "a" | "b") =>
@@ -98,7 +97,7 @@ describe("withTx", () => {
   });
 
   it("retries a deadlock", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     let attempts = 0;
     await withTx(testDb(), async (tx) => {
       attempts += 1;
@@ -137,9 +136,10 @@ describe("withTx", () => {
   });
 
   it("surfaces a deferred foreign key violation raised at commit, without retrying", async () => {
+    const userId = await createTestUser();
     const error = await withTx(testDb(), async (tx) => {
-      await tx.insert(accounts).values({ userId: randomUUID(), name: "x", type: "cash", balance: 0, currency: "USD" });
-      await tx.execute(sql`insert into subcategories (user_id, category_id, name, sort_order) values (${randomUUID()}, ${randomUUID()}, 'x', 0)`);
+      await tx.insert(accounts).values({ userId, name: "x", type: "cash", balance: 0, currency: "USD" });
+      await tx.execute(sql`insert into subcategories (user_id, category_id, name, sort_order) values (${userId}, uuidv7(), 'x', 0)`);
     }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(Error);
     expect(isRetryableTxError(error)).toBe(false);

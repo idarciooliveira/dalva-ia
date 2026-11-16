@@ -1,11 +1,46 @@
 import { z } from "zod";
 
-const configSchema = z.object({
-  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: "must be a postgres:// URL" }),
-  DATABASE_POOL_MAX: z.coerce.number().int().min(1, "must be 1-100").max(100, "must be 1-100").default(10),
-  PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
-  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
-});
+const configSchema = z
+  .object({
+    NODE_ENV: z.enum(["development", "test", "production"], "must be development, test or production").default("development"),
+    DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/, error: "must be a postgres:// URL" }),
+    DATABASE_POOL_MAX: z.coerce.number().int().min(1, "must be 1-100").max(100, "must be 1-100").default(10),
+    PORT: z.coerce.number().int().min(1).max(65_535).default(4000),
+    LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+    /**
+     * Origin users reach the app at. Web and API share it behind the proxy
+     * (`/api/*` goes to the API), so session cookies are first-party. An https
+     * origin makes the cookies `Secure`.
+     */
+    PUBLIC_URL: z
+      .url({ protocol: /^https?$/, error: "must be an http(s) origin, e.g. https://dalva.example.com" })
+      .refine((value) => new URL(value).origin === value.replace(/\/+$/, ""), "must be an origin, without path, query or fragment")
+      .transform((value) => new URL(value).origin),
+    /** Signs session cookies. Changing it signs every user out. */
+    BETTER_AUTH_SECRET: z
+      .string()
+      .min(32, "must be at least 32 chars")
+      .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder"),
+    /**
+     * Request header the proxy in front sets to the client's address (e.g.
+     * cf-connecting-ip behind Cloudflare Tunnel). Auth rate limits are per
+     * address and stay off without it: with no address every user would
+     * share one bucket. Only trust a header the proxy overwrites.
+     */
+    CLIENT_IP_HEADER: z
+      .string()
+      .regex(/^[A-Za-z0-9-]{1,64}$/, "must be a header name, e.g. cf-connecting-ip")
+      .transform((value) => value.toLowerCase())
+      .optional(),
+  })
+  .superRefine((config, ctx) => {
+    if (config.NODE_ENV === "production" && !config.PUBLIC_URL.startsWith("https:")) {
+      ctx.addIssue({ code: "custom", path: ["PUBLIC_URL"], message: "must be https in production" });
+    }
+    if (config.NODE_ENV === "production" && !config.CLIENT_IP_HEADER) {
+      ctx.addIssue({ code: "custom", path: ["CLIENT_IP_HEADER"], message: "is required in production (auth rate limits)" });
+    }
+  });
 
 export type Config = z.output<typeof configSchema>;
 
@@ -30,7 +65,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   throw new ConfigError(`Invalid environment: ${problems.join("; ")}`);
 }
 
-/** The database password, for the logger's scrub list. */
-export function databasePassword(config: Config): string {
-  return decodeURIComponent(new URL(config.DATABASE_URL).password);
+/** Values the logger scrubs from every line. */
+export function configSecrets(config: Config): string[] {
+  return [decodeURIComponent(new URL(config.DATABASE_URL).password), config.BETTER_AUTH_SECRET];
 }
