@@ -13,7 +13,7 @@ import {
 } from "@mpf/finance-contract";
 import { z } from "zod";
 
-import { shortText, SummaryTooLongError, type Language } from "../core/summary";
+import { shortText, SummaryTooLongError } from "../core/summary";
 import { call, toToolError, type ToolContext, type ToolError } from "./shared";
 
 /**
@@ -293,5 +293,3 @@ export function optionalText(value: string | undefined, max: number): string | u
   const line = value.replace(/\s+/g, " ").trim().slice(0, max);
   return line || undefined;
 }
-
-export type { Language };

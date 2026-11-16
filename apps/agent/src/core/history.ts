@@ -18,12 +18,12 @@ export const HISTORY_FORMAT_VERSION = 1;
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 
-export interface StoredToolCall {
+interface StoredToolCall {
   id: string;
   name: string;
   input: Json;
 }
-export interface StoredToolResult {
+interface StoredToolResult {
   id: string;
   name: string;
   output: Json;

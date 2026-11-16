@@ -30,7 +30,7 @@ interface AccountCardProps {
   holderName?: string;
 }
 
-export function AccountCard({ account, holderName = "DALVA USER" }: AccountCardProps) {
+function AccountCard({ account, holderName = "DALVA USER" }: AccountCardProps) {
   const [showBalance, setShowBalance] = useState(true);
   const theme = resolveTheme(account.theme);
   const cardNumber = deriveCardNumber(account._id);

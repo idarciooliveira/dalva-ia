@@ -17,7 +17,7 @@ import {
   type ToolContext,
 } from "./shared";
 
-export const SEARCH_MAX_LIMIT = 20;
+const SEARCH_MAX_LIMIT = 20;
 const DEFAULT_LIMIT = 10;
 
 export const searchTransactions = (context: ToolContext) =>

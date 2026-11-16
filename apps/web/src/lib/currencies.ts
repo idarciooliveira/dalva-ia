@@ -22,8 +22,6 @@ export const CURRENCIES = [
   { code: "NGN", name: "Nigerian Naira", symbol: "\u20A6", flag: "\u{1F1F3}\u{1F1EC}" },
 ] as const;
 
-export type CurrencyCode = (typeof CURRENCIES)[number]["code"];
-
 /**
  * Get the display symbol for a currency code.
  * Falls back to the code itself if not found.

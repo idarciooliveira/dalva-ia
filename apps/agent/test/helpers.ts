@@ -11,7 +11,7 @@ export const BOT_TOKEN = "7000000001:AAH-test-bot-token-0123456789abcdefXYZ";
 export const SERVICE_KEY = "service-key-0123456789abcdef0123456789abcdef";
 export const WEBHOOK_SECRET = "webhook-secret-0123456789abcdef0123456789";
 export const BOT_USERNAME = "dalva_test_bot";
-export const BASE_URL = "https://finance.test";
+const BASE_URL = "https://finance.test";
 
 export function fixture(name: string): Record<string, any> {
   const path = fileURLToPath(new URL(`./fixtures/telegram/${name}.json`, import.meta.url));
@@ -45,14 +45,14 @@ export function captureLogger(): { logger: Logger; lines: string[] } {
   return { logger, lines };
 }
 
-export interface SentMessage {
+interface SentMessage {
   chatId: string;
   html: string;
   replyMarkup?: unknown;
 }
 
 /** Records Bot API calls instead of talking to Telegram. */
-export function fakeTelegramApi() {
+function fakeTelegramApi() {
   const sent: SentMessage[] = [];
   const actions: Array<{ chatId: string; action: string }> = [];
   const answered: Array<{ id: string; text?: string }> = [];
@@ -126,7 +126,7 @@ const STATUS: Record<ErrorCode, number> = {
   internal: 500,
 };
 
-export class ApiFailure extends Error {
+class ApiFailure extends Error {
   constructor(readonly code: ErrorCode) {
     super(code);
   }
@@ -150,7 +150,7 @@ export interface FakeEvent {
   receivedAt?: string;
 }
 
-export interface Call {
+interface Call {
   method: string;
   path: string;
   body?: Json;
@@ -609,8 +609,6 @@ export function fakeFinance() {
 function envelope(body: unknown, status: number): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
-
-export const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 export async function waitFor(check: () => boolean, timeoutMs = 2000): Promise<void> {
   const deadline = Date.now() + timeoutMs;

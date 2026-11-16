@@ -4,7 +4,7 @@ test.describe("Goals page — unauthenticated", () => {
   test("redirects unauthenticated users to /login", async ({ page }) => {
     await page.goto("/goals");
 
-    // The ProtectedPageLayout auth guard should redirect to /login
+    // The _authenticated auth guard should redirect to /login
     await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
   });
 });
