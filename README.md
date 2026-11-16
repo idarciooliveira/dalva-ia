@@ -31,7 +31,7 @@ The app is currently centered around:
 | Savings Goals | Implemented | Goal CRUD, contribution history, progress tracking |
 | Dashboard | Partially implemented | Real account, transaction, goal, debt, and net worth data; some widgets still remain mock-backed |
 | Budgets | Planned | Sidebar placeholder exists, dedicated module not built yet |
-| Debts | Planned | Sidebar placeholder exists, dedicated module not built yet |
+| Debts | Implemented | Debt CRUD and payment history |
 
 ---
 
@@ -77,13 +77,15 @@ Implemented today:
 - Transfer creation and editing flows
 - Categories and subcategories management
 - Savings goals with contribution tracking
+- Debts with payment tracking
+- Settings with Telegram linking
 - Dashboard with real recent transactions, spending, cashflow, goals, debt, and net worth data
 
 Still not fully wired:
 
 - Forgot password email delivery
 - Google OAuth provider setup
-- Dedicated budgets, debts, and settings pages
+- Dedicated budgets page
 - Some dashboard cards still use mock data while those modules are being built
 - Net worth trend/history badge, which needs historical balance snapshots or equivalent reporting support
 
@@ -152,6 +154,8 @@ Authenticated routes:
 - `/transactions`
 - `/categories`
 - `/goals`
+- `/debts`
+- `/settings`
 
 Authenticated pages share a persistent app shell with sidebar navigation, top bar, dark mode toggle, sign out, and floating quick actions for income, expense, and transfer entry.
 

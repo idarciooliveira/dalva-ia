@@ -35,7 +35,7 @@ export function createReadTools(context: ToolContext) {
 }
 
 /** Write tools only propose: each stores a pending action the user confirms with a button. */
-export function createWriteTools(context: ToolContext, write: WriteContext) {
+function createWriteTools(context: ToolContext, write: WriteContext) {
   return {
     create_transaction: createTransaction(context, write),
     update_transaction: updateTransaction(context, write),

@@ -1,5 +1,11 @@
 import { createContext, useContext } from "react";
-import type { ProtectedPageProfile } from "@/components/layouts/protected-page-layout";
+import type { AuthGuardResult } from "@/hooks/use-auth-guard";
+
+/** Profile of an authenticated, onboarded user. */
+export type ProtectedPageProfile = Extract<
+  AuthGuardResult,
+  { status: "ready" }
+>["profile"];
 
 /**
  * Context for sharing the authenticated user's profile from the layout route

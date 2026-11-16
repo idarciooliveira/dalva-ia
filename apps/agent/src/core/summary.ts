@@ -44,7 +44,6 @@ const LABELS = {
 } as const;
 
 export type ChangeField = keyof (typeof LABELS)["en"]["fields"];
-export type TxKind = "expense" | "income" | "adjustment" | "transfer";
 
 export const labels = (language: Language) => LABELS[language];
 
@@ -93,7 +92,7 @@ export function shortText(text: string, max = 40): string {
 /** Free text that will be written: shown in full (one line), never cut. */
 export const quoted = (text: string) => `“${text.replace(/\s+/g, " ").trim()}”`;
 
-export const SUMMARY_MAX = 500;
+const SUMMARY_MAX = 500;
 
 /** The summary can't show everything that would be written. */
 export class SummaryTooLongError extends Error {}

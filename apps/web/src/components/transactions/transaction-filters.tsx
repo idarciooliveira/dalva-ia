@@ -39,7 +39,7 @@ export const defaultFilters: TransactionFilters = {
 };
 
 /** Count how many filters are actively set */
-export function activeFilterCount(filters: TransactionFilters): number {
+function activeFilterCount(filters: TransactionFilters): number {
   let count = 0;
   if (filters.dateFrom) count++;
   if (filters.dateTo) count++;

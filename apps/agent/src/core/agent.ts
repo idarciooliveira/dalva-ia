@@ -34,7 +34,7 @@ export interface UserContext {
   baseCurrency?: string;
 }
 
-export interface AgentTurnInput {
+interface AgentTurnInput {
   text: string;
   /** Inbound event of the turn. A proposed change is keyed by it, so a replayed event finds the same action. */
   eventId: string;
@@ -61,7 +61,7 @@ export interface AgentReply {
   action?: AgentPendingAction;
 }
 
-export interface AgentTurnResult {
+interface AgentTurnResult {
   text: string;
   steps: number;
   toolCalls: Array<{ name: string; input: unknown }>;
@@ -81,7 +81,7 @@ const TYPING_INTERVAL_MS = 4_500;
 const FALLBACK_REPLY = "Sorry, I couldn't put an answer together. Please try asking in another way.";
 
 /** `YYYY-MM-DD` and weekday of `date` in `timeZone`. */
-export function localDay(date: Date, timeZone: string): { date: string; weekday: string } {
+function localDay(date: Date, timeZone: string): { date: string; weekday: string } {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
   const weekday = new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long" }).format(date);
   return { date: parts, weekday };
@@ -112,7 +112,7 @@ export function contextBlock(day: { date: string; weekday: string }, timeZone: s
 }
 
 /** The adapter escapes everything, so Markdown would show up literally: strip what models add anyway. */
-export function toPlainText(text: string): string {
+function toPlainText(text: string): string {
   return text
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/\*\*|__/g, "")

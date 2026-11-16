@@ -5,7 +5,7 @@ type Json = Record<string, unknown>;
 /** One model response: plain text, or one or more tool calls. */
 export type MockStep = { text: string } | { tools: Array<{ name: string; input: Json }> } | { error: Error };
 
-export const mockUsage = (input = 100, output = 20) => ({
+const mockUsage = (input = 100, output = 20) => ({
   inputTokens: { total: input, noCache: input, cacheRead: undefined, cacheWrite: undefined },
   outputTokens: { total: output, text: output, reasoning: undefined },
 });

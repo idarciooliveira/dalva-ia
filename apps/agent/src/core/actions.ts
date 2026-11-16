@@ -32,10 +32,10 @@ export interface ButtonOptions {
  * A `confirmed` action is only re-run while the API still holds its
  * idempotency key (kept 7 days); 6 days leaves a margin.
  */
-export const RERUN_WINDOW_MS = 6 * 24 * 60 * 60 * 1000;
+const RERUN_WINDOW_MS = 6 * 24 * 60 * 60 * 1000;
 
 /** Ambiguous outcomes are retried this many times with the same key. */
-export const EXECUTE_RETRIES = 3;
+const EXECUTE_RETRIES = 3;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 

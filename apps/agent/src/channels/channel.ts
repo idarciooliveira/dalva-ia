@@ -6,7 +6,7 @@ import type { Channel } from "@mpf/finance-contract";
  */
 
 export type ChatType = "private" | "group" | "channel";
-export type InboundKind = "text" | "command" | "button" | "photo";
+type InboundKind = "text" | "command" | "button" | "photo";
 
 export interface InboundEvent {
   channel: Channel;

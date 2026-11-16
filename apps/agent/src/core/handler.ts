@@ -14,9 +14,9 @@ import type { RateLimiter } from "./rate-limit";
 import { SessionRecorder } from "./session";
 
 /** Longest chat message sent to the model, in characters. */
-export const DEFAULT_MESSAGE_MAX_CHARS = 2000;
+const DEFAULT_MESSAGE_MAX_CHARS = 2000;
 
-export interface ChatOptions {
+interface ChatOptions {
   agent: Agent;
   /** Agent turns per user (keyed by channel + platform user id). */
   limiter: RateLimiter;
@@ -34,7 +34,7 @@ export interface HandlerOptions {
   actionRetryDelayMs?: number;
 }
 
-export function formatBalances(accounts: Account[]): RichText {
+function formatBalances(accounts: Account[]): RichText {
   const active = accounts.filter((account) => !account.archived);
   if (active.length === 0) return texts.noAccounts();
   const parts: RichPart[] = [{ bold: "Balances" }, "\n"];
@@ -67,7 +67,7 @@ function replyForFinanceError(error: unknown): RichText | null {
  * get a "use a private chat" answer to commands; their other messages, which
  * can be other members' text, are never stored.
  */
-export function acceptEvent(event: InboundEvent): boolean {
+function acceptEvent(event: InboundEvent): boolean {
   return event.chatType === "private" || event.kind === "command" || event.kind === "button";
 }
 

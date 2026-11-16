@@ -1,13 +1,11 @@
 import { TELEGRAM_WEBHOOK_PATH } from "../channels/telegram/adapter";
 
 /** Updates the agent handles. Anything else Telegram would deliver is wasted traffic through the tunnel. */
-export const ALLOWED_UPDATES = ["message", "callback_query"] as const;
-
-export type WebhookCommand = "set" | "info" | "delete";
+const ALLOWED_UPDATES = ["message", "callback_query"] as const;
 
 type Env = Record<string, string | undefined>;
 
-export class WebhookToolError extends Error {
+class WebhookToolError extends Error {
   override name = "WebhookToolError";
 }
 
@@ -137,7 +135,7 @@ function describeUrl(value: string | undefined): string {
 }
 
 /** `scrub` runs over the whole text, so no field (URL path included) can print a token. */
-export function formatWebhookInfo(info: WebhookInfo, scrub: (text: string) => string = (text) => text): string {
+function formatWebhookInfo(info: WebhookInfo, scrub: (text: string) => string = (text) => text): string {
   const lines = [
     `url:             ${describeUrl(info.url)}`,
     `pending updates: ${info.pending_update_count ?? 0}`,
