@@ -6,7 +6,6 @@
 !**/.env.example
 .git
 .github
-.opencode
 docs
 apps/web/src
 apps/web/public

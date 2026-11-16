@@ -20,9 +20,11 @@ my-personal-finance/
 ### Commands
 
 ```bash
-bun run dev          # Start the web app
-bun run dev:web      # Start the web app explicitly
-bun run dev:backend  # Start Convex dev
+bun run setup        # One-time local setup: local Convex deployment, env vars, agent .env.local
+bun run dev          # Start Convex, web and agent together
+bun run dev:web      # Start the web app only
+bun run dev:backend  # Start Convex dev only
+bun run dev:agent    # Start the Telegram agent only (waits for the Finance API)
 bun run build        # Build apps/* (currently the web app)
 bun run build:web    # Build the web app
 bun run typecheck    # Typecheck all packages
@@ -97,7 +99,7 @@ bun run test:e2e     # Run Playwright E2E tests
 | `apps/web/src/components/transactions/transaction-form-dialog.tsx` | Income/expense dialog |
 | `apps/web/src/components/transactions/transfer-form-dialog.tsx` | Transfer dialog |
 | `apps/web/e2e/*.spec.ts` | Playwright E2E coverage |
-| `apps/web/.env.local` | `VITE_CONVEX_URL` |
+| `packages/backend/.env.local` | Written by `convex dev`: deployment, `VITE_CONVEX_URL`, `VITE_CONVEX_SITE_URL` (also read by the web app) |
 
 ### Routing
 
@@ -127,7 +129,7 @@ The frontend connects to Convex via `@convex-dev/react-query`.
 
 - `ConvexQueryClient` is integrated with React Query in `apps/web/src/router.tsx`
 - `ConvexAuthProvider` wraps the app so authenticated requests include auth state
-- `VITE_CONVEX_URL` comes from `apps/web/.env.local`
+- `VITE_CONVEX_URL` comes from `packages/backend/.env.local` (see `apps/web/vite.config.ts`); `apps/web/.env.local` can override it
 - Backend types are imported from `@mpf/backend`
 
 ### E2E Testing (Playwright)

@@ -54,9 +54,12 @@ The app is currently centered around:
 
 ```text
 my-personal-finance/
-|- apps/web/          @mpf/web     Frontend app
-|- packages/backend/  @mpf/backend Convex backend
-`- docs/                           Product and design docs
+|- apps/web/                  @mpf/web              Frontend app
+|- apps/agent/                @mpf/agent            Telegram chat agent
+|- packages/backend/          @mpf/backend          Convex backend
+|- packages/finance-contract/ @mpf/finance-contract Finance API schemas shared by backend and agent
+|- scripts/                                         Local setup and dev helpers
+`- docs/                                            Product and design docs
 ```
 
 ---
@@ -91,49 +94,37 @@ Still not fully wired:
 ### Prerequisites
 
 - Bun
-- Node.js
-- A Convex account
+- A Convex account (or the CLI's no-account local mode)
 
-### Install
+### Setup
 
 ```bash
 bun install
+bun run setup
 ```
 
-### Environment
+`setup` is safe to re-run. It:
 
-Create `apps/web/.env.local`:
+- creates a local Convex deployment (`convex dev --local`), which writes `packages/backend/.env.local`
+- sets the missing backend env vars: auth keys, `SITE_URL`, `FINANCE_API_TOKEN_SECRET`, `FINANCE_API_SERVICE_KEY`
+- writes `apps/agent/.env.local` so the bot talks to the local backend, and creates `apps/agent/.env` from the example if missing
 
-```env
-VITE_CONVEX_URL=https://<your-deployment>.convex.cloud
-```
-
-If you do not already have a Convex dev deployment, start the backend once to create or connect one:
-
-```bash
-bun run dev:backend
-```
-
-Then copy the reported deployment URL into `apps/web/.env.local`.
+It refuses to configure a cloud deployment. The web app reads `VITE_CONVEX_URL` from `packages/backend/.env.local`, so `apps/web/.env.local` is optional (`VITE_TELEGRAM_BOT_USERNAME` only).
 
 ### Development
-
-Run the web app:
 
 ```bash
 bun run dev
 ```
 
-Run the backend in another terminal when working on Convex functions:
-
-```bash
-bun run dev:backend
-```
+Starts Convex, the web app (http://localhost:3000) and the Telegram agent together. The agent waits for the backend, and exits on its own without breaking the others if `apps/agent/.env` has no bot token or LLM key yet.
 
 Other useful commands:
 
 ```bash
 bun run dev:web
+bun run dev:backend
+bun run dev:agent
 bun run build
 bun run build:web
 bun run typecheck
