@@ -3,8 +3,8 @@ name: CI
 on:
   push:
     branches: [main]
+  # Every PR, so stacked PRs (based on another feature branch) are checked too.
   pull_request:
-    branches: [main]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -18,6 +18,22 @@ jobs:
     name: Typecheck, lint, unit tests
     timeout-minutes: 15
     runs-on: ubuntu-24.04
+
+    # For apps/api: tests create their own databases on this server.
+    services:
+      postgres:
+        image: postgres:18.7-alpine
+        env:
+          POSTGRES_USER: dalva
+          POSTGRES_PASSWORD: dalva
+          POSTGRES_DB: dalva
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dalva -d dalva"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
 
     steps:
       - uses: actions/checkout@v4
@@ -35,5 +51,21 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Migrations match the schema
+        run: |
+          bun run db:generate
+          if [ -n "$(git status --porcelain apps/api/drizzle)" ]; then
+            git status --porcelain apps/api/drizzle
+            echo "::error::apps/api/src/db/schema.ts changed without a migration. Run bun run db:generate and commit apps/api/drizzle."
+            exit 1
+          fi
+
+      - name: Migrations apply to an empty database
+        run: bun run db:migrate
+        env:
+          DATABASE_URL: postgres://dalva:dalva@127.0.0.1:5432/dalva
+
       - name: Unit tests
         run: bun run test:once
+        env:
+          TEST_DATABASE_URL: postgres://dalva:dalva@127.0.0.1:5432/dalva
