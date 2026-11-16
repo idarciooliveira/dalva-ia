@@ -288,6 +288,11 @@ export function createPipeline(options: PipelineOptions): Pipeline {
         return "ignored";
       }
       const log = eventLogger(event);
+      // Instant feedback: show "typing…" before the claim, status update and user resolve round trips.
+      // The agent turn keeps it alive afterwards. Fire and forget; a failure never affects handling.
+      if (event.chatType === "private" && event.kind === "text") {
+        void adapter.send({ chatId: event.chatId }, { type: "typing" }).catch(() => {});
+      }
       // Reserve the slot first (keeps arrival order), claim second: nothing is stored that can't be queued.
       let settle!: (claimed: boolean) => void;
       const claimed = new Promise<boolean>((resolve) => (settle = resolve));

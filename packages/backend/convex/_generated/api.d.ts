@@ -10,9 +10,9 @@
 
 import type * as accounts from "../accounts.js";
 import type * as agentStore from "../agentStore.js";
+import type * as api_v1_accounts from "../api/v1/accounts.js";
 import type * as api_v1_agent from "../api/v1/agent.js";
 import type * as api_v1_agentEvents from "../api/v1/agentEvents.js";
-import type * as api_v1_accounts from "../api/v1/accounts.js";
 import type * as api_v1_categories from "../api/v1/categories.js";
 import type * as api_v1_channels from "../api/v1/channels.js";
 import type * as api_v1_debts from "../api/v1/debts.js";
@@ -67,9 +67,9 @@ import type {
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
   agentStore: typeof agentStore;
+  "api/v1/accounts": typeof api_v1_accounts;
   "api/v1/agent": typeof api_v1_agent;
   "api/v1/agentEvents": typeof api_v1_agentEvents;
-  "api/v1/accounts": typeof api_v1_accounts;
   "api/v1/categories": typeof api_v1_categories;
   "api/v1/channels": typeof api_v1_channels;
   "api/v1/debts": typeof api_v1_debts;
