@@ -178,8 +178,11 @@ describe("api/v1 idempotency", () => {
   it("lets a request waiting on the key run when the first one fails", async () => {
     const { alice, aliceAccount } = await twoUsers();
     let calls = 0;
+    let entered!: () => void;
+    const firstEntered = new Promise<void>((resolve) => (entered = resolve));
     const failFirst = operation(routes.accounts.adjust, async (tx, user, input) => {
       if (++calls === 1) {
+        entered();
         await new Promise((resolve) => setTimeout(resolve, 200));
         throw new DomainError("conflict", "first fails");
       }
@@ -188,7 +191,7 @@ describe("api/v1 idempotency", () => {
     const { app } = testApp({ operations: { ...operations, accounts: { ...operations.accounts, adjust: failFirst } } });
     const request = { token: await tokenFor(alice), idempotencyKey: "fail-first-0001", body: adjustment(-100) };
     const first = raw(app, "POST", `/accounts/${aliceAccount}/adjustments`, request);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await firstEntered;
     const second = await raw(app, "POST", `/accounts/${aliceAccount}/adjustments`, request);
     expect((await first).status).toBe(409);
     expect(second.status).toBe(200);

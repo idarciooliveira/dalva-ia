@@ -77,7 +77,7 @@ describe("user tokens", () => {
   it("rejects a wrong signature, a different secret and tampered payloads", async () => {
     const token = await tokens.mint("user-1", ["finance:read"], 600);
     const [h, p, s] = token.split(".") as [string, string, string];
-    expect(await tokens.verify(`${h}.${p}.${s.slice(0, -2)}AA`)).toMatchObject({ ok: false, reason: "invalid" });
+    expect(await tokens.verify(`${h}.${p}.${s[0] === "A" ? "B" : "A"}${s.slice(1)}`)).toMatchObject({ ok: false, reason: "invalid" });
     expect(await tokens.verify(`${h}.${b64url(claims({ sub: "user-2" }))}.${s}`)).toMatchObject({ ok: false });
     expect(await tokens.verify(await sign({ alg: "HS256" }, claims(), "another-secret-0123456789abcdefghijkl"))).toMatchObject({ ok: false });
   });
