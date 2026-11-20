@@ -44,7 +44,7 @@ apps/api/drizzle/   SQL migrations
 - Ids are UUIDv7 (Postgres 18 native `uuidv7()`).
 - Domain FKs are `DEFERRABLE INITIALLY DEFERRED`.
 - Cross-row references are composite `(id, user_id)` FKs.
-- `transactions.account_id`, `debt_payments.from_account_id` and `debt_payments.source_transaction_id` are nullable: Convex data can hold orphans. Ported code must handle null.
+- `transactions.account_id`, `debt_payments.from_account_id` and `debt_payments.source_transaction_id` are nullable: Convex data can hold orphans. The import also nulls any nullable reference to another user's row. Ported code must handle null on every nullable reference.
 - `date` columns reject `YYYY-MM-31` bounds that Convex compared as strings. Compute the real month end.
 
 ## Production freeze

@@ -27,6 +27,8 @@
  *   (`if (account)`, "Unknown" account, `unknown_currency` in reports). Those
  *   references are nullable here: null means "deleted before the guards"; the
  *   import writes null for a dangling id. New ones can't dangle (the keys).
+ *   Convex never checked ownership either: the import also writes null for a
+ *   nullable reference to another user's row, which the composite keys refuse.
  */
 import { sql } from "drizzle-orm";
 import {

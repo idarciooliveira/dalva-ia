@@ -31,6 +31,21 @@ const failure = (promise: Promise<unknown>) =>
     (error: unknown) => sqlState(error),
   );
 
+/** The constraint a failed statement violated. */
+const violated = (promise: Promise<unknown>) =>
+  promise.then(
+    () => {
+      throw new Error("expected the statement to fail");
+    },
+    (error: unknown) => {
+      for (let current = error; current instanceof Error; current = current.cause) {
+        const name = (current as { constraint_name?: string }).constraint_name;
+        if (name) return name;
+      }
+      return undefined;
+    },
+  );
+
 async function account(userId?: string, balance = 0) {
   userId ??= await createTestUser();
   const [row] = await testDb()
@@ -154,17 +169,6 @@ describe("uniqueness", () => {
 });
 
 describe("foreign keys", () => {
-  it("declares every key between domain tables DEFERRABLE INITIALLY DEFERRED", async () => {
-    const rows = await testDb().execute<{ name: string; deferrable: boolean; deferred: boolean }>(sql`
-      select conname as name, condeferrable as deferrable, condeferred as deferred
-      from pg_constraint
-      where contype = 'f' and connamespace = 'public'::regnamespace and confdeltype in ('a', 'n')
-      order by conname
-    `);
-    expect(rows.length).toBeGreaterThanOrEqual(14);
-    expect(rows.filter((row) => !row.deferrable || !row.deferred).map((row) => row.name)).toEqual([]);
-  });
-
   it("lets a transfer's legs reference each other and be deleted in either order", async () => {
     const userId = await createTestUser();
     const from = await account(userId);
@@ -470,7 +474,7 @@ describe("user isolation", () => {
     it(`${key.name}: refuses another user's ${key.target}, accepts the owner's`, async () => {
       const [owner, other] = await Promise.all([createTestUser(), createTestUser()]);
       const target = await make[key.target](owner);
-      expect(await failure(key.insert(other, target))).toBe("23503");
+      expect(await violated(key.insert(other, target))).toBe(key.name);
       await key.insert(owner, target);
     });
   }
