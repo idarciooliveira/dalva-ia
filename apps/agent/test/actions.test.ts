@@ -38,8 +38,9 @@ function setup(options: { summary?: string; status?: FakeAction["status"]; expir
     summary: options.summary ?? PT_SUMMARY,
     status: options.status ?? "pending",
     expiresAt: new Date(Date.now() + (options.expired ? -1000 : 600_000)).toISOString(),
-    createdAt: "2026-11-11T10:00:00.000Z",
-    updatedAt: "2026-11-11T10:00:00.000Z",
+    // Relative to now: a confirmed action older than the 6-day rerun window is never re-run.
+    createdAt: new Date(Date.now() - 60_000).toISOString(),
+    updatedAt: new Date(Date.now() - 60_000).toISOString(),
     owner: options.owner ?? USER,
   });
   const { handle, onFailure, accept } = createHandler({ adapter, clients: finance.clients, logger, sessionIdleMinutes: 30, actionRetryDelayMs: 0 });
