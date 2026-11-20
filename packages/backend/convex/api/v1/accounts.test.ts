@@ -101,4 +101,47 @@ describe("api/v1 accounts", () => {
     expect((await asBob.accounts.list()).items.map((a) => a.id)).not.toContain(aliceAccount);
     expect((await getDoc(t, aliceAccount))?.balance).toBe(100_000);
   });
+
+  it("creates, updates, archives, restores and deletes an account", async () => {
+    const t = setupApi();
+    const user = await seedUser(t);
+    const client = clientFor(t, await tokenFor(user));
+
+    const { account } = await client.accounts.create({
+      name: "Wallet",
+      type: "cash",
+      balance: { amountMinor: 1_240, currency: "KWD" },
+      theme: "azul",
+    });
+    expect(account).toEqual({
+      id: account.id,
+      name: "Wallet",
+      type: "cash",
+      balance: { amountMinor: 1_240, currency: "KWD" },
+      theme: "azul",
+    });
+    expect(await getDoc(t, account.id as never)).toMatchObject({ userId: user, balance: 124, currency: "KWD" });
+
+    const updated = await client.accounts.update({ id: account.id, name: "Cash", icon: "wallet", description: "Pocket" });
+    expect(updated.account).toMatchObject({ name: "Cash", type: "cash", icon: "wallet", description: "Pocket", theme: "azul" });
+    expect((await client.accounts.archive({ id: account.id })).account.archived).toBe(true);
+    expect((await client.accounts.list()).items).toEqual([]);
+    expect((await client.accounts.restore({ id: account.id })).account.archived).toBe(false);
+    expect(await client.accounts.delete({ id: account.id })).toEqual({ id: account.id });
+    await expectApiError(client.accounts.get({ id: account.id }), "not_found", 404);
+  });
+
+  it("refuses to delete an account in use, and to touch another user's account", async () => {
+    const t = setupApi();
+    const { asAlice, asBob, aliceAccount } = await twoUsers(t);
+    await asAlice.accounts.adjust({ id: aliceAccount, amount: { amountMinor: 1, currency: "USD" } });
+    const error = await expectApiError(asAlice.accounts.delete({ id: aliceAccount }), "conflict", 409);
+    expect(error.message).toMatch(/archive/i);
+
+    await expectApiError(asBob.accounts.update({ id: aliceAccount, name: "Hacked" }), "not_found", 404);
+    await expectApiError(asBob.accounts.archive({ id: aliceAccount }), "not_found", 404);
+    await expectApiError(asBob.accounts.restore({ id: aliceAccount }), "not_found", 404);
+    await expectApiError(asBob.accounts.delete({ id: aliceAccount }), "not_found", 404);
+    expect(await getDoc(t, aliceAccount)).toMatchObject({ name: "Checking" });
+  });
 });

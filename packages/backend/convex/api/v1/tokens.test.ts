@@ -117,6 +117,18 @@ describe("api/v1 tokens", () => {
     await expect(mintUserToken("u", ["finance:read"], 400 * 24 * 3600)).rejects.toThrow();
   });
 
+  it("mints the exact token apps/api verifies (pinned in apps/api/src/auth/tokens.test.ts)", async () => {
+    const token = await mintUserToken(
+      "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b",
+      ["finance:read", "finance:write", "agent:state"],
+      365 * 24 * 3600 - 1,
+      { now: 4_000_000_000, channelIdentityId: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c" },
+    );
+    expect(token).toBe(
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwMTkwYTFiMi1jM2Q0LTdlNWYtOGE5Yi0wYzFkMmUzZjRhNWIiLCJzY29wZSI6ImZpbmFuY2U6cmVhZCBmaW5hbmNlOndyaXRlIGFnZW50OnN0YXRlIiwiYXVkIjoiZmluYW5jZS1hcGkiLCJpYXQiOjQwMDAwMDAwMDAsImV4cCI6NDAzMTUzNTk5OSwiY2lkIjoiMDE5MGExYjItYzNkNC03ZTVmLThhOWItMGMxZDJlM2Y0YTVjIn0.IA5iRKIXZS_WVuPSAKq9VkcB1QU_QH5BACSJ0g-oMF0",
+    );
+  });
+
   it("carries the channel identity id as cid and rejects a malformed one", async () => {
     const token = await mintUserToken("user-1", ["finance:read"], 600, { channelIdentityId: "ci-1" });
     expect(await verifyUserToken(token)).toMatchObject({ ok: true, claims: { sub: "user-1", cid: "ci-1" } });
