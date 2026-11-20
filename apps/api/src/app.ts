@@ -1,11 +1,16 @@
-import { API_BASE_PATH, fail } from "@mpf/finance-contract";
+import { API_BASE_PATH } from "@mpf/finance-contract";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 
 import { AUTH_BASE_PATH, type Auth } from "./auth/auth";
 import { createSignInLimiter, type SignInLimiter } from "./auth/sign-in-limit";
+import type { UserTokens } from "./auth/tokens";
 import type { Database } from "./db/client";
-import { type AppEnv, resolvePrincipal, sessionSource } from "./http/principal";
+import type { Operations } from "./http/operation";
+import { type AppEnv, resolvePrincipal, sessionSource, userTokenSource } from "./http/principal";
+import { errorResponse } from "./http/errors";
+import { contractRouter } from "./http/router";
+import { operations as v1Operations } from "./http/v1";
 import { errorFields, type Logger } from "./log";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -14,6 +19,10 @@ export interface AppOptions {
   db: Database;
   logger: Logger;
   auth: Auth;
+  /** Verifies the agent's bearer user tokens (config `FINANCE_API_TOKEN_SECRET`). */
+  tokens: UserTokens;
+  /** Contract route implementations. Default: every ported `/api/v1` group (tests swap in their own). */
+  operations?: Operations;
   /** Public origin (config `PUBLIC_URL`): the only origin allowed to post to the auth routes. */
   publicUrl: string;
   /** How long `/health` waits for `select 1`. Default 2000 ms. */
@@ -79,13 +88,28 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     }
   });
 
-  // Contract routes: every request gets a principal (or null); routes guard with requireUser().
-  app.use(`${API_BASE_PATH}/*`, resolvePrincipal([sessionSource(options.auth, { publicUrl: options.publicUrl })]));
+  // Contract routes: never cached; every request gets a principal (or null), then the contract router.
+  app.use(`${API_BASE_PATH}/*`, async (c, next) => {
+    c.header("Cache-Control", "no-store");
+    await next();
+  });
+  app.use(
+    `${API_BASE_PATH}/*`,
+    resolvePrincipal([
+      // The service-key source goes first here (PR 8): see principal.ts.
+      userTokenSource(options.tokens),
+      sessionSource(options.auth, { publicUrl: options.publicUrl }),
+    ]),
+  );
+  app.use(
+    `${API_BASE_PATH}/*`,
+    contractRouter({ db: options.db, logger: options.logger, operations: options.operations ?? v1Operations }),
+  );
 
-  app.notFound((c) => c.json(fail("not_found", "Not found"), 404));
+  app.notFound((c) => errorResponse(c, "not_found", "Not found"));
   app.onError((error, c) => {
     options.logger.error("request_failed", { method: c.req.method, path: c.req.path, ...errorFields(error) });
-    return c.json(fail("internal", "Internal error"), 500);
+    return errorResponse(c, "internal", "Internal error");
   });
   return app;
 }

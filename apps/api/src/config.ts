@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { MIN_TOKEN_SECRET_BYTES } from "./auth/tokens";
+
 const configSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"], "must be development, test or production").default("development"),
@@ -22,6 +24,15 @@ const configSchema = z
       .min(32, "must be at least 32 chars")
       .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder"),
     /**
+     * Signs the Finance API user tokens (HS256) the chat agent sends as
+     * `Authorization: Bearer`. Same variable as on the Convex deployment.
+     * Changing it invalidates every token (they live 15 minutes).
+     */
+    FINANCE_API_TOKEN_SECRET: z
+      .string()
+      .refine((value) => new TextEncoder().encode(value).length >= MIN_TOKEN_SECRET_BYTES, `must be at least ${MIN_TOKEN_SECRET_BYTES} bytes`)
+      .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder"),
+    /**
      * Request header the proxy in front sets to the client's address (e.g.
      * cf-connecting-ip behind Cloudflare Tunnel). Auth rate limits are per
      * address and stay off without it: with no address every user would
@@ -34,6 +45,9 @@ const configSchema = z
       .optional(),
   })
   .superRefine((config, ctx) => {
+    if (config.FINANCE_API_TOKEN_SECRET === config.BETTER_AUTH_SECRET) {
+      ctx.addIssue({ code: "custom", path: ["FINANCE_API_TOKEN_SECRET"], message: "must differ from BETTER_AUTH_SECRET" });
+    }
     if (config.NODE_ENV === "production" && !config.PUBLIC_URL.startsWith("https:")) {
       ctx.addIssue({ code: "custom", path: ["PUBLIC_URL"], message: "must be https in production" });
     }
@@ -67,5 +81,5 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
 
 /** Values the logger scrubs from every line. */
 export function configSecrets(config: Config): string[] {
-  return [decodeURIComponent(new URL(config.DATABASE_URL).password), config.BETTER_AUTH_SECRET];
+  return [decodeURIComponent(new URL(config.DATABASE_URL).password), config.BETTER_AUTH_SECRET, config.FINANCE_API_TOKEN_SECRET];
 }

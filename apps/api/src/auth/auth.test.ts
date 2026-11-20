@@ -3,7 +3,7 @@ import { errorEnvelopeSchema } from "@mpf/finance-contract";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 
-import { testApp, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../../test/app";
+import { testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../../test/app";
 import { testDb } from "../../test/db";
 import { createApp } from "../app";
 import { createDatabase } from "../db/client";
@@ -174,7 +174,7 @@ describe("unexpected errors", () => {
     const unreachable = createDatabase({ url: "postgres://nobody:x@127.0.0.1:1/none", max: 1, connectTimeoutSeconds: 1 });
     try {
       const auth = createAuth({ db: unreachable.db, logger, publicUrl: TEST_PUBLIC_URL, secret: TEST_AUTH_SECRET });
-      const app = createApp({ db: unreachable.db, logger, auth, publicUrl: TEST_PUBLIC_URL });
+      const app = createApp({ db: unreachable.db, logger, auth, tokens: testTokens, publicUrl: TEST_PUBLIC_URL });
       const res = await post(app, "/sign-in/email", { email: "secret-person@example.com", password: PASSWORD });
       expect(res.status).toBe(500);
       expect(await errorCode(res)).toBe("internal");

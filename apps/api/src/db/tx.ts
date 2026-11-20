@@ -4,7 +4,7 @@ import type { Database } from "./client";
 export type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
 
 export interface TxOptions {
-  /** Total tries, including the first. Default 5. */
+  /** Total tries, including the first. Default 10. */
   maxAttempts?: number;
   /** Called before each retry, e.g. to log it. */
   onRetry?: (info: { attempt: number; code: string }) => void;
@@ -21,7 +21,9 @@ export interface TxOptions {
  * caller maps to an API error.
  */
 const RETRYABLE = new Set(["40001", "40P01"]);
-const DEFAULT_MAX_ATTEMPTS = 5;
+/** Concurrent writes to one row (an account balance) need several reruns; Convex retried as long. */
+const DEFAULT_MAX_ATTEMPTS = 10;
+const MAX_BACKOFF_MS = 250;
 
 /** SQLSTATE of a Postgres error, also when Drizzle wraps it (`cause`). */
 export function sqlState(error: unknown): string | undefined {
@@ -41,7 +43,8 @@ export function isRetryableTxError(error: unknown): boolean {
 /**
  * Run `fn` in one SERIALIZABLE transaction; on a serialization failure or
  * deadlock, roll back and run it again, up to `maxAttempts` times, then
- * rethrow. This gives every write the isolation the Convex mutations had.
+ * rethrow (about 1.5 s of backoff at most). This gives every write the
+ * isolation the Convex mutations had.
  *
  * `fn` may run more than once: keep side effects outside the database
  * (HTTP calls, timers, logs that claim success) out of it, and don't let it
@@ -56,8 +59,20 @@ export async function withTx<T>(db: Database, fn: (tx: Tx) => Promise<T>, option
       const code = sqlState(error);
       if (attempt >= maxAttempts || code === undefined || !RETRYABLE.has(code)) throw error;
       options.onRetry?.({ attempt, code });
-      // Jittered backoff so the transactions that collided don't collide again in lockstep.
-      await new Promise((resolve) => setTimeout(resolve, Math.random() * 5 * 2 ** attempt));
+      // Jittered, capped exponential backoff so the transactions that collided don't collide again in lockstep.
+      await new Promise((resolve) => setTimeout(resolve, Math.random() * Math.min(MAX_BACKOFF_MS, 5 * 2 ** attempt)));
     }
   }
+}
+
+/**
+ * Run read-only `fn` on one consistent snapshot (REPEATABLE READ, READ ONLY):
+ * every statement in it sees the same committed state. Weaker than a Convex
+ * query in one corner: a snapshot can show a state no serial order of the
+ * SERIALIZABLE writes produced (the read-only anomaly). Never a torn write,
+ * since each write commits atomically. It can't fail with serialization
+ * errors, so there is no retry.
+ */
+export async function readTx<T>(db: Database, fn: (tx: Tx) => Promise<T>): Promise<T> {
+  return await db.transaction(fn, { isolationLevel: "repeatable read", accessMode: "read only" });
 }

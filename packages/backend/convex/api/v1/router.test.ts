@@ -126,7 +126,7 @@ describe("api/v1 router", () => {
     const t = setupApi();
     const token = await tokenFor(await seedUser(t));
     expectError(await raw(t, "GET", "/nope", { token }), "not_found", 404);
-    expectError(await raw(t, "POST", "/accounts", { token, idempotencyKey: KEY, body: {} }), "not_found", 404);
+    expectError(await raw(t, "DELETE", "/accounts", { token, idempotencyKey: KEY }), "not_found", 404);
     expectError(await raw(t, "GET", "/accounts/a/b", { token }), "not_found", 404);
   });
 

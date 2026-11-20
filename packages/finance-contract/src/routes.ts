@@ -29,6 +29,12 @@ export interface RouteDef {
   auth: RouteAuth;
   /** User routes only. Overrides the method-derived finance scope (`agent:state` for the agent store). */
   scope?: TokenScope;
+  /**
+   * User routes for the web app only (profile, account management): tokens
+   * minted for a chat (`cid`) get `forbidden`, and they are not pending-action
+   * operations, so the chat agent can neither call nor propose them.
+   */
+  webOnly?: boolean;
 }
 
 const route = <Req extends z.ZodType, Res extends z.ZodType>(
@@ -37,6 +43,9 @@ const route = <Req extends z.ZodType, Res extends z.ZodType>(
   request: Req,
   response: Res,
 ) => ({ method, path, request, response, auth: "user" as const }) satisfies RouteDef;
+
+const webRoute = <Req extends z.ZodType, Res extends z.ZodType>(...args: Parameters<typeof route<Req, Res>>) =>
+  ({ ...route(...args), webOnly: true as const }) satisfies RouteDef;
 
 const serviceRoute = <Req extends z.ZodType, Res extends z.ZodType>(
   method: HttpMethod,
@@ -62,6 +71,21 @@ export const routes = {
     list: route("GET", "/accounts", s.accountsListRequestSchema, s.accountsListResponseSchema),
     get: route("GET", "/accounts/:id", s.accountGetRequestSchema, s.accountGetResponseSchema),
     adjust: route("POST", "/accounts/:id/adjustments", s.accountAdjustRequestSchema, s.accountAdjustResponseSchema),
+    create: webRoute("POST", "/accounts", s.accountCreateRequestSchema, s.accountCreateResponseSchema),
+    update: webRoute("PATCH", "/accounts/:id", s.accountUpdateRequestSchema, s.accountUpdateResponseSchema),
+    archive: webRoute("POST", "/accounts/:id/archive", s.accountArchiveRequestSchema, s.accountArchiveResponseSchema),
+    restore: webRoute("POST", "/accounts/:id/restore", s.accountRestoreRequestSchema, s.accountRestoreResponseSchema),
+    delete: webRoute("DELETE", "/accounts/:id", s.accountDeleteRequestSchema, s.accountDeleteResponseSchema),
+  },
+  profile: {
+    get: webRoute("GET", "/profile", s.profileGetRequestSchema, s.profileGetResponseSchema),
+    create: webRoute("POST", "/profile", s.profileCreateRequestSchema, s.profileCreateResponseSchema),
+    completeOnboarding: webRoute(
+      "POST",
+      "/profile/complete-onboarding",
+      s.profileCompleteOnboardingRequestSchema,
+      s.profileCompleteOnboardingResponseSchema,
+    ),
   },
   categories: {
     list: route("GET", "/categories", s.categoriesListRequestSchema, s.categoriesListResponseSchema),
@@ -294,6 +318,9 @@ export interface RouteMatch extends NamedRoute {
   params: Record<string, string>;
 }
 
+/** Every route with its path split into segments, built on first use (the router matches each request against it). */
+let routeTable: Array<{ named: NamedRoute; template: string[] }> | undefined;
+
 /** Resolve an incoming request (method + full pathname incl. `/api/v1`) to a route. */
 export function matchRoute(method: string, pathname: string): RouteMatch | null {
   if (pathname !== API_BASE_PATH && !pathname.startsWith(`${API_BASE_PATH}/`)) return null;
@@ -301,9 +328,9 @@ export function matchRoute(method: string, pathname: string): RouteMatch | null 
   const actual = rest === "" ? [] : rest.slice(1).split("/");
   if (actual.some((segment) => segment === "")) return null;
 
-  for (const named of allRoutes()) {
+  routeTable ??= allRoutes().map((named) => ({ named, template: named.route.path.split("/").filter(Boolean) }));
+  for (const { named, template } of routeTable) {
     if (named.route.method !== method) continue;
-    const template = named.route.path.split("/").filter(Boolean);
     if (template.length !== actual.length) continue;
 
     const params: Record<string, string> = {};

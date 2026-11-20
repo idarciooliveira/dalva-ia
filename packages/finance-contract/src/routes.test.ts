@@ -31,8 +31,13 @@ describe("route map", () => {
         "agentPendingActions.get",
         "agentSessions.current",
         "accounts.adjust",
+        "accounts.archive",
+        "accounts.create",
+        "accounts.delete",
         "accounts.get",
         "accounts.list",
+        "accounts.restore",
+        "accounts.update",
         "categories.list",
         "channelIdentities.resolve",
         "channelIdentities.unlink",
@@ -47,6 +52,9 @@ describe("route map", () => {
         "goalContributions.remove",
         "goals.get",
         "goals.list",
+        "profile.completeOnboarding",
+        "profile.create",
+        "profile.get",
         "reports.cashflow",
         "reports.debtSummary",
         "reports.netWorth",
@@ -106,9 +114,27 @@ describe("route map", () => {
     expect(requiredScope(routes.transactions.create)).toBe("finance:write");
   });
 
-  it("lists exactly the finance write routes as pending-action operations", () => {
+  it("marks profile and account management as web-only user routes", () => {
+    const webOnly = allRoutes().filter((r) => r.route.webOnly);
+    expect(webOnly.map((r) => r.name).sort()).toEqual([
+      "accounts.archive",
+      "accounts.create",
+      "accounts.delete",
+      "accounts.restore",
+      "accounts.update",
+      "profile.completeOnboarding",
+      "profile.create",
+      "profile.get",
+    ]);
+    for (const { name, route } of webOnly) {
+      expect(route.auth, name).toBe("user");
+      expect(route.scope, name).toBeUndefined();
+    }
+  });
+
+  it("lists exactly the finance write routes, minus the web-only ones, as pending-action operations", () => {
     const writes = allRoutes()
-      .filter((r) => r.route.auth === "user" && !r.route.scope && isWriteRoute(r.route))
+      .filter((r) => r.route.auth === "user" && !r.route.scope && isWriteRoute(r.route) && !r.route.webOnly)
       .map((r) => r.name)
       .sort();
     expect([...agentActionOperationSchema.options].sort()).toEqual(writes);

@@ -7,6 +7,7 @@ import {
   agentSessionIdSchema,
   categoryIdSchema,
   channelIdentityIdSchema,
+  currencyCodeSchema,
   debtIdSchema,
   debtPaymentIdSchema,
   goalContributionIdSchema,
@@ -97,6 +98,7 @@ export const accountSchema = z.object({
   theme: z.string().optional(),
   icon: z.string().optional(),
   description: z.string().optional(),
+  /** Absent means not archived. */
   archived: z.boolean().optional(),
 });
 
@@ -452,6 +454,69 @@ export const accountAdjustRequestSchema = z.strictObject({
 });
 export const accountAdjustResponseSchema = z.object({ account: accountSchema });
 
+/*
+ * Account management and the user profile: web-only routes (`webOnly` in
+ * routes.ts). Chat tokens can't call them and they are not pending-action
+ * operations.
+ */
+
+const accountName = shortText(100);
+/** Visual theme id or Lucide icon name, as chosen in the app. */
+const accountStyle = shortText(64);
+const accountResponse = z.object({ account: accountSchema });
+
+export const accountCreateRequestSchema = z.strictObject({
+  name: accountName,
+  type: accountTypeSchema,
+  /** Opening balance, signed. Its currency becomes the account's currency, which never changes. */
+  balance: moneyInputSchema,
+  theme: accountStyle.optional(),
+});
+export const accountCreateResponseSchema = accountResponse;
+
+/** Only the given fields change. The currency and the balance can't be edited (use `accounts.adjust`). */
+export const accountUpdateRequestSchema = z
+  .strictObject({
+    id: accountIdSchema,
+    name: accountName.optional(),
+    type: accountTypeSchema.optional(),
+    theme: accountStyle.optional(),
+    icon: accountStyle.optional(),
+    description: descriptionField.optional(),
+  })
+  .refine(hasChangesBesidesId, { message: NO_CHANGES });
+export const accountUpdateResponseSchema = accountResponse;
+
+/** Archived accounts are hidden from `accounts.list` unless `includeArchived`; restore brings them back. */
+export const accountArchiveRequestSchema = z.strictObject({ id: accountIdSchema });
+export const accountArchiveResponseSchema = accountResponse;
+export const accountRestoreRequestSchema = z.strictObject({ id: accountIdSchema });
+export const accountRestoreResponseSchema = accountResponse;
+
+/** Only while nothing references the account (transactions, goals, debts); otherwise `conflict`: archive it instead. */
+export const accountDeleteRequestSchema = z.strictObject({ id: accountIdSchema });
+export const accountDeleteResponseSchema = deleted(accountIdSchema);
+
+/** Settings and onboarding state. One per user; absent until onboarding starts. */
+export const profileSchema = z.object({
+  name: z.string().optional(),
+  /** ISO 4217 code: goals, debts and reports are in this currency. */
+  baseCurrency: z.string(),
+  onboardingCompleted: z.boolean(),
+});
+
+export const profileGetRequestSchema = z.strictObject({});
+/** `null` before onboarding has created the profile. */
+export const profileGetResponseSchema = z.object({ profile: profileSchema.nullable() });
+
+/** Creates the profile, or changes its base currency if it exists (the user went back in onboarding). */
+export const profileCreateRequestSchema = z.strictObject({ baseCurrency: currencyCodeSchema });
+export const profileCreateResponseSchema = z.object({ profile: profileSchema });
+
+/** `not_found` when there is no profile yet. */
+export const profileCompleteOnboardingRequestSchema = z.strictObject({});
+export const profileCompleteOnboardingResponseSchema = z.object({ profile: profileSchema });
+
 export const goalContributionAddRequestSchema = z.strictObject({
   goalId: goalIdSchema,
   amount: positiveMoneySchema,
@@ -756,7 +821,8 @@ export const agentMessagesAppendRequestSchema = z.strictObject({
 export const agentMessagesAppendResponseSchema = z.object({ items: z.array(agentMessageSchema) });
 
 /**
- * Operations a pending action can carry: the user-route writes on finance data.
+ * Operations a pending action can carry: the user-route writes on finance data,
+ * except account management and the profile (web only).
  * `routes.test.ts` checks this list against the route map.
  */
 export const agentActionOperationSchema = z.enum([
@@ -843,6 +909,7 @@ export const agentHistoryDeleteResponseSchema = z.object({ deleted: z.literal(tr
 /* -------------------------------------------------------------------------- */
 
 export type Account = z.output<typeof accountSchema>;
+export type Profile = z.output<typeof profileSchema>;
 export type Category = z.output<typeof categorySchema>;
 export type Subcategory = z.output<typeof subcategorySchema>;
 export type Transaction = z.output<typeof transactionSchema>;

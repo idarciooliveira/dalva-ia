@@ -21,6 +21,7 @@ import type * as api_v1_errors from "../api/v1/errors.js";
 import type * as api_v1_goals from "../api/v1/goals.js";
 import type * as api_v1_idempotency from "../api/v1/idempotency.js";
 import type * as api_v1_money from "../api/v1/money.js";
+import type * as api_v1_profile from "../api/v1/profile.js";
 import type * as api_v1_registry from "../api/v1/registry.js";
 import type * as api_v1_reports from "../api/v1/reports.js";
 import type * as api_v1_router from "../api/v1/router.js";
@@ -78,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   "api/v1/goals": typeof api_v1_goals;
   "api/v1/idempotency": typeof api_v1_idempotency;
   "api/v1/money": typeof api_v1_money;
+  "api/v1/profile": typeof api_v1_profile;
   "api/v1/registry": typeof api_v1_registry;
   "api/v1/reports": typeof api_v1_reports;
   "api/v1/router": typeof api_v1_router;

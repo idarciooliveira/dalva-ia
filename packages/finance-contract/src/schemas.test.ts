@@ -19,6 +19,10 @@ import {
   transferCreateRequestSchema,
   transferUpdateRequestSchema,
   accountAdjustRequestSchema,
+  accountCreateRequestSchema,
+  accountUpdateRequestSchema,
+  profileCreateRequestSchema,
+  profileGetResponseSchema,
 } from "./schemas";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
@@ -170,6 +174,30 @@ describe("goal contributions and balance adjustments", () => {
   it("adjustment is signed, non-zero", () => {
     expect(accountAdjustRequestSchema.safeParse({ id: "a", amount: usd(-100) }).success).toBe(true);
     expect(accountAdjustRequestSchema.safeParse({ id: "a", amount: usd(0) }).success).toBe(false);
+  });
+});
+
+describe("account management and profile", () => {
+  it("creates an account with a signed opening balance that sets the currency", () => {
+    const base = { name: "Checking", type: "bank", balance: usd(-500) };
+    expect(accountCreateRequestSchema.safeParse(base).success).toBe(true);
+    expect(accountCreateRequestSchema.safeParse({ ...base, balance: usd(0), theme: "azul" }).success).toBe(true);
+    expect(accountCreateRequestSchema.safeParse({ ...base, name: "" }).success).toBe(false);
+    expect(accountCreateRequestSchema.safeParse({ ...base, currency: "USD" }).success).toBe(false);
+    expect(accountCreateRequestSchema.safeParse({ ...base, balance: { amountMinor: 1, currency: "usd" } }).success).toBe(false);
+  });
+
+  it("updates need at least one field and never take the currency or balance", () => {
+    expect(accountUpdateRequestSchema.safeParse({ id: "a", name: "New" }).success).toBe(true);
+    expect(accountUpdateRequestSchema.safeParse({ id: "a" }).success).toBe(false);
+    expect(accountUpdateRequestSchema.safeParse({ id: "a", balance: usd(1) }).success).toBe(false);
+    expect(accountUpdateRequestSchema.safeParse({ id: "a", currency: "EUR" }).success).toBe(false);
+  });
+
+  it("profile: ISO currency in, null before onboarding out", () => {
+    expect(profileCreateRequestSchema.safeParse({ baseCurrency: "AOA" }).success).toBe(true);
+    expect(profileCreateRequestSchema.safeParse({ baseCurrency: "dollars" }).success).toBe(false);
+    expect(profileGetResponseSchema.parse({ profile: null })).toEqual({ profile: null });
   });
 });
 

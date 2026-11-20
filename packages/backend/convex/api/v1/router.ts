@@ -196,6 +196,7 @@ async function handle(ctx: ActionCtx, request: Request): Promise<Response> {
   const write = isWriteRoute(match.route);
   const required = requiredScope(match.route);
   if (!claims.scopes.includes(required)) throw new HttpError("forbidden", `Token lacks the ${required} scope`);
+  if (match.route.webOnly && claims.cid !== undefined) throw new HttpError("forbidden", "Not available to chat tokens");
 
   let idempotencyKey: string | undefined;
   if (requiresIdempotencyKey(match.route)) {
