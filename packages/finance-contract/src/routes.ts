@@ -89,6 +89,7 @@ export const routes = {
   },
   categories: {
     list: route("GET", "/categories", s.categoriesListRequestSchema, s.categoriesListResponseSchema),
+    // Before any future `GET /categories/:id`: matchRoute takes the first match.
     defaults: webRoute("GET", "/categories/defaults", s.categoryDefaultsRequestSchema, s.categoryDefaultsResponseSchema),
     seedDefaults: webRoute(
       "POST",
