@@ -186,9 +186,10 @@ export async function restoreCategory(tx: Tx, userId: string, id: string): Promi
 
 /** Delete for good with its subcategories. Transactions that used them lose them (the keys null both columns). */
 export async function deleteCategory(tx: Tx, userId: string, id: string): Promise<void> {
-  await getCategory(tx, userId, id);
+  // The subcategory key is deferred, so the category can go first.
+  const [deleted] = await tx.delete(categories).where(ownedCategory(userId, id)).returning({ id: categories.id });
+  if (!deleted) throw notFound("Category");
   await tx.delete(subcategories).where(and(eq(subcategories.categoryId, id), eq(subcategories.userId, userId)));
-  await tx.delete(categories).where(ownedCategory(userId, id));
 }
 
 /* Subcategory CRUD --------------------------------------------------------- */

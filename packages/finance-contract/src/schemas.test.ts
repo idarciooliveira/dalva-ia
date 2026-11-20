@@ -214,6 +214,7 @@ describe("category and subcategory management", () => {
     expect(categoryCreateRequestSchema.safeParse({ ...base, name: "   " }).success).toBe(false);
     expect(categoryCreateRequestSchema.safeParse({ ...base, type: "transfer" }).success).toBe(false);
     expect(categoryCreateRequestSchema.safeParse({ ...base, icon: undefined }).success).toBe(false);
+    expect(categoryCreateRequestSchema.safeParse({ ...base, color: "  " }).success).toBe(false);
     expect(categoryCreateRequestSchema.safeParse({ ...base, isDefault: true }).success).toBe(false);
   });
 

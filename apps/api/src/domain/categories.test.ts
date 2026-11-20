@@ -122,6 +122,13 @@ describe("domain/categories", () => {
       expect((await categoryRow(c))?.sortOrder).toBe(1);
     });
 
+    it("gives concurrent creates distinct sortOrders", async () => {
+      const user = await createTestUser();
+      const ids = await Promise.all(["A", "B", "C"].map((name) => seedCategory(user, name)));
+      const orders = await Promise.all(ids.map(async (id) => (await categoryRow(id))?.sortOrder));
+      expect([...orders].sort()).toEqual([0, 1, 2]);
+    });
+
     it("counts a missing sortOrder as 0, as Convex did", async () => {
       const user = await createTestUser();
       await testDb().insert(categoriesTable).values({ userId: user, name: "Legacy", type: "expense" });

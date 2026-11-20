@@ -524,8 +524,8 @@ export const profileCompleteOnboardingResponseSchema = z.object({ profile: profi
 
 /** Names are trimmed; blank is `validation_failed`. Not unique: two categories may share a name. */
 const categoryName = z.string().trim().min(1).max(100);
-/** Lucide icon name or color (hex, e.g. "#9FE870"), as chosen in the app. */
-const categoryStyle = shortText(64);
+/** Lucide icon name or color (hex, e.g. "#9FE870"), as chosen in the app. Trimmed, non-blank. */
+const categoryStyle = z.string().trim().min(1).max(64);
 const categoryResponse = z.object({ category: categorySchema });
 const subcategoryResponse = z.object({ subcategory: subcategorySchema });
 
