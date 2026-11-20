@@ -14,6 +14,7 @@ import {
   debts,
   goalContributions,
   savingsGoals,
+  subcategories,
   transactions,
   userProfiles,
   users,
@@ -324,6 +325,153 @@ describe("foreign keys", () => {
     await testDb().delete(transactions).where(eq(transactions.id, tx!.id));
     const [after] = await testDb().select().from(goalContributions).where(eq(goalContributions.id, contribution!.id));
     expect(after!.transactionId).toBeNull();
+  });
+});
+
+describe("user isolation", () => {
+  // Targets of cross-row references, created for a given user.
+  const make = {
+    account: async (userId: string) => (await account(userId)).id,
+    category: async (userId: string) =>
+      (await testDb().insert(categories).values({ userId, name: "Food", type: "expense" }).returning())[0]!.id,
+    subcategory: async (userId: string) =>
+      (
+        await testDb()
+          .insert(subcategories)
+          .values({ userId, categoryId: await make.category(userId), name: "Lunch", sortOrder: 0 })
+          .returning()
+      )[0]!.id,
+    transaction: async (userId: string) =>
+      (
+        await testDb()
+          .insert(transactions)
+          .values({ userId, type: "expense", amount: 1, date: "2026-04-05" })
+          .returning()
+      )[0]!.id,
+    goal: async (userId: string) =>
+      (
+        await testDb()
+          .insert(savingsGoals)
+          .values({ userId, name: "Trip", targetAmount: 1_000, isVirtual: true })
+          .returning()
+      )[0]!.id,
+    debt: async (userId: string) =>
+      (
+        await testDb()
+          .insert(debts)
+          .values({ userId, name: "Loan", debtType: "loan", originalAmount: 1_000, currentBalance: 1_000 })
+          .returning()
+      )[0]!.id,
+  };
+
+  const transaction = (column: keyof typeof transactions.$inferInsert) => async (userId: string, id: string) => {
+    await testDb()
+      .insert(transactions)
+      .values({ userId, type: "transfer", amount: 1, date: "2026-04-05", [column]: id });
+  };
+  const contribution = (column: "goalId" | "transactionId") => async (userId: string, id: string) => {
+    const goalId = column === "goalId" ? id : await make.goal(userId);
+    await testDb()
+      .insert(goalContributions)
+      .values({ userId, goalId, amount: 10, date: "2026-04-05", [column]: id });
+  };
+  const payment = (column: "debtId" | "fromAccountId" | "sourceTransactionId" | "liabilityTransactionId") =>
+    async (userId: string, id: string) => {
+      const debtId = column === "debtId" ? id : await make.debt(userId);
+      await testDb()
+        .insert(debtPayments)
+        .values({ userId, debtId, amount: 10, principalAmount: 10, interestAmount: 0, date: "2026-04-05", [column]: id });
+    };
+
+  // Every composite key: the target it points at and an insert of a row of `userId` pointing at `id`.
+  const keys: { name: string; target: keyof typeof make; insert: (userId: string, id: string) => Promise<void> }[] = [
+    {
+      name: "subcategories_category_id_fk",
+      target: "category",
+      insert: async (userId, categoryId) => {
+        await testDb().insert(subcategories).values({ userId, categoryId, name: "Lunch", sortOrder: 0 });
+      },
+    },
+    { name: "transactions_account_id_fk", target: "account", insert: transaction("accountId") },
+    { name: "transactions_category_id_fk", target: "category", insert: transaction("categoryId") },
+    { name: "transactions_subcategory_id_fk", target: "subcategory", insert: transaction("subcategoryId") },
+    { name: "transactions_destination_account_id_fk", target: "account", insert: transaction("destinationAccountId") },
+    { name: "transactions_linked_transaction_id_fk", target: "transaction", insert: transaction("linkedTransactionId") },
+    {
+      name: "savings_goals_linked_account_id_fk",
+      target: "account",
+      insert: async (userId, linkedAccountId) => {
+        await testDb()
+          .insert(savingsGoals)
+          .values({ userId, name: "Trip", targetAmount: 1_000, isVirtual: false, linkedAccountId });
+      },
+    },
+    { name: "goal_contributions_goal_id_fk", target: "goal", insert: contribution("goalId") },
+    { name: "goal_contributions_transaction_id_fk", target: "transaction", insert: contribution("transactionId") },
+    {
+      name: "debts_linked_account_id_fk",
+      target: "account",
+      insert: async (userId, linkedAccountId) => {
+        await testDb()
+          .insert(debts)
+          .values({ userId, name: "Loan", debtType: "loan", originalAmount: 1, currentBalance: 1, linkedAccountId });
+      },
+    },
+    { name: "debt_payments_debt_id_fk", target: "debt", insert: payment("debtId") },
+    { name: "debt_payments_from_account_id_fk", target: "account", insert: payment("fromAccountId") },
+    { name: "debt_payments_source_transaction_id_fk", target: "transaction", insert: payment("sourceTransactionId") },
+    { name: "debt_payments_liability_transaction_id_fk", target: "transaction", insert: payment("liabilityTransactionId") },
+  ];
+
+  it("makes every key between domain rows (id, user_id), with SET NULL on the id only", async () => {
+    const rows = await testDb().execute<{ name: string; columns: string; target: string; on_delete: string; set_null: string | null }>(sql`
+      select c.conname as name,
+        (select string_agg(a.attname, ',' order by k.n) from unnest(c.conkey) with ordinality k(attnum, n)
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as columns,
+        (select string_agg(a.attname, ',' order by k.n) from unnest(c.confkey) with ordinality k(attnum, n)
+          join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) as target,
+        (select string_agg(a.attname, ',') from unnest(c.confdelsetcols) k(attnum)
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as set_null,
+        c.confdeltype as on_delete
+      from pg_constraint c
+      where c.contype = 'f' and c.connamespace = 'public'::regnamespace and c.confrelid <> 'users'::regclass
+      order by c.conname
+    `);
+    expect(rows.map((row) => row.name)).toEqual(keys.map((key) => key.name).sort());
+    const shape = rows.map((row) => {
+      const [column, owner] = row.columns.split(",");
+      return { name: row.name, owner, target: row.target, setNull: row.on_delete === "n" ? row.set_null === column : null };
+    });
+    const nulled = new Set(["transactions_category_id_fk", "transactions_subcategory_id_fk", "goal_contributions_transaction_id_fk"]);
+    expect(shape).toEqual(
+      rows.map((row) => ({ name: row.name, owner: "user_id", target: "id,user_id", setNull: nulled.has(row.name) ? true : null })),
+    );
+  });
+
+  for (const key of keys) {
+    it(`${key.name}: refuses another user's ${key.target}, accepts the owner's`, async () => {
+      const [owner, other] = await Promise.all([createTestUser(), createTestUser()]);
+      const target = await make[key.target](owner);
+      expect(await failure(key.insert(other, target))).toBe("23503");
+      await key.insert(owner, target);
+    });
+  }
+
+  it("refuses to move a row to another user while the owner's rows point at it", async () => {
+    const [owner, other] = await Promise.all([createTestUser(), createTestUser()]);
+    const accountId = await make.account(owner);
+    await transaction("accountId")(owner, accountId);
+    expect(await failure(testDb().update(accounts).set({ userId: other }).where(eq(accounts.id, accountId)))).toBe("23503");
+  });
+
+  it("nulls a deleted subcategory on transactions and keeps the owner", async () => {
+    const userId = await createTestUser();
+    const subcategoryId = await make.subcategory(userId);
+    await transaction("subcategoryId")(userId, subcategoryId);
+
+    await testDb().delete(subcategories).where(eq(subcategories.id, subcategoryId));
+    const [after] = await testDb().select().from(transactions);
+    expect(after).toMatchObject({ userId, subcategoryId: null });
   });
 });
 
