@@ -10,7 +10,7 @@ export const categoryOperations = {
     return { items: rows.map(categoryDto) };
   }),
 
-  defaults: operation(routes.categories.defaults, async () => ({ items: [...categories.DEFAULT_CATEGORIES] })),
+  defaults: operation(routes.categories.defaults, async () => ({ items: categories.DEFAULT_CATEGORIES })),
 
   seedDefaults: operation(routes.categories.seedDefaults, async (tx, user, input) => {
     const rows = await categories.seedDefaultCategories(tx, user.userId, { selectedNames: input.selectedNames });

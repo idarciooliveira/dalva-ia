@@ -561,7 +561,8 @@ export const categoryRestoreResponseSchema = categoryResponse;
 
 /**
  * Deletes the category and its subcategories for good, even while transactions
- * use them: those transactions lose the category and subcategory (archive to keep them).
+ * use them (archive to keep them). Those transactions become uncategorised;
+ * the Convex backend leaves their ids pointing at the deleted rows.
  */
 export const categoryDeleteRequestSchema = z.strictObject({ id: categoryIdSchema });
 export const categoryDeleteResponseSchema = deleted(categoryIdSchema);
@@ -573,6 +574,28 @@ export const defaultCategorySchema = z.object({
   icon: z.string(),
   color: z.string(),
 });
+
+/** What onboarding offers, in this order (also the seeded `sortOrder`). Both backends serve and seed this list. */
+export const DEFAULT_CATEGORIES: Array<z.input<typeof defaultCategorySchema>> = [
+  // Income
+  { name: "Salary", type: "income", icon: "banknote", color: "#2F5711" },
+  { name: "Freelance / Side Income", type: "income", icon: "laptop", color: "#4A7C23" },
+  { name: "Investments", type: "income", icon: "trending-up", color: "#1A6B3C" },
+  { name: "Gifts", type: "income", icon: "gift", color: "#7C3AED" },
+  { name: "Other Income", type: "income", icon: "plus-circle", color: "#6B7280" },
+  // Expense
+  { name: "Food & Dining", type: "expense", icon: "utensils", color: "#F97316" },
+  { name: "Transport", type: "expense", icon: "car", color: "#3B82F6" },
+  { name: "Housing & Rent", type: "expense", icon: "home", color: "#8B5CF6" },
+  { name: "Utilities", type: "expense", icon: "zap", color: "#EAB308" },
+  { name: "Entertainment", type: "expense", icon: "tv", color: "#EC4899" },
+  { name: "Health", type: "expense", icon: "heart-pulse", color: "#EF4444" },
+  { name: "Shopping", type: "expense", icon: "shopping-bag", color: "#F59E0B" },
+  { name: "Education", type: "expense", icon: "graduation-cap", color: "#0EA5E9" },
+  { name: "Subscriptions", type: "expense", icon: "repeat", color: "#6366F1" },
+  { name: "Other Expenses", type: "expense", icon: "more-horizontal", color: "#6B7280" },
+];
+
 export const categoryDefaultsRequestSchema = z.strictObject({});
 export const categoryDefaultsResponseSchema = list(defaultCategorySchema);
 
@@ -603,7 +626,7 @@ export const subcategoryArchiveResponseSchema = subcategoryResponse;
 export const subcategoryRestoreRequestSchema = z.strictObject({ id: subcategoryIdSchema });
 export const subcategoryRestoreResponseSchema = subcategoryResponse;
 
-/** For good, even while transactions use it: they lose the subcategory and keep the category. */
+/** For good, even while transactions use it: they keep the category and lose the subcategory (Convex: stale id). */
 export const subcategoryDeleteRequestSchema = z.strictObject({ id: subcategoryIdSchema });
 export const subcategoryDeleteResponseSchema = deleted(subcategoryIdSchema);
 

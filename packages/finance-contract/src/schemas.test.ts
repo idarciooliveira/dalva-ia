@@ -28,6 +28,8 @@ import {
   categorySeedDefaultsRequestSchema,
   subcategoryCreateRequestSchema,
   subcategoryUpdateRequestSchema,
+  categoryDefaultsResponseSchema,
+  DEFAULT_CATEGORIES,
 } from "./schemas";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
@@ -224,10 +226,25 @@ describe("category and subcategory management", () => {
     expect(categoryUpdateRequestSchema.safeParse({ id: "c", type: "income" }).success).toBe(false);
   });
 
+  it("offers 15 defaults with unique names, each one selectable by name", () => {
+    expect(categoryDefaultsResponseSchema.parse({ items: DEFAULT_CATEGORIES }).items).toHaveLength(15);
+    expect(new Set(DEFAULT_CATEGORIES.map((c) => c.name)).size).toBe(15);
+    expect(categorySeedDefaultsRequestSchema.safeParse({ selectedNames: DEFAULT_CATEGORIES.map((c) => c.name) }).success).toBe(true);
+  });
+
   it("seeds defaults by name; an empty selection is allowed", () => {
     expect(categorySeedDefaultsRequestSchema.safeParse({ selectedNames: [] }).success).toBe(true);
     expect(categorySeedDefaultsRequestSchema.safeParse({ selectedNames: ["Salary"] }).success).toBe(true);
     expect(categorySeedDefaultsRequestSchema.safeParse({}).success).toBe(false);
+    expect(categorySeedDefaultsRequestSchema.safeParse({ selectedNames: [""] }).success).toBe(false);
+    expect(categorySeedDefaultsRequestSchema.safeParse({ selectedNames: Array(51).fill("Salary") }).success).toBe(false);
+  });
+
+  it("caps lengths: name 100, icon and color 64", () => {
+    expect(categoryCreateRequestSchema.safeParse({ ...base, name: "x".repeat(100) }).success).toBe(true);
+    expect(categoryCreateRequestSchema.safeParse({ ...base, name: "x".repeat(101) }).success).toBe(false);
+    expect(categoryCreateRequestSchema.safeParse({ ...base, icon: "x".repeat(65) }).success).toBe(false);
+    expect(categoryCreateRequestSchema.safeParse({ ...base, color: "x".repeat(65) }).success).toBe(false);
   });
 
   it("subcategories: trimmed non-blank name, the parent can't move", () => {
