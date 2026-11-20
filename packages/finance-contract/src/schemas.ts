@@ -517,6 +517,96 @@ export const profileCreateResponseSchema = z.object({ profile: profileSchema });
 export const profileCompleteOnboardingRequestSchema = z.strictObject({});
 export const profileCompleteOnboardingResponseSchema = z.object({ profile: profileSchema });
 
+/*
+ * Category and subcategory management, default categories: web-only routes
+ * (`webOnly` in routes.ts), like account management.
+ */
+
+/** Names are trimmed; blank is `validation_failed`. Not unique: two categories may share a name. */
+const categoryName = z.string().trim().min(1).max(100);
+/** Lucide icon name or color (hex, e.g. "#9FE870"), as chosen in the app. */
+const categoryStyle = shortText(64);
+const categoryResponse = z.object({ category: categorySchema });
+const subcategoryResponse = z.object({ subcategory: subcategorySchema });
+
+/** Placed last within its type (`sortOrder`). `isDefault` is false. */
+export const categoryCreateRequestSchema = z.strictObject({
+  name: categoryName,
+  type: categoryTypeSchema,
+  icon: categoryStyle,
+  color: categoryStyle,
+});
+export const categoryCreateResponseSchema = categoryResponse;
+
+/** Only the given fields change. The type can't be changed. */
+export const categoryUpdateRequestSchema = z
+  .strictObject({
+    id: categoryIdSchema,
+    name: categoryName.optional(),
+    icon: categoryStyle.optional(),
+    color: categoryStyle.optional(),
+  })
+  .refine(hasChangesBesidesId, { message: NO_CHANGES });
+export const categoryUpdateResponseSchema = categoryResponse;
+
+/**
+ * Archiving hides the category from `categories.list` (unless `includeArchived`)
+ * and archives its subcategories too; transactions keep it. Restore brings back
+ * the category only: its subcategories stay archived until restored one by one.
+ */
+export const categoryArchiveRequestSchema = z.strictObject({ id: categoryIdSchema });
+export const categoryArchiveResponseSchema = categoryResponse;
+export const categoryRestoreRequestSchema = z.strictObject({ id: categoryIdSchema });
+export const categoryRestoreResponseSchema = categoryResponse;
+
+/**
+ * Deletes the category and its subcategories for good, even while transactions
+ * use them: those transactions lose the category and subcategory (archive to keep them).
+ */
+export const categoryDeleteRequestSchema = z.strictObject({ id: categoryIdSchema });
+export const categoryDeleteResponseSchema = deleted(categoryIdSchema);
+
+/** A category onboarding offers. `name` is what `categories.seedDefaults` selects by. */
+export const defaultCategorySchema = z.object({
+  name: z.string(),
+  type: categoryTypeSchema,
+  icon: z.string(),
+  color: z.string(),
+});
+export const categoryDefaultsRequestSchema = z.strictObject({});
+export const categoryDefaultsResponseSchema = list(defaultCategorySchema);
+
+/**
+ * Onboarding: create the selected default categories (`isDefault: true`), or
+ * all of them when `selectedNames` is empty; unknown names are ignored. Does
+ * nothing once the user has any category, archived included. Returns the
+ * categories it created (none when it did nothing).
+ */
+export const categorySeedDefaultsRequestSchema = z.strictObject({
+  selectedNames: z.array(shortText(100)).max(50),
+});
+export const categorySeedDefaultsResponseSchema = list(categorySchema);
+
+/** Placed last within its category. The parent may be archived. */
+export const subcategoryCreateRequestSchema = z.strictObject({
+  categoryId: categoryIdSchema,
+  name: categoryName,
+});
+export const subcategoryCreateResponseSchema = subcategoryResponse;
+
+/** Rename. The parent category can't be changed. */
+export const subcategoryUpdateRequestSchema = z.strictObject({ id: subcategoryIdSchema, name: categoryName });
+export const subcategoryUpdateResponseSchema = subcategoryResponse;
+
+export const subcategoryArchiveRequestSchema = z.strictObject({ id: subcategoryIdSchema });
+export const subcategoryArchiveResponseSchema = subcategoryResponse;
+export const subcategoryRestoreRequestSchema = z.strictObject({ id: subcategoryIdSchema });
+export const subcategoryRestoreResponseSchema = subcategoryResponse;
+
+/** For good, even while transactions use it: they lose the subcategory and keep the category. */
+export const subcategoryDeleteRequestSchema = z.strictObject({ id: subcategoryIdSchema });
+export const subcategoryDeleteResponseSchema = deleted(subcategoryIdSchema);
+
 export const goalContributionAddRequestSchema = z.strictObject({
   goalId: goalIdSchema,
   amount: positiveMoneySchema,
@@ -911,6 +1001,7 @@ export const agentHistoryDeleteResponseSchema = z.object({ deleted: z.literal(tr
 export type Account = z.output<typeof accountSchema>;
 export type Profile = z.output<typeof profileSchema>;
 export type Category = z.output<typeof categorySchema>;
+export type DefaultCategory = z.output<typeof defaultCategorySchema>;
 export type Subcategory = z.output<typeof subcategorySchema>;
 export type Transaction = z.output<typeof transactionSchema>;
 export type Transfer = z.output<typeof transferSchema>;
