@@ -423,8 +423,17 @@ describe("user isolation", () => {
     { name: "debt_payments_liability_transaction_id_fk", target: "transaction", insert: payment("liabilityTransactionId") },
   ];
 
-  it("makes every key between domain rows (id, user_id), with SET NULL on the id only", async () => {
-    const rows = await testDb().execute<{ name: string; columns: string; target: string; on_delete: string; set_null: string | null }>(sql`
+  it("makes every key between domain rows (id, user_id), deferred, with SET NULL on the id only", async () => {
+    const rows = await testDb().execute<{
+      name: string;
+      columns: string;
+      target: string;
+      on_delete: string;
+      on_update: string;
+      match: string;
+      deferred: boolean;
+      set_null: string | null;
+    }>(sql`
       select c.conname as name,
         (select string_agg(a.attname, ',' order by k.n) from unnest(c.conkey) with ordinality k(attnum, n)
           join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as columns,
@@ -432,20 +441,29 @@ describe("user isolation", () => {
           join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) as target,
         (select string_agg(a.attname, ',') from unnest(c.confdelsetcols) k(attnum)
           join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as set_null,
-        c.confdeltype as on_delete
+        c.confdeltype as on_delete, c.confupdtype as on_update, c.confmatchtype as match,
+        c.condeferrable and c.condeferred as deferred
       from pg_constraint c
       where c.contype = 'f' and c.connamespace = 'public'::regnamespace and c.confrelid <> 'users'::regclass
       order by c.conname
     `);
     expect(rows.map((row) => row.name)).toEqual(keys.map((key) => key.name).sort());
-    const shape = rows.map((row) => {
-      const [column, owner] = row.columns.split(",");
-      return { name: row.name, owner, target: row.target, setNull: row.on_delete === "n" ? row.set_null === column : null };
-    });
+
+    // Same ON DELETE as before: these three nulled the reference, the others refuse the delete at commit.
     const nulled = new Set(["transactions_category_id_fk", "transactions_subcategory_id_fk", "goal_contributions_transaction_id_fk"]);
-    expect(shape).toEqual(
-      rows.map((row) => ({ name: row.name, owner: "user_id", target: "id,user_id", setNull: nulled.has(row.name) ? true : null })),
-    );
+    for (const row of rows) {
+      const [column] = row.columns.split(",");
+      expect(row).toEqual({
+        name: row.name,
+        columns: `${column},user_id`,
+        target: "id,user_id",
+        on_delete: nulled.has(row.name) ? "n" : "a",
+        on_update: "a",
+        match: "s",
+        deferred: true,
+        set_null: nulled.has(row.name) ? column : null,
+      });
+    }
   });
 
   for (const key of keys) {
@@ -462,6 +480,8 @@ describe("user isolation", () => {
     const accountId = await make.account(owner);
     await transaction("accountId")(owner, accountId);
     expect(await failure(testDb().update(accounts).set({ userId: other }).where(eq(accounts.id, accountId)))).toBe("23503");
+    // And the other way: a row can't move to another user while it points at the owner's row.
+    expect(await failure(testDb().update(transactions).set({ userId: other }))).toBe("23503");
   });
 
   it("nulls a deleted subcategory on transactions and keeps the owner", async () => {

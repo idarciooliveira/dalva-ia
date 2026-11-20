@@ -173,7 +173,7 @@ Done when: the stack runs on the VPS under a staging hostname with an empty data
 ### PR 13: data migration and cutover (M)
 
 - `scripts/migrate-from-convex.ts`: reads a `convex export`, maps ids, writes Postgres. Migrates users and password hashes, profiles, all finance tables, channel identities.
-- Import rules: lowercase emails and merge case-only duplicates; supply `users.name`; validate password hashes as lowercase hex; build UUIDv7 ids from `_creationTime`; check every amount is an integer; write null for dangling account and transaction references.
+- Import rules: lowercase emails and merge case-only duplicates; supply `users.name`; validate password hashes as lowercase hex; build UUIDv7 ids from `_creationTime`; check every amount is an integer; write null for dangling account and transaction references. Composite FKs refuse cross-user references (Convex never checked them): the dry run reports them; nullable columns get null, non-nullable ones (`subcategories.category_id`, `goal_contributions.goal_id`, `debt_payments.debt_id`) fail the import.
 - Verification: row counts per table; each account balance recomputed from its transactions; orphan count reported.
 - Runbook in `docs/deploy.md`.
 
