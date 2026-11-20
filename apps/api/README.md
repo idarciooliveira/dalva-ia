@@ -15,6 +15,14 @@ bun run dev:api                                # http://localhost:4000/health
 
 Config is validated at boot (`src/config.ts`); a bad variable is named in the error, its value never is.
 
+## Auth
+
+Better Auth, email and password, mounted at `/api/auth/*` (`src/auth/auth.ts`). Sessions are httpOnly, SameSite=Lax cookies (`Secure` when `PUBLIC_URL` is https) that last 30 days and renew daily while in use. Web and API share one origin behind the proxy, so auth writes posted from any other origin are refused. Rate limits on sign-in and sign-up are per client address and need `CLIENT_IP_HEADER`, a header the proxy overwrites (required in production, off locally).
+
+Contract routes under `/api/v1/*` get a principal from `src/http/principal.ts`: one middleware turns the request into "who is calling, with what scopes", and routes guard with `requireUser(...scopes)`. Today the only source is the session cookie (full finance access); the agent's bearer token and service key slot in as further sources. Anonymous or invalid credentials answer with the contract's `unauthorized` envelope, a missing scope with `forbidden`.
+
+Password hashes from Convex Auth (Lucia `Scrypt`) use the same format as Better Auth's and verify as they are, so imported users keep their passwords.
+
 ## Schema and migrations
 
 - `src/db/schema.ts` is the source of truth. After changing it, run `bun run db:generate` and commit the new file in `drizzle/`. CI fails when the schema and the migrations disagree.

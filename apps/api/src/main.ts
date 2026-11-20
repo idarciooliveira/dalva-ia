@@ -1,5 +1,6 @@
 import { createApp } from "./app";
-import { ConfigError, databasePassword, loadConfig } from "./config";
+import { createAuth } from "./auth/auth";
+import { ConfigError, configSecrets, loadConfig } from "./config";
 import { createDatabase } from "./db/client";
 import { createLogger, errorFields } from "./log";
 
@@ -19,12 +20,20 @@ function main() {
     throw error;
   }
 
-  const logger = createLogger({ level: config.LOG_LEVEL, secrets: [databasePassword(config)] });
+  const logger = createLogger({ level: config.LOG_LEVEL, secrets: configSecrets(config) });
   // Connections open lazily; /health reports whether the database answers.
   const database = createDatabase({ url: config.DATABASE_URL, max: config.DATABASE_POOL_MAX });
-  const app = createApp({ db: database.db, logger });
+  const auth = createAuth({
+    db: database.db,
+    logger,
+    publicUrl: config.PUBLIC_URL,
+    secret: config.BETTER_AUTH_SECRET,
+    clientIpHeader: config.CLIENT_IP_HEADER,
+  });
+  if (!config.CLIENT_IP_HEADER) logger.warn("auth_rate_limit_off", { reason: "CLIENT_IP_HEADER unset" });
+  const app = createApp({ db: database.db, logger, auth, publicUrl: config.PUBLIC_URL });
   const server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
-  logger.info("server_started", { port: config.PORT });
+  logger.info("server_started", { port: config.PORT, publicUrl: config.PUBLIC_URL });
 
   let stopping = false;
   const shutdown = async (signal: string) => {

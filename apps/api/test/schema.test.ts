@@ -16,8 +16,10 @@ import {
   savingsGoals,
   transactions,
   userProfiles,
+  users,
 } from "../src/db/schema";
 import { sqlState, withTx } from "../src/db/tx";
+import { createTestUser } from "./app";
 import { testDb } from "./db";
 
 const failure = (promise: Promise<unknown>) =>
@@ -28,7 +30,8 @@ const failure = (promise: Promise<unknown>) =>
     (error: unknown) => sqlState(error),
   );
 
-async function account(userId = randomUUID(), balance = 0) {
+async function account(userId?: string, balance = 0) {
+  userId ??= await createTestUser();
   const [row] = await testDb()
     .insert(accounts)
     .values({ userId, name: "Bank", type: "bank", balance, currency: "USD" })
@@ -46,7 +49,7 @@ describe("ids and types", () => {
   });
 
   it("reads money as numbers, calendar dates as strings and instants as Dates", async () => {
-    const acct = await account(randomUUID(), 2 ** 40);
+    const acct = await account(undefined, 2 ** 40);
     expect(acct.balance).toBe(2 ** 40);
     expect(acct.archived).toBe(false);
     expect(acct.createdAt).toBeInstanceOf(Date);
@@ -67,7 +70,7 @@ describe("ids and types", () => {
 
   it("rejects values outside an enum", async () => {
     const code = await failure(
-      testDb().execute(sql`insert into accounts (user_id, name, type, balance, currency) values (${randomUUID()}, 'x', 'crypto', 0, 'USD')`),
+      testDb().execute(sql`insert into accounts (user_id, name, type, balance, currency) values (${await createTestUser()}, 'x', 'crypto', 0, 'USD')`),
     );
     expect(code).toBe("22P02");
   });
@@ -76,7 +79,7 @@ describe("ids and types", () => {
     const [row] = await testDb()
       .insert(channelIdentities)
       .values({
-        userId: randomUUID(),
+        userId: await createTestUser(),
         channel: "telegram",
         externalUserId: "42",
         chatId: "42",
@@ -91,8 +94,8 @@ describe("ids and types", () => {
 });
 
 describe("uniqueness", () => {
-  const identity = (overrides: Partial<typeof channelIdentities.$inferInsert> = {}) => ({
-    userId: randomUUID(),
+  const identity = (userId: string, overrides: Partial<typeof channelIdentities.$inferInsert> = {}) => ({
+    userId,
     channel: "telegram" as const,
     externalUserId: "1001",
     chatId: "1001",
@@ -103,19 +106,20 @@ describe("uniqueness", () => {
   });
 
   it("allows one active identity per chat account, any number of unlinked ones", async () => {
-    const [first] = await testDb().insert(channelIdentities).values(identity()).returning();
-    expect(await failure(testDb().insert(channelIdentities).values(identity()))).toBe("23505");
+    const [a, b, c, d] = await Promise.all([createTestUser(), createTestUser(), createTestUser(), createTestUser()]);
+    const [first] = await testDb().insert(channelIdentities).values(identity(a)).returning();
+    expect(await failure(testDb().insert(channelIdentities).values(identity(b)))).toBe("23505");
 
     await testDb().update(channelIdentities).set({ unlinkedAt: new Date() }).where(eq(channelIdentities.id, first!.id));
-    await testDb().insert(channelIdentities).values(identity());
-    await testDb().insert(channelIdentities).values(identity({ unlinkedAt: new Date() }));
+    await testDb().insert(channelIdentities).values(identity(c));
+    await testDb().insert(channelIdentities).values(identity(d, { unlinkedAt: new Date() }));
   });
 
   it("allows one active identity per user and channel", async () => {
-    const userId = randomUUID();
-    await testDb().insert(channelIdentities).values(identity({ userId, externalUserId: "1", chatId: "1" }));
+    const userId = await createTestUser();
+    await testDb().insert(channelIdentities).values(identity(userId, { externalUserId: "1", chatId: "1" }));
     expect(
-      await failure(testDb().insert(channelIdentities).values(identity({ userId, externalUserId: "2", chatId: "2" }))),
+      await failure(testDb().insert(channelIdentities).values(identity(userId, { externalUserId: "2", chatId: "2" }))),
     ).toBe("23505");
   });
 
@@ -127,22 +131,22 @@ describe("uniqueness", () => {
       expiresAt: new Date(Date.now() + 600_000),
       consentAt: new Date(),
     });
-    const userId = randomUUID();
+    const userId = await createTestUser();
     await testDb().insert(channelLinkCodes).values(code(userId, "a".repeat(64)));
-    expect(await failure(testDb().insert(channelLinkCodes).values(code(randomUUID(), "a".repeat(64))))).toBe("23505");
+    expect(await failure(testDb().insert(channelLinkCodes).values(code(await createTestUser(), "a".repeat(64))))).toBe("23505");
     expect(await failure(testDb().insert(channelLinkCodes).values(code(userId, "b".repeat(64))))).toBe("23505");
   });
 
   it("scopes idempotency keys per user", async () => {
     const row = (userId: string) => ({ userId, key: "key-12345", requestHash: "h", response: { id: "x" } });
-    const userId = randomUUID();
+    const userId = await createTestUser();
     await testDb().insert(apiIdempotencyKeys).values(row(userId));
-    await testDb().insert(apiIdempotencyKeys).values(row(randomUUID()));
+    await testDb().insert(apiIdempotencyKeys).values(row(await createTestUser()));
     expect(await failure(testDb().insert(apiIdempotencyKeys).values(row(userId)))).toBe("23505");
   });
 
   it("allows one profile per user", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     await testDb().insert(userProfiles).values({ userId, baseCurrency: "USD" });
     expect(await failure(testDb().insert(userProfiles).values({ userId, baseCurrency: "EUR" }))).toBe("23505");
   });
@@ -161,7 +165,7 @@ describe("foreign keys", () => {
   });
 
   it("lets a transfer's legs reference each other and be deleted in either order", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const from = await account(userId);
     const to = await account(userId);
     const transferGroupId = randomUUID();
@@ -202,7 +206,7 @@ describe("foreign keys", () => {
   });
 
   it("refuses, at commit, to delete one leg alone or an account still in use", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const acct = await account(userId);
     const [tx] = await testDb()
       .insert(transactions)
@@ -222,7 +226,7 @@ describe("foreign keys", () => {
   });
 
   it("lets a debt payment be deleted after its transactions, as the Convex code does", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const acct = await account(userId);
     const [debt] = await testDb()
       .insert(debts)
@@ -256,11 +260,11 @@ describe("foreign keys", () => {
   it("accepts null for references Convex left dangling (legacy rows)", async () => {
     const [debt] = await testDb()
       .insert(debts)
-      .values({ userId: randomUUID(), name: "Loan", debtType: "loan", originalAmount: 1_000, currentBalance: 900 })
+      .values({ userId: await createTestUser(), name: "Loan", debtType: "loan", originalAmount: 1_000, currentBalance: 900 })
       .returning();
     await testDb()
       .insert(transactions)
-      .values({ userId: randomUUID(), type: "expense", amount: 5, accountId: null, date: "2026-01-02" });
+      .values({ userId: debt!.userId, type: "expense", amount: 5, accountId: null, date: "2026-01-02" });
     await testDb().insert(debtPayments).values({
       userId: debt!.userId,
       debtId: debt!.id,
@@ -274,7 +278,7 @@ describe("foreign keys", () => {
   });
 
   it("checks references at commit, so rows can be inserted before what they point at", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const accountId = randomUUID();
     const categoryId = randomUUID();
     await withTx(testDb(), async (tx) => {
@@ -288,7 +292,7 @@ describe("foreign keys", () => {
   });
 
   it("nulls the category of transactions when the category is deleted", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const acct = await account(userId);
     const [category] = await testDb().insert(categories).values({ userId, name: "Food", type: "expense" }).returning();
     const [tx] = await testDb()
@@ -302,7 +306,7 @@ describe("foreign keys", () => {
   });
 
   it("nulls a goal contribution's transaction when the transfer is deleted on its own", async () => {
-    const userId = randomUUID();
+    const userId = await createTestUser();
     const acct = await account(userId);
     const [goal] = await testDb()
       .insert(savingsGoals)
@@ -320,5 +324,21 @@ describe("foreign keys", () => {
     await testDb().delete(transactions).where(eq(transactions.id, tx!.id));
     const [after] = await testDb().select().from(goalContributions).where(eq(goalContributions.id, contribution!.id));
     expect(after!.transactionId).toBeNull();
+  });
+});
+
+describe("users", () => {
+  it("refuses to delete a user who still owns finance data", async () => {
+    const userId = await createTestUser();
+    await account(userId);
+    expect(await failure(testDb().delete(users).where(eq(users.id, userId)))).toBe("23001");
+  });
+
+  it("refuses rows for a user that doesn't exist", async () => {
+    expect(await failure(account(randomUUID()))).toBe("23503");
+  });
+
+  it("stores emails lowercase only", async () => {
+    expect(await failure(createTestUser("Someone@Example.com"))).toBe("23514");
   });
 });

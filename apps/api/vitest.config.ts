@@ -8,5 +8,7 @@ export default defineConfig({
     globalSetup: ["./test/global-setup.ts"],
     setupFiles: ["./test/setup.ts"],
     hookTimeout: 30_000,
+    // Auth tests hash passwords with scrypt (CPU-bound by design); leave room when every suite runs at once.
+    testTimeout: 15_000,
   },
 });
