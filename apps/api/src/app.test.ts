@@ -1,7 +1,7 @@
 import { errorEnvelopeSchema } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
-import { silentLogger as silent, testApp, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../test/app";
+import { silentLogger as silent, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../test/app";
 import { createApp } from "./app";
 import { createAuth } from "./auth/auth";
 import { createDatabase } from "./db/client";
@@ -19,7 +19,7 @@ describe("GET /health", () => {
     const unreachable = createDatabase({ url: "postgres://nobody:x@127.0.0.1:1/none", max: 1, connectTimeoutSeconds: 1 });
     try {
       const auth = createAuth({ db: unreachable.db, logger: silent, publicUrl: TEST_PUBLIC_URL, secret: TEST_AUTH_SECRET });
-      const app = createApp({ db: unreachable.db, logger: silent, auth, publicUrl: TEST_PUBLIC_URL, healthTimeoutMs: 3_000 });
+      const app = createApp({ db: unreachable.db, logger: silent, auth, tokens: testTokens, publicUrl: TEST_PUBLIC_URL, healthTimeoutMs: 3_000 });
       const res = await app.request("/health");
       expect(res.status).toBe(503);
       expect(await res.json()).toEqual({ ok: false, database: "down" });

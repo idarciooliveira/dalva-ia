@@ -1,5 +1,6 @@
 import { createApp } from "./app";
 import { createAuth } from "./auth/auth";
+import { createUserTokens } from "./auth/tokens";
 import { ConfigError, configSecrets, loadConfig } from "./config";
 import { createDatabase } from "./db/client";
 import { createLogger, errorFields } from "./log";
@@ -31,7 +32,8 @@ function main() {
     clientIpHeader: config.CLIENT_IP_HEADER,
   });
   if (!config.CLIENT_IP_HEADER) logger.warn("auth_rate_limit_off", { reason: "CLIENT_IP_HEADER unset" });
-  const app = createApp({ db: database.db, logger, auth, publicUrl: config.PUBLIC_URL });
+  const tokens = createUserTokens(config.FINANCE_API_TOKEN_SECRET);
+  const app = createApp({ db: database.db, logger, auth, tokens, publicUrl: config.PUBLIC_URL });
   const server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
   logger.info("server_started", { port: config.PORT, publicUrl: config.PUBLIC_URL });
 

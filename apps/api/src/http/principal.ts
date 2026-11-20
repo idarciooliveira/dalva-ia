@@ -1,31 +1,43 @@
 /**
  * Who is calling, with what permissions. `resolvePrincipal` runs once per
- * request (on `/api/v1/*`) and stores the result in the context; route guards
- * (`requireUser`) read it. Nothing downstream looks at cookies or headers.
+ * request (on `/api/v1/*`) and stores the result in the context; the contract
+ * router (and `requireUser` on hand-written routes) reads it. Nothing
+ * downstream looks at cookies or headers.
  *
  * Sources, tried in order; the first one that recognises its credential decides:
- * - session cookie (this PR): a signed-in web user, full finance access.
- * - bearer user token (later): the agent acting for a user, with the token's
- *   scopes and channel identity.
- * - service key (later): the agent's own routes; no user.
+ * - service key (PR 8): `Authorization: Bearer <FINANCE_API_SERVICE_KEY>`, the
+ *   agent's own routes; no user. It must come first: it is a bearer credential
+ *   too, and the user-token source rejects anything that isn't a valid token.
+ * - bearer user token: the agent acting for a user, with the token's scopes
+ *   and channel identity (`cid`).
+ * - session cookie: a signed-in web user, full finance access.
  * A request that carries `Authorization` is never authenticated by cookie, so
  * a bad or unknown bearer credential can't fall back to a browser session.
  */
-import { fail } from "@mpf/finance-contract";
+import { parseBearerToken, type TokenScope } from "@mpf/finance-contract";
 import { isAPIError } from "better-auth/api";
 import { getSessionCookie } from "better-auth/cookies";
 import type { Context, MiddlewareHandler } from "hono";
 
 import { type Auth, COOKIE_PREFIX } from "../auth/auth";
+import type { UserTokens } from "../auth/tokens";
+import { isUuid } from "../db/ids";
+import { errorResponse } from "./errors";
 
-export type Scope = "finance:read" | "finance:write" | "agent:state";
+export type Scope = TokenScope;
 
 export interface UserPrincipal {
   kind: "user";
   userId: string;
   scopes: readonly Scope[];
   /** How the caller proved who they are. */
-  via: "session";
+  via: "session" | "token";
+  /**
+   * Tokens minted for a linked chat carry its identity. The router re-checks
+   * it inside each request's transaction, so unlinking or switching to
+   * read-only applies at once (see `channelTokenProblem`).
+   */
+  channelIdentityId?: string;
 }
 
 /** Grows a `ServicePrincipal` with the service key. */
@@ -37,8 +49,8 @@ export type SourceResult =
   /** This source's credential isn't on the request. */
   | { status: "absent" }
   | { status: "ok"; principal: Principal }
-  /** The credential is there but wrong, forged, expired or revoked. */
-  | { status: "invalid" };
+  /** The credential is there but wrong, forged, expired or revoked. `message` is safe to send back. */
+  | { status: "invalid"; message?: string };
 
 /** One way to authenticate. May attach headers to the response (e.g. a renewed session cookie). */
 export type PrincipalSource = (c: Context<AppEnv>) => Promise<SourceResult>;
@@ -83,6 +95,30 @@ export function sessionSource(auth: Auth, options: { publicUrl: string }): Princ
 }
 
 /**
+ * `Authorization: Bearer <user token>` → the token's user, scopes and channel
+ * identity. Tokens are HS256 JWTs (`../auth/tokens.ts`), minted for the chat
+ * agent. The user isn't looked up: a token is only ever minted for a user
+ * that exists, and users are never deleted.
+ */
+export function userTokenSource(tokens: UserTokens): PrincipalSource {
+  return async (c) => {
+    const header = c.req.header("authorization");
+    if (header === undefined) return { status: "absent" };
+    const token = parseBearerToken(header);
+    if (!token) return { status: "invalid", message: "Missing bearer token" };
+    const result = await tokens.verify(token);
+    if (!result.ok) return { status: "invalid", message: result.reason === "expired" ? "Token expired" : "Invalid token" };
+    const { sub, scopes, cid } = result.claims;
+    // Ids are UUIDs here; anything else can't name a user or identity (and would fail the query).
+    if (!isUuid(sub) || (cid !== undefined && !isUuid(cid))) return { status: "invalid", message: "Invalid token" };
+    return {
+      status: "ok",
+      principal: { kind: "user", userId: sub, scopes, via: "token", ...(cid ? { channelIdentityId: cid } : {}) },
+    };
+  };
+}
+
+/**
  * Resolve the caller and store it as `principal` (null when anonymous). Only
  * an invalid credential is answered here (401); anonymous requests go on, and
  * each route decides with a guard. Errors (e.g. the database is down) reach
@@ -94,7 +130,7 @@ export function resolvePrincipal(sources: readonly PrincipalSource[]): Middlewar
     for (const source of sources) {
       const result = await source(c);
       if (result.status === "absent") continue;
-      if (result.status === "invalid") return c.json(fail("unauthorized", "Invalid or expired credentials"), 401);
+      if (result.status === "invalid") return errorResponse(c, "unauthorized", result.message ?? "Invalid or expired credentials");
       c.set("principal", result.principal);
       break;
     }
@@ -106,11 +142,9 @@ export function resolvePrincipal(sources: readonly PrincipalSource[]): Middlewar
 export function requireUser(...scopes: Scope[]): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const principal = c.get("principal");
-    if (!principal || principal.kind !== "user") {
-      return c.json(fail("unauthorized", "Authentication required"), 401);
-    }
+    if (!principal || principal.kind !== "user") return errorResponse(c, "unauthorized", "Authentication required");
     const missing = scopes.filter((scope) => !principal.scopes.includes(scope));
-    if (missing.length > 0) return c.json(fail("forbidden", `Missing scope: ${missing.join(" ")}`), 403);
+    if (missing.length > 0) return errorResponse(c, "forbidden", `Missing scope: ${missing.join(" ")}`);
     await next();
   };
 }
