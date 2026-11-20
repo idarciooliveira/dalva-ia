@@ -13,8 +13,11 @@
  *   Unlike Convex's string compare, a `date` bound must be a real day: code
  *   that builds `${month}-31` as a month's end must compute the last day.
  * - Closed sets of values are Postgres enums.
+ * - Foreign keys between domain rows are composite, `(x_id, user_id)
+ *   REFERENCES t (id, user_id)` ({@link ownedBy}): Postgres refuses a row
+ *   that points at another user's row.
  * - Foreign keys between domain rows are `DEFERRABLE INITIALLY DEFERRED`
- *   (migration 0001, Drizzle can't declare it): they are checked at commit, so
+ *   (migrations 0001 and 0003, Drizzle can't declare it): they are checked at commit, so
  *   code ported from Convex may write and delete linked rows in any order
  *   within one transaction, and an import may load tables in any order. The
  *   three `ON DELETE SET NULL` keys reproduce what Convex did with a dangling
@@ -24,14 +27,17 @@
  *   (`if (account)`, "Unknown" account, `unknown_currency` in reports). Those
  *   references are nullable here: null means "deleted before the guards"; the
  *   import writes null for a dangling id. New ones can't dangle (the keys).
+ *   Convex never checked ownership either: the import also writes null for a
+ *   nullable reference to another user's row, which the composite keys refuse.
  */
 import { sql } from "drizzle-orm";
 import {
-  type AnyPgColumn,
+  type PgColumn,
   bigint,
   boolean,
   date,
   doublePrecision,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -39,6 +45,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -65,6 +72,24 @@ const day = (name: string) => date(name, { mode: "string" });
 const instant = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 /** UTC calendar date of the insert, as Convex's `new Date().toISOString().slice(0, 10)`. */
 const createdOn = () => day("created_on").notNull().default(sql`(now() at time zone 'utc')::date`);
+
+/** `UNIQUE (id, user_id)`: the target of {@link ownedBy} keys. */
+const ownerKey = (table: string, t: { id: PgColumn; userId: PgColumn }) =>
+  unique(`${table}_id_user_id_key`).on(t.id, t.userId);
+
+/**
+ * `(column, user_id) REFERENCES target (id, user_id)`: a row can only point at
+ * a row of the same user. MATCH SIMPLE, so a null `column` passes. Named
+ * `<table>_<column>_fk` (Drizzle's default name passes Postgres's 63 chars).
+ * Migration 0003 makes these DEFERRABLE INITIALLY DEFERRED and writes
+ * `onDelete: "set null"` as `SET NULL (column)`, so `user_id` is never nulled.
+ */
+const ownedBy = (
+  table: string,
+  column: PgColumn,
+  t: { userId: PgColumn },
+  target: { id: PgColumn; userId: PgColumn },
+) => foreignKey({ name: `${table}_${column.name}_fk`, columns: [column, t.userId], foreignColumns: [target.id, target.userId] });
 
 /* -------------------------------------------------------------------------- */
 /*  Enums                                                                     */
@@ -136,7 +161,7 @@ export const accounts = pgTable(
     archived: boolean("archived").notNull().default(false),
     createdAt: createdAt(),
   },
-  (t) => [index("accounts_user_id_idx").on(t.userId, t.createdAt)],
+  (t) => [index("accounts_user_id_idx").on(t.userId, t.createdAt), ownerKey("accounts", t)],
 );
 
 /* -------------------------------------------------------------------------- */
@@ -165,6 +190,7 @@ export const categories = pgTable(
   (t) => [
     index("categories_user_id_idx").on(t.userId, t.createdAt),
     index("categories_user_id_type_idx").on(t.userId, t.type, t.createdAt),
+    ownerKey("categories", t),
   ],
 );
 
@@ -174,9 +200,7 @@ export const subcategories = pgTable(
     id: id(),
     userId: userId(),
     /** Deferred FK. The category delete removes its subcategories first. */
-    categoryId: uuid("category_id")
-      .notNull()
-      .references(() => categories.id),
+    categoryId: uuid("category_id").notNull(),
     name: text("name").notNull(),
     archived: boolean("archived").notNull().default(false),
     sortOrder: integer("sort_order").notNull(),
@@ -185,6 +209,8 @@ export const subcategories = pgTable(
   (t) => [
     index("subcategories_category_id_idx").on(t.categoryId, t.createdAt),
     index("subcategories_user_id_idx").on(t.userId, t.createdAt),
+    ownerKey("subcategories", t),
+    ownedBy("subcategories", t.categoryId, t, categories),
   ],
 );
 
@@ -204,13 +230,13 @@ export const transactions = pgTable(
      * Deferred FK: an account can only be deleted once nothing references it.
      * Null only on legacy rows whose account Convex deleted (see the header).
      */
-    accountId: uuid("account_id").references(() => accounts.id),
+    accountId: uuid("account_id"),
     /**
      * Categories and subcategories can be deleted while transactions use
      * them; Convex left the id dangling (shown as unknown), here it is nulled.
      */
-    categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
-    subcategoryId: uuid("subcategory_id").references(() => subcategories.id, { onDelete: "set null" }),
+    categoryId: uuid("category_id"),
+    subcategoryId: uuid("subcategory_id"),
     date: day("date").notNull(),
     description: text("description"),
     note: text("note"),
@@ -219,9 +245,9 @@ export const transactions = pgTable(
 
     // Transfer legs only (type = 'transfer').
     /** Receiving account, set on the outgoing leg. Deferred FK. */
-    destinationAccountId: uuid("destination_account_id").references(() => accounts.id),
+    destinationAccountId: uuid("destination_account_id"),
     /** The other leg. Deferred FK: the legs point at each other and are deleted together. */
-    linkedTransactionId: uuid("linked_transaction_id").references((): AnyPgColumn => transactions.id),
+    linkedTransactionId: uuid("linked_transaction_id"),
     /** Shared by both legs. */
     transferGroupId: uuid("transfer_group_id"),
     createdAt: createdAt(),
@@ -239,6 +265,12 @@ export const transactions = pgTable(
     index("transactions_subcategory_id_idx").on(t.subcategoryId),
     index("transactions_destination_account_id_idx").on(t.destinationAccountId),
     index("transactions_linked_transaction_id_idx").on(t.linkedTransactionId),
+    ownerKey("transactions", t),
+    ownedBy("transactions", t.accountId, t, accounts),
+    ownedBy("transactions", t.categoryId, t, categories).onDelete("set null"),
+    ownedBy("transactions", t.subcategoryId, t, subcategories).onDelete("set null"),
+    ownedBy("transactions", t.destinationAccountId, t, accounts),
+    ownedBy("transactions", t.linkedTransactionId, t, t),
   ],
 );
 
@@ -257,7 +289,7 @@ export const savingsGoals = pgTable(
     currentAmount: money("current_amount").notNull().default(0),
     targetDate: day("target_date"),
     /** Deferred FK. */
-    linkedAccountId: uuid("linked_account_id").references(() => accounts.id),
+    linkedAccountId: uuid("linked_account_id"),
     /** True: virtual tracking. False: contributions move money into the linked account. */
     isVirtual: boolean("is_virtual").notNull(),
     /** Lucide icon name. */
@@ -272,6 +304,8 @@ export const savingsGoals = pgTable(
   (t) => [
     index("savings_goals_user_id_idx").on(t.userId, t.createdAt),
     index("savings_goals_linked_account_id_idx").on(t.linkedAccountId),
+    ownerKey("savings_goals", t),
+    ownedBy("savings_goals", t.linkedAccountId, t, accounts),
   ],
 );
 
@@ -281,9 +315,7 @@ export const goalContributions = pgTable(
     id: id(),
     userId: userId(),
     /** Deferred FK. The goal delete removes its contributions first. */
-    goalId: uuid("goal_id")
-      .notNull()
-      .references(() => savingsGoals.id),
+    goalId: uuid("goal_id").notNull(),
     /** Minor units. Positive = deposit, negative = withdrawal. */
     amount: money("amount").notNull(),
     date: day("date").notNull(),
@@ -293,13 +325,15 @@ export const goalContributions = pgTable(
      * deleted on its own (transfers page); Convex left the id dangling, here
      * it is nulled.
      */
-    transactionId: uuid("transaction_id").references(() => transactions.id, { onDelete: "set null" }),
+    transactionId: uuid("transaction_id"),
     createdAt: createdAt(),
   },
   (t) => [
     index("goal_contributions_user_id_idx").on(t.userId, t.createdAt),
     index("goal_contributions_goal_id_idx").on(t.goalId, t.createdAt),
     index("goal_contributions_transaction_id_idx").on(t.transactionId),
+    ownedBy("goal_contributions", t.goalId, t, savingsGoals),
+    ownedBy("goal_contributions", t.transactionId, t, transactions).onDelete("set null"),
   ],
 );
 
@@ -323,7 +357,7 @@ export const debts = pgTable(
     minimumPayment: money("minimum_payment"),
     dueDate: day("due_date"),
     /** Liability account the principal is paid down on. Deferred FK. */
-    linkedAccountId: uuid("linked_account_id").references(() => accounts.id),
+    linkedAccountId: uuid("linked_account_id"),
     archived: boolean("archived").notNull().default(false),
     /** Convex `createdAt` (a calendar date, exposed by the API and used to sort). */
     createdOn: createdOn(),
@@ -332,6 +366,8 @@ export const debts = pgTable(
   (t) => [
     index("debts_user_id_idx").on(t.userId, t.createdAt),
     index("debts_linked_account_id_idx").on(t.linkedAccountId),
+    ownerKey("debts", t),
+    ownedBy("debts", t.linkedAccountId, t, accounts),
   ],
 );
 
@@ -341,23 +377,21 @@ export const debtPayments = pgTable(
     id: id(),
     userId: userId(),
     /** Deferred FK. The debt delete removes its payments first. */
-    debtId: uuid("debt_id")
-      .notNull()
-      .references(() => debts.id),
+    debtId: uuid("debt_id").notNull(),
     amount: money("amount").notNull(),
     principalAmount: money("principal_amount").notNull(),
     interestAmount: money("interest_amount").notNull(),
     date: day("date").notNull(),
     note: text("note"),
     /** Deferred FK. Null only on legacy rows (see the header). */
-    fromAccountId: uuid("from_account_id").references(() => accounts.id),
+    fromAccountId: uuid("from_account_id"),
     /**
      * Expense on the paying account. Deferred FK: deleted together with the
      * payment. Null only on legacy rows (see the header).
      */
-    sourceTransactionId: uuid("source_transaction_id").references(() => transactions.id),
+    sourceTransactionId: uuid("source_transaction_id"),
     /** Principal adjustment on the debt's linked account. Deferred FK. */
-    liabilityTransactionId: uuid("liability_transaction_id").references(() => transactions.id),
+    liabilityTransactionId: uuid("liability_transaction_id"),
     createdAt: createdAt(),
   },
   (t) => [
@@ -366,6 +400,10 @@ export const debtPayments = pgTable(
     index("debt_payments_source_transaction_id_idx").on(t.sourceTransactionId),
     index("debt_payments_liability_transaction_id_idx").on(t.liabilityTransactionId),
     index("debt_payments_from_account_id_idx").on(t.fromAccountId),
+    ownedBy("debt_payments", t.debtId, t, debts),
+    ownedBy("debt_payments", t.fromAccountId, t, accounts),
+    ownedBy("debt_payments", t.sourceTransactionId, t, transactions),
+    ownedBy("debt_payments", t.liabilityTransactionId, t, transactions),
   ],
 );
 
