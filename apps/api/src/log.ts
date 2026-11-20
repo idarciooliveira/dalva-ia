@@ -18,7 +18,11 @@ const FORBIDDEN_KEYS = /^(text|caption|content|payload|token|secret|key|authoriz
 
 export interface LoggerOptions {
   level: LogLevel;
-  /** Strings scrubbed from every logged value (database password, auth secret). */
+  /**
+   * Strings scrubbed from every logged value (database password, auth secret).
+   * Values under 8 characters are skipped: scrubbing them would mangle ordinary
+   * text, and a secret that short is not worth protecting this way.
+   */
   secrets?: string[];
   write?: (line: string) => void;
   now?: () => Date;
