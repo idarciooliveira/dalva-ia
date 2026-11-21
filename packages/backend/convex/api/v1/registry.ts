@@ -15,7 +15,16 @@ type Implementation = FunctionReference<"query" | "mutation", "internal">;
  * route map: a missing or extra entry is a compile error, so this cannot
  * drift from `routes`. Service routes live in `serviceRegistry.ts`.
  */
-export type Implementations = { [G in keyof UserRoutes]: { [O in keyof UserRoutes[G]]: Implementation } };
+export type Implementations = { [G in ConvexGroups]: { [O in keyof UserRoutes[G]]: Implementation } };
+
+/**
+ * Groups served by `apps/api` only. The web app reaches the same features
+ * through Convex functions (`channelLinks.ts`, `agentStore.ts`), so here they
+ * answer `not_found` like any unknown route.
+ */
+export const API_ONLY_GROUPS = ["chatLinks", "chatHistory"] as const;
+type ApiOnlyGroups = (typeof API_ONLY_GROUPS)[number];
+type ConvexGroups = Exclude<keyof UserRoutes, ApiOnlyGroups>;
 
 // Annotated, not `satisfies`: this module is part of `internal`'s own type, so
 // an inferred type here would be circular.

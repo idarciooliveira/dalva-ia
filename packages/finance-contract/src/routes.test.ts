@@ -42,6 +42,11 @@ describe("route map", () => {
         "channelIdentities.resolve",
         "channelIdentities.unlink",
         "channelLinks.redeem",
+        "chatHistory.delete",
+        "chatLinks.createCode",
+        "chatLinks.list",
+        "chatLinks.setReadOnly",
+        "chatLinks.unlink",
         "debtPayments.list",
         "debtPayments.record",
         "debtPayments.remove",
@@ -122,6 +127,11 @@ describe("route map", () => {
       "accounts.delete",
       "accounts.restore",
       "accounts.update",
+      "chatHistory.delete",
+      "chatLinks.createCode",
+      "chatLinks.list",
+      "chatLinks.setReadOnly",
+      "chatLinks.unlink",
       "profile.completeOnboarding",
       "profile.create",
       "profile.get",
@@ -146,6 +156,11 @@ describe("route map", () => {
     expect(requiresIdempotencyKey(routes.channelLinks.redeem)).toBe(false);
     expect(requiresIdempotencyKey(routes.channelIdentities.unlink)).toBe(false);
     expect(requiresIdempotencyKey(routes.agentEvents.claim)).toBe(false);
+    // Chat-link writes from the web: a stored replay would keep the link code.
+    expect(requiresIdempotencyKey(routes.chatLinks.createCode)).toBe(false);
+    const withoutKey = allRoutes().filter((r) => r.route.idempotent === false).map((r) => r.name).sort();
+    expect(withoutKey).toEqual(["chatHistory.delete", "chatLinks.createCode", "chatLinks.setReadOnly", "chatLinks.unlink"]);
+    for (const name of withoutKey) expect(name.startsWith("chat"), name).toBe(true);
   });
 
   it("declares every path param in the request schema", () => {

@@ -1,7 +1,7 @@
 import { allRoutes, errorEnvelopeSchema, isWriteRoute, requiredScope, requiresIdempotencyKey } from "@mpf/finance-contract";
 import { describe, expect, it, vi } from "vitest";
 
-import { implementationFor } from "./registry";
+import { API_ONLY_GROUPS, implementationFor } from "./registry";
 import { BodyTooLargeError, readBodyText } from "./router";
 import { SERVICE_KEY_ENV } from "./serviceAuth";
 import { serviceImplementationFor } from "./serviceRegistry";
@@ -24,9 +24,13 @@ async function forgedToken(userId: string) {
   return `${h}.${p}.${"A".repeat(43)}`;
 }
 
+/** Routes this backend serves: the API-only groups answer `not_found` here. */
+const isApiOnly = (group: string) => (API_ONLY_GROUPS as readonly string[]).includes(group);
+const convexRoutes = allRoutes().filter((r) => !isApiOnly(r.group));
+
 describe("api/v1 router", () => {
   it("maps every contract route to an implementation of its auth kind", () => {
-    for (const { group, op, route } of allRoutes()) {
+    for (const { group, op, route } of convexRoutes) {
       const user = implementationFor(group, op);
       const service = serviceImplementationFor(group, op);
       expect(route.auth === "user" ? user : service, `${group}.${op}`).not.toBeNull();
@@ -34,7 +38,17 @@ describe("api/v1 router", () => {
     }
   });
 
-  const userRoutes = allRoutes().filter((r) => r.route.auth === "user");
+  it("answers not_found for the API-only groups", async () => {
+    const t = setupApi();
+    const token = await tokenFor(await seedUser(t));
+    for (const { group, op, route } of allRoutes().filter((r) => isApiOnly(r.group))) {
+      expect(implementationFor(group, op), `${group}.${op}`).toBeNull();
+      const body = isWriteRoute(route) ? { body: {} } : {};
+      expectError(await raw(t, route.method, pathOf(route.path), { ...body, token }), "not_found", 404);
+    }
+  });
+
+  const userRoutes = convexRoutes.filter((r) => r.route.auth === "user");
   const serviceRoutes = allRoutes().filter((r) => r.route.auth === "service");
 
   describe.each(serviceRoutes.map((r) => [r.name, r] as const))("%s service auth", (_name, { route }) => {
