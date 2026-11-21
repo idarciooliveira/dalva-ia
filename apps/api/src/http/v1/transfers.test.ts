@@ -52,6 +52,13 @@ describe("api/v1 transfers", () => {
     expect(updated.transfer).toMatchObject({ outgoingId: transfer.outgoingId, incomingId: transfer.incomingId, amount: usd(500), date: "2026-02-03", note: "Move" });
     expect(await balanceOf(aliceAccount)).toBe(99_500);
 
+    // Moving only the source is a valid edit.
+    const third = await seedAccount(alice, { name: "Third", balance: 1_000 });
+    const moved = await asAlice.transfers.update({ id: transfer.outgoingId as string, fromAccountId: third });
+    expect(moved.transfer).toMatchObject({ fromAccountId: third, toAccountId: savings, fromAccountName: "Third", amount: usd(500) });
+    expect([await balanceOf(aliceAccount), await balanceOf(third)]).toEqual([100_000, 500]);
+    await asAlice.transfers.update({ id: transfer.outgoingId as string, fromAccountId: aliceAccount });
+
     expect(await asAlice.transfers.delete({ id: transfer.outgoingId as string })).toEqual({ id: transfer.outgoingId });
     expect(await balanceOf(aliceAccount)).toBe(100_000);
     expect(await balanceOf(savings)).toBe(0);

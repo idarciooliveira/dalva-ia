@@ -113,7 +113,11 @@ export async function spendingByCategory(
     .where(and(eq(transactions.userId, userId), dateRange(month), eq(transactions.type, "expense")))
     .groupBy(transactions.categoryId, categories.name)
     // Ties in the order Convex met the categories: by their first expense of the month.
-    .orderBy(desc(amount), sql`min(${transactions.date})`, sql`min(${transactions.createdAt})`);
+    .orderBy(
+      desc(amount),
+      sql`min(${transactions.date})`,
+      sql`(array_agg(${transactions.createdAt} order by ${transactions.date}, ${transactions.createdAt}))[1]`,
+    );
   return {
     total: rows.reduce((sum, r) => sum + r.amount, 0),
     categories: rows.map((r) =>

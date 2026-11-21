@@ -173,18 +173,21 @@ export async function updateLoadedTransfer(
     ...(changes.description !== undefined && { description: changes.description }),
     ...(changes.note !== undefined && { note: changes.note }),
   };
-  await tx
-    .update(transactions)
-    .set({
-      ...shared,
-      ...(changes.fromAccountId !== undefined && { accountId: changes.fromAccountId }),
-      ...(changes.toAccountId !== undefined && { destinationAccountId: changes.toAccountId }),
-    })
-    .where(ownedTransaction(userId, outgoing.id));
-  await tx
-    .update(transactions)
-    .set({ ...shared, ...(changes.toAccountId !== undefined && { accountId: changes.toAccountId }) })
-    .where(ownedTransaction(userId, incoming.id));
+  const patches: Array<[string, Partial<Transaction>]> = [
+    [
+      outgoing.id,
+      {
+        ...shared,
+        ...(changes.fromAccountId !== undefined && { accountId: changes.fromAccountId }),
+        ...(changes.toAccountId !== undefined && { destinationAccountId: changes.toAccountId }),
+      },
+    ],
+    [incoming.id, { ...shared, ...(changes.toAccountId !== undefined && { accountId: changes.toAccountId }) }],
+  ];
+  for (const [legId, patch] of patches) {
+    // A leg nothing changes on (only the source moved: the incoming leg) is left alone.
+    if (Object.keys(patch).length > 0) await tx.update(transactions).set(patch).where(ownedTransaction(userId, legId));
+  }
   await addToBalances(tx, userId, [
     [outgoing.accountId, outgoing.amount],
     [incoming.accountId, -outgoing.amount],

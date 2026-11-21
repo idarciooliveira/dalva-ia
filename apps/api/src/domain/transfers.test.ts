@@ -107,6 +107,18 @@ describe("domain/transfers", () => {
     });
   });
 
+  it("moves only the source account, leaving the incoming leg alone", async () => {
+    const alice = await createTestUser();
+    const from = await seedAccount(alice, { balance: 10_000 });
+    const to = await seedAccount(alice);
+    const other = await seedAccount(alice, { balance: 3_000 });
+    const { outgoing, incoming } = await seedTransfer(alice, from, to);
+    await tx((t) => transfers.updateTransfer(t, alice, incoming, { fromAccountId: other }));
+    expect([await balanceOf(from), await balanceOf(to), await balanceOf(other)]).toEqual([10_000, 1_000, 2_000]);
+    expect(await getTransactionRow(outgoing)).toMatchObject({ accountId: other, destinationAccountId: to, amount: 1_000 });
+    expect(await getTransactionRow(incoming)).toMatchObject({ accountId: to, amount: 1_000 });
+  });
+
   it("swaps source and destination", async () => {
     const alice = await createTestUser();
     const checking = await seedAccount(alice, { balance: 100_000 });

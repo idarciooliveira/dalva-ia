@@ -69,6 +69,17 @@ describe("domain/reports", () => {
     await seedTransaction(alice, accountId, { amount: 100, date: "2026-03-09" });
     const { categories } = await read((t) => reports.spendingByCategory(t, alice, "2026-03"));
     expect(categories.map((c) => c.name)).toEqual(["Zed", "Abe", "Uncategorized"]);
+
+    // First expense by (date, creation): B's 03-01 row was created before A's 03-01 row.
+    const bob = await createTestUser();
+    const bobAccount = await seedAccount(bob);
+    const a = await seedCategory(bob, { name: "A" });
+    const b = await seedCategory(bob, { name: "B" });
+    await seedTransaction(bob, bobAccount, { amount: 100, date: "2026-03-10", categoryId: a });
+    await seedTransaction(bob, bobAccount, { amount: 200, date: "2026-03-01", categoryId: b });
+    await seedTransaction(bob, bobAccount, { amount: 100, date: "2026-03-01", categoryId: a });
+    const tied = await read((t) => reports.spendingByCategory(t, bob, "2026-03"));
+    expect(tied.categories.map((c) => c.name)).toEqual(["B", "A"]);
   });
 
   it("uses each month's real last day: February, leap years, December", async () => {
