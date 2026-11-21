@@ -30,7 +30,7 @@ export interface RouteDef {
   /** User routes only. Overrides the method-derived finance scope (`agent:state` for the agent store). */
   scope?: TokenScope;
   /**
-   * User routes for the web app only (profile, account and category management, reading one transfer): tokens
+   * User routes for the web app only (profile, account, category, goal and debt management, reading one transfer): tokens
    * minted for a chat (`cid`) get `forbidden`, and they are not pending-action
    * operations, so the chat agent can neither call nor propose them.
    */
@@ -164,6 +164,11 @@ export const routes = {
   goals: {
     list: route("GET", "/goals", s.goalsListRequestSchema, s.goalsListResponseSchema),
     get: route("GET", "/goals/:id", s.goalGetRequestSchema, s.goalGetResponseSchema),
+    create: webRoute("POST", "/goals", s.goalCreateRequestSchema, s.goalCreateResponseSchema),
+    update: webRoute("PATCH", "/goals/:id", s.goalUpdateRequestSchema, s.goalUpdateResponseSchema),
+    archive: webRoute("POST", "/goals/:id/archive", s.goalArchiveRequestSchema, s.goalArchiveResponseSchema),
+    restore: webRoute("POST", "/goals/:id/restore", s.goalRestoreRequestSchema, s.goalRestoreResponseSchema),
+    delete: webRoute("DELETE", "/goals/:id", s.goalDeleteRequestSchema, s.goalDeleteResponseSchema),
   },
   goalContributions: {
     list: route(
@@ -188,6 +193,11 @@ export const routes = {
   debts: {
     list: route("GET", "/debts", s.debtsListRequestSchema, s.debtsListResponseSchema),
     get: route("GET", "/debts/:id", s.debtGetRequestSchema, s.debtGetResponseSchema),
+    create: webRoute("POST", "/debts", s.debtCreateRequestSchema, s.debtCreateResponseSchema),
+    update: webRoute("PATCH", "/debts/:id", s.debtUpdateRequestSchema, s.debtUpdateResponseSchema),
+    archive: webRoute("POST", "/debts/:id/archive", s.debtArchiveRequestSchema, s.debtArchiveResponseSchema),
+    restore: webRoute("POST", "/debts/:id/restore", s.debtRestoreRequestSchema, s.debtRestoreResponseSchema),
+    delete: webRoute("DELETE", "/debts/:id", s.debtDeleteRequestSchema, s.debtDeleteResponseSchema),
   },
   debtPayments: {
     list: route("GET", "/debts/:debtId/payments", s.debtPaymentsListRequestSchema, s.debtPaymentsListResponseSchema),

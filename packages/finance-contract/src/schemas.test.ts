@@ -30,6 +30,10 @@ import {
   subcategoryUpdateRequestSchema,
   categoryDefaultsResponseSchema,
   DEFAULT_CATEGORIES,
+  goalCreateRequestSchema,
+  goalUpdateRequestSchema,
+  debtCreateRequestSchema,
+  debtUpdateRequestSchema,
 } from "./schemas";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
@@ -252,6 +256,46 @@ describe("category and subcategory management", () => {
     expect(subcategoryCreateRequestSchema.safeParse({ categoryId: "c", name: "  " }).success).toBe(false);
     expect(subcategoryUpdateRequestSchema.safeParse({ id: "s", name: "Fruit" }).success).toBe(true);
     expect(subcategoryUpdateRequestSchema.safeParse({ id: "s", name: "Fruit", categoryId: "c" }).success).toBe(false);
+  });
+});
+
+describe("goal and debt management", () => {
+  const goal = { name: "Trip", targetAmount: usd(100_000), isVirtual: true };
+  const debt = { name: "Car loan", debtType: "loan", originalAmount: usd(10_000), currentBalance: usd(8_000) };
+
+  it("creates a goal with a positive target; only account-linked goals name an account", () => {
+    expect(goalCreateRequestSchema.parse({ ...goal, name: " Trip " }).name).toBe("Trip");
+    expect(goalCreateRequestSchema.safeParse({ ...goal, targetAmount: usd(0) }).success).toBe(false);
+    expect(goalCreateRequestSchema.safeParse({ ...goal, targetDate: "2026-02-30" }).success).toBe(false);
+    expect(goalCreateRequestSchema.safeParse({ ...goal, linkedAccountId: "a" }).success).toBe(false);
+    expect(goalCreateRequestSchema.safeParse({ ...goal, isVirtual: false }).success).toBe(false);
+    expect(goalCreateRequestSchema.safeParse({ ...goal, isVirtual: false, linkedAccountId: "a" }).success).toBe(true);
+    expect(goalCreateRequestSchema.safeParse({ ...goal, currentAmount: usd(1) }).success).toBe(false);
+  });
+
+  it("updates a goal: at least one field, never the account or the current amount", () => {
+    expect(goalUpdateRequestSchema.safeParse({ id: "g", color: "#000" }).success).toBe(true);
+    expect(goalUpdateRequestSchema.safeParse({ id: "g" }).success).toBe(false);
+    expect(goalUpdateRequestSchema.safeParse({ id: "g", linkedAccountId: "a" }).success).toBe(false);
+    expect(goalUpdateRequestSchema.safeParse({ id: "g", currentAmount: usd(1) }).success).toBe(false);
+    expect(goalUpdateRequestSchema.safeParse({ id: "g", targetAmount: usd(-1) }).success).toBe(false);
+  });
+
+  it("creates a debt whose balance is within the original amount", () => {
+    expect(debtCreateRequestSchema.safeParse(debt).success).toBe(true);
+    expect(debtCreateRequestSchema.safeParse({ ...debt, currentBalance: usd(0) }).success).toBe(true);
+    expect(debtCreateRequestSchema.safeParse({ ...debt, currentBalance: usd(10_001) }).success).toBe(false);
+    expect(debtCreateRequestSchema.safeParse({ ...debt, currentBalance: usd(-1) }).success).toBe(false);
+    expect(debtCreateRequestSchema.safeParse({ ...debt, originalAmount: usd(0), currentBalance: usd(0) }).success).toBe(false);
+    expect(debtCreateRequestSchema.safeParse({ ...debt, minimumPayment: usd(-1) }).success).toBe(false);
+    expect(debtCreateRequestSchema.safeParse({ ...debt, interestRate: -1 }).success).toBe(false);
+    expect(debtCreateRequestSchema.safeParse({ ...debt, debtType: "payday" }).success).toBe(false);
+  });
+
+  it("updates a debt: at least one field", () => {
+    expect(debtUpdateRequestSchema.safeParse({ id: "d", currentBalance: usd(5_000) }).success).toBe(true);
+    expect(debtUpdateRequestSchema.safeParse({ id: "d" }).success).toBe(false);
+    expect(debtUpdateRequestSchema.safeParse({ id: "d", archived: true }).success).toBe(false);
   });
 });
 

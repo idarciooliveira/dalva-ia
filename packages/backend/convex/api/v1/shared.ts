@@ -47,6 +47,15 @@ export async function requireBaseCurrency(ctx: Ctx, userId: string): Promise<str
   return profile.baseCurrency;
 }
 
+/** A goal's or debt's linked account: the user's, in the base currency (goals and debts have no currency of their own). */
+export async function requireBaseCurrencyAccount(ctx: Ctx, userId: string, value: string, field: string, currency: string) {
+  const account = await requireOwned(ctx, userId, "accounts", value, field, "Account");
+  if (account.currency !== currency) {
+    throw validationError(field, `Account currency ${account.currency} differs from the base currency ${currency}`);
+  }
+  return account;
+}
+
 /** Account currency per id, cached; orphaned rows (deleted account) fall back to the base currency. */
 export function currencyResolver(ctx: Ctx, userId: string) {
   const cache = new Map<string, string>();
