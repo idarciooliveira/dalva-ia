@@ -49,11 +49,12 @@ apps/api/drizzle/   SQL migrations
 
 ## Production freeze
 
-Before PR 9, cut `legacy-convex` from `main`:
+Done with PR 9. `legacy-convex` was cut from `main` at `cb229df`, the commit Vercel production serves.
 
-- Vercel production branch → `legacy-convex`.
+- `apps/web/vercel.json` sets `git.deploymentEnabled.main: false`, so merges to `main` no longer deploy. Production stays on the `cb229df` build. (The Vercel API can't change the production branch; the dashboard can, if preferred.)
+- Hotfix: push to `legacy-convex`, then promote its preview deployment (`vercel promote <url>`).
 - `convex deploy` only from `legacy-convex`.
-- Pin `AGENT_IMAGE_TAG` on the VPS to a short SHA.
+- The agent image still builds from `main`. Agent code must stay Convex-compatible until cutover; pin `AGENT_IMAGE_TAG` on the VPS to a short SHA to be safe.
 
 Hotfixes for production go to `legacy-convex` and are ported to `main` by hand.
 
