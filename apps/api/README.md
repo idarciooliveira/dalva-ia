@@ -39,7 +39,7 @@ Password hashes from Convex Auth (Lucia `Scrypt`) use the same format as Better 
 
 `src/http/router.ts` serves every route of `@mpf/finance-contract` with the Convex router's semantics: credential of the route's kind (401) → implemented (404) → scope (403) → `Idempotency-Key` on finance writes (400) → body (JSON object, 64 KiB cap, read as a stream) and the route's request schema (400) → handler → `{ ok: true, data }`. A credential that is present but invalid is refused by the principal middleware first, on any `/api/v1` path; paths that match no contract route fall through to the app's 404. Responses carry `Cache-Control: no-store`.
 
-Web-only routes (`webOnly` in the contract: profile, account management) answer `forbidden` to chat tokens (`cid`), so the agent can't reach them. Agent-store routes (explicit `scope`) require a chat token. Still to add with the agent store (PR 8): a way for a handler to commit its writes and answer with an error (Convex's `handlerFailure`).
+Web-only routes (`webOnly` in the contract: profile, account and category management, `transfers.get`) answer `forbidden` to chat tokens (`cid`), so the agent can't reach them. Agent-store routes (explicit `scope`) require a chat token. Still to add with the agent store (PR 8): a way for a handler to commit its writes and answer with an error (Convex's `handlerFailure`).
 
 Layout, per contract group (copy it for the next one):
 
@@ -58,7 +58,16 @@ src/http/v1/index.ts         Registry: add the group here
 - Money: the database stores value × 100 for every currency (as Convex did); `src/http/v1/money.ts` converts to and from ISO minor units. Request amounts that don't fit exactly are `validation_failed` (`reason: "precision"`), never rounded.
 - DTOs (`src/http/v1/shared.ts`): optional fields are omitted, never null; `archived` only appears when true.
 
-Tests use `test/api.ts`: `seedUser`, `seedAccount`, `seedChannelIdentity`, `tokenFor(userId, scopes?)`, `clientFor(app, token)` (the contract client, which parses every success with the response schema), `raw(app, method, path, { token | cookie, body, idempotencyKey })`, `expectApiError(promise, code, status)` and `twoUsers()` for isolation checks. `testApp({ operations })` swaps in fake operations (e.g. one that writes then throws).
+Transactions, transfers and reports (`src/domain/{transactions,transfers,reports}.ts`):
+
+- Every transaction write moves the account balance in the same transaction (`addToBalances`: `balance = balance + delta`, accounts in id order). Concurrent writes to one account collide under SERIALIZABLE and `withTx` reruns the loser, so no delta is lost.
+- A transfer is two `transfer` rows sharing `transfer_group_id`, linked to each other; either leg's id addresses it. Transfer legs and debt-payment rows answer `conflict` on `transactions.update`/`delete`; goal-contribution transfers answer `conflict` on `transfers.update`/`delete`.
+- Legacy rows with a null `account_id` (Convex deleted the account) skip their balance effect, list in the base currency with `accountId: MISSING_ACCOUNT_ID` (a nil UUID no lookup finds, as Convex's dangling id), and make a report that would sum them `conflict` (`unknown_currency`).
+- `transactions.search`: keyset cursor over `(date, created_at, id)`, `created_at` in microseconds (a JS Date would lose them). All filters, `q` included, run in SQL, so only the last page is short.
+- Reports: a month is `[first day, first day of next month)`, never a `-31` bound. Totals use SQL aggregates over every row of the range.
+- A date the contract accepts but Postgres can't hold (year 0000) is `validation_failed` (router, SQLSTATE 22008).
+
+Tests use `test/api.ts`: `seedUser`, `seedAccount`, `seedCategory`, `seedSubcategory`, `seedTransaction` (rows only, no balance; `null` account for legacy rows), `seedDebt`, `seedDebtPayment`, `seedContribution`, `seedChannelIdentity`, `tokenFor(userId, scopes?)`, `clientFor(app, token)` (the contract client, which parses every success with the response schema), `raw(app, method, path, { token | cookie, body, idempotencyKey })`, `expectApiError(promise, code, status)` and `twoUsers()` for isolation checks. `testApp({ operations })` swaps in fake operations (e.g. one that writes then throws).
 
 ## Idempotency
 

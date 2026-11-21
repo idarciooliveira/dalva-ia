@@ -120,3 +120,30 @@ export async function adjustBalance(
   });
   return account;
 }
+
+/**
+ * Add signed deltas to account balances, as transaction and transfer writes
+ * do. Deltas on one account are summed, zero sums and null accounts (legacy
+ * orphans, see the schema header) are skipped, and accounts are updated in id
+ * order so two writes touching the same pair lock it in the same order.
+ * `UPDATE ... SET balance = balance + delta` under SERIALIZABLE: a concurrent
+ * write to the same account fails one of them with 40001 and `withTx` reruns
+ * it, so no update is lost.
+ */
+export async function addToBalances(tx: Tx, userId: string, deltas: Array<[accountId: string | null, delta: number]>): Promise<void> {
+  const sums = new Map<string, number>();
+  for (const [accountId, delta] of deltas) {
+    if (accountId !== null) sums.set(accountId, (sums.get(accountId) ?? 0) + delta);
+  }
+  for (const [accountId, delta] of [...sums].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (delta === 0) continue;
+    const [account] = await tx
+      .update(accounts)
+      .set({ balance: sql`${accounts.balance} + ${delta}` })
+      .where(owned(userId, accountId))
+      .returning({ balance: accounts.balance });
+    if (!account) throw notFound("Account");
+    // bigint is read as a JS number: refuse a balance it can't hold exactly (the transaction rolls back).
+    if (!Number.isSafeInteger(account.balance)) throw invalid("amount.amountMinor", "Balance out of range");
+  }
+}

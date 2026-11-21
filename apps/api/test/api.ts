@@ -21,7 +21,18 @@ import { eq } from "drizzle-orm";
 import { expect } from "vitest";
 
 import { TOKEN_SCOPES } from "../src/auth/tokens";
-import { accounts, channelIdentities, transactions, userProfiles } from "../src/db/schema";
+import {
+  accounts,
+  categories,
+  channelIdentities,
+  debtPayments,
+  debts,
+  goalContributions,
+  savingsGoals,
+  subcategories,
+  transactions,
+  userProfiles,
+} from "../src/db/schema";
 import { createTestUser, testApp, testTokens } from "./app";
 import { testDb } from "./db";
 
@@ -78,6 +89,99 @@ export async function seedChannelIdentity(userId: string, options: { readOnly?: 
     })
     .returning({ id: channelIdentities.id });
   return row!.id;
+}
+
+export async function seedCategory(userId: string, options: { name?: string; type?: "income" | "expense" } = {}): Promise<string> {
+  const [row] = await testDb()
+    .insert(categories)
+    .values({ userId, name: options.name ?? "Food", type: options.type ?? "expense" })
+    .returning({ id: categories.id });
+  return row!.id;
+}
+
+export async function seedSubcategory(userId: string, categoryId: string, name = "Sub"): Promise<string> {
+  const [row] = await testDb()
+    .insert(subcategories)
+    .values({ userId, categoryId, name, sortOrder: 0 })
+    .returning({ id: subcategories.id });
+  return row!.id;
+}
+
+/**
+ * A transaction row as stored, without touching any balance (seeding, legacy
+ * rows). `accountId: null` is a legacy orphan whose account Convex deleted.
+ */
+export async function seedTransaction(
+  userId: string,
+  accountId: string | null,
+  fields: Partial<Omit<typeof transactions.$inferInsert, "userId" | "accountId">> = {},
+): Promise<string> {
+  const [row] = await testDb()
+    .insert(transactions)
+    .values({ type: "expense", amount: 100, date: "2026-03-01", ...fields, userId, accountId })
+    .returning({ id: transactions.id });
+  return row!.id;
+}
+
+export async function seedDebt(
+  userId: string,
+  fields: Partial<Omit<typeof debts.$inferInsert, "userId">> = {},
+): Promise<string> {
+  const [row] = await testDb()
+    .insert(debts)
+    .values({ name: "Loan", debtType: "loan", originalAmount: 10_000, currentBalance: 10_000, ...fields, userId })
+    .returning({ id: debts.id });
+  return row!.id;
+}
+
+/**
+ * A debt payment as the debt flow (PR 7) records it: an expense on the paying
+ * account plus, when the debt has a linked account, an adjustment on it.
+ * Rows only, no balances.
+ */
+export async function seedDebtPayment(
+  userId: string,
+  args: { debtId: string; fromAccountId: string | null; amount?: number; date?: string; liabilityAccountId?: string },
+) {
+  const amount = args.amount ?? 500;
+  const date = args.date ?? "2026-01-02";
+  const sourceTransactionId = await seedTransaction(userId, args.fromAccountId, { type: "expense", amount, date });
+  const liabilityTransactionId = args.liabilityAccountId
+    ? await seedTransaction(userId, args.liabilityAccountId, { type: "adjustment", amount, date })
+    : null;
+  const [row] = await testDb()
+    .insert(debtPayments)
+    .values({
+      userId,
+      debtId: args.debtId,
+      amount,
+      principalAmount: amount,
+      interestAmount: 0,
+      date,
+      fromAccountId: args.fromAccountId,
+      sourceTransactionId,
+      liabilityTransactionId,
+    })
+    .returning({ id: debtPayments.id });
+  return { id: row!.id, sourceTransactionId, liabilityTransactionId };
+}
+
+/** A goal contribution owning the transfer whose outgoing leg is `transactionId` (the goal flow is PR 7). */
+export async function seedContribution(userId: string, transactionId: string, linkedAccountId: string): Promise<string> {
+  const [goal] = await testDb()
+    .insert(savingsGoals)
+    .values({ userId, name: "Trip", targetAmount: 10_000, isVirtual: false, linkedAccountId })
+    .returning({ id: savingsGoals.id });
+  const [row] = await testDb()
+    .insert(goalContributions)
+    .values({ userId, goalId: goal!.id, amount: 500, date: "2026-01-02", transactionId })
+    .returning({ id: goalContributions.id });
+  return row!.id;
+}
+
+export async function getTransactionRow(id: string) {
+  const [row] = await testDb().select().from(transactions).where(eq(transactions.id, id));
+  return row;
 }
 
 export async function getAccountRow(id: string) {

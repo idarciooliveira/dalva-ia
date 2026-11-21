@@ -44,6 +44,8 @@ export const MAX_BODY_BYTES = 64 * 1024;
 export const REPLAYED_HEADER = "Idempotent-Replayed";
 /** character_not_in_repertoire (NUL in `text`), untranslatable_character (`\u0000` in `jsonb`). */
 const UNSTORABLE_TEXT = new Set(["22021", "22P05"]);
+/** datetime_field_overflow: a date the contract accepts but Postgres doesn't (year 0000, or a month bound built from it). */
+const DATE_OUT_OF_RANGE = "22008";
 
 export interface RouterOptions {
   db: Database;
@@ -68,6 +70,7 @@ export function contractRouter(options: RouterOptions): MiddlewareHandler<AppEnv
       if (UNSTORABLE_TEXT.has(sqlState(error) ?? "")) {
         return errorResponse(c, "validation_failed", "Text contains characters that can't be stored");
       }
+      if (sqlState(error) === DATE_OUT_OF_RANGE) return errorResponse(c, "validation_failed", "Date out of range");
       throw error; // the app's error handler logs it and answers 500
     }
   };

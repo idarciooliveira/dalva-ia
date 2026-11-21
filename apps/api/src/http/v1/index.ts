@@ -2,6 +2,9 @@ import type { Operations } from "../operation";
 import { accountOperations } from "./accounts";
 import { categoryOperations, subcategoryOperations } from "./categories";
 import { profileOperations } from "./profile";
+import { reportOperations } from "./reports";
+import { transactionOperations } from "./transactions";
+import { transferOperations } from "./transfers";
 
 /**
  * Every implemented `/api/v1` user route. Add a group here when its PR ports
@@ -12,4 +15,7 @@ export const operations = {
   profile: profileOperations,
   categories: categoryOperations,
   subcategories: subcategoryOperations,
+  transactions: transactionOperations,
+  transfers: transferOperations,
+  reports: reportOperations,
 } satisfies Operations;
