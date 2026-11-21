@@ -1,9 +1,8 @@
 import { routes } from "@mpf/finance-contract";
 
 import * as accounts from "../../domain/accounts";
-import { invalid } from "../../domain/errors";
 import { operation } from "../operation";
-import { appAmount, fitsMoney } from "./money";
+import { appAmount } from "../../domain/money";
 import { accountDto, toId, todayUtc } from "./shared";
 
 export const accountOperations = {
@@ -56,8 +55,6 @@ export const accountOperations = {
       date: input.date ?? todayUtc(),
       note: input.note,
     });
-    // A balance the contract can't express (past the safe range in ISO minor units) is refused, rolling back.
-    if (!fitsMoney(account.balance, currency)) throw invalid("amount.amountMinor", "Balance out of range");
     return { account: accountDto(account) };
   }),
 };

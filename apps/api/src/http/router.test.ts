@@ -63,7 +63,10 @@ describe("api/v1 router", () => {
       "chatHistory",
       "chatLinks",
       "profile",
+      "reports",
       "subcategories",
+      "transactions",
+      "transfers",
     ]);
     for (const { group, op, route } of allRoutes()) {
       const user = operationFor(operations, group, op);
@@ -156,9 +159,9 @@ describe("api/v1 router", () => {
   it("answers not_found for contract routes not ported yet, after authenticating", async () => {
     const { app } = testApp();
     const token = await tokenFor(await seedUser());
-    expectError(await raw(app, "GET", "/transactions"), "unauthorized", 401);
-    expectError(await raw(app, "GET", "/transactions", { token }), "not_found", 404);
-    expectError(await raw(app, "POST", "/transfers", { token, idempotencyKey: KEY, body: {} }), "not_found", 404);
+    expectError(await raw(app, "GET", "/goals"), "unauthorized", 401);
+    expectError(await raw(app, "GET", "/goals", { token }), "not_found", 404);
+    expectError(await raw(app, "POST", "/debts/d1/payments", { token, idempotencyKey: KEY, body: {} }), "not_found", 404);
   });
 
   it("returns not_found for unknown routes and methods", async () => {
@@ -278,6 +281,24 @@ describe("api/v1 router", () => {
     expectError(adjusted, "validation_failed", 400);
     expect(adjusted.body.error?.message).toBe("Text contains characters that can't be stored");
     expect((await getAccountRow(account))?.balance).toBe(0);
+  });
+
+  it("answers validation_failed for dates Postgres can't hold (year 0000), and rolls back", async () => {
+    const { app } = testApp();
+    const user = await seedUser();
+    const account = await seedAccount(user);
+    const token = await tokenFor(user);
+    const adjusted = await raw(app, "POST", `/accounts/${account}/adjustments`, {
+      token,
+      idempotencyKey: "date-key-0001",
+      body: { amount: { amountMinor: 1, currency: "USD" }, date: "0000-01-01" },
+    });
+    expectError(adjusted, "validation_failed", 400);
+    expect(adjusted.body.error?.message).toBe("Date out of range");
+    expect((await getAccountRow(account))?.balance).toBe(0);
+    for (const path of ["/transactions?dateFrom=0000-12-31", "/reports/cashflow?month=0001-02&trendMonths=3"]) {
+      expectError(await raw(app, "GET", path, { token }), "validation_failed", 400);
+    }
   });
 
   it("takes path params over body keys and rejects unknown body keys", async () => {

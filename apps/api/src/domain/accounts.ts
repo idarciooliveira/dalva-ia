@@ -9,6 +9,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { accounts, debtPayments, debts, savingsGoals, transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
 import { conflict, invalid, notFound } from "./errors";
+import { fitsMoney } from "./money";
 
 export type Account = typeof accounts.$inferSelect;
 export type AccountType = Account["type"];
@@ -101,14 +102,7 @@ export async function adjustBalance(
   userId: string,
   args: { id: string; amount: number; date: string; note?: string },
 ): Promise<Account> {
-  const [account] = await tx
-    .update(accounts)
-    .set({ balance: sql`${accounts.balance} + ${args.amount}` })
-    .where(owned(userId, args.id))
-    .returning();
-  if (!account) throw notFound("Account");
-  // bigint is read as a JS number: refuse a balance it can't hold exactly (the transaction rolls back).
-  if (!Number.isSafeInteger(account.balance)) throw invalid("amount.amountMinor", "Balance out of range");
+  await addToBalances(tx, userId, [[args.id, args.amount]]);
   await tx.insert(transactions).values({
     userId,
     type: "adjustment",
@@ -118,5 +112,35 @@ export async function adjustBalance(
     description: "Balance adjustment",
     note: args.note ?? null,
   });
-  return account;
+  return await getAccount(tx, userId, args.id);
+}
+
+/**
+ * Add signed deltas to account balances, as transaction and transfer writes
+ * do. Deltas on one account are summed, zero sums and null accounts (legacy
+ * orphans, see the schema header) are skipped, and accounts are updated in id
+ * order so two writes touching the same pair lock it in the same order.
+ * `UPDATE ... SET balance = balance + delta` under SERIALIZABLE: a concurrent
+ * write to the same account fails one of them with 40001 and `withTx` reruns
+ * it, so no update is lost.
+ */
+export async function addToBalances(tx: Tx, userId: string, deltas: Array<[accountId: string | null, delta: number]>): Promise<void> {
+  const sums = new Map<string, number>();
+  for (const [accountId, delta] of deltas) {
+    if (accountId !== null) sums.set(accountId, (sums.get(accountId) ?? 0) + delta);
+  }
+  for (const [accountId, delta] of [...sums].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (delta === 0) continue;
+    const [account] = await tx
+      .update(accounts)
+      .set({ balance: sql`${accounts.balance} + ${delta}` })
+      .where(owned(userId, accountId))
+      .returning({ balance: accounts.balance, currency: accounts.currency });
+    if (!account) throw notFound("Account");
+    // bigint is read as a JS number, and the API shows the balance in ISO minor units (×10 for KWD):
+    // refuse a balance either can't hold exactly (the transaction rolls back).
+    if (!Number.isSafeInteger(account.balance) || !fitsMoney(account.balance, account.currency)) {
+      throw invalid("amount.amountMinor", "Balance out of range");
+    }
+  }
 }

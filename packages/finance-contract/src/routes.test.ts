@@ -85,6 +85,7 @@ describe("route map", () => {
         "transactions.update",
         "transfers.create",
         "transfers.delete",
+        "transfers.get",
         "transfers.update",
       ].sort(),
     );
@@ -136,7 +137,7 @@ describe("route map", () => {
     expect(requiredScope(routes.transactions.create)).toBe("finance:write");
   });
 
-  it("marks profile, account, category and chat link management as web-only user routes", () => {
+  it("marks profile, account, category and chat link management and transfer reads as web-only user routes", () => {
     const webOnly = allRoutes().filter((r) => r.route.webOnly);
     expect(webOnly.map((r) => r.name).sort()).toEqual([
       "accounts.archive",
@@ -164,6 +165,7 @@ describe("route map", () => {
       "subcategories.delete",
       "subcategories.restore",
       "subcategories.update",
+      "transfers.get",
     ]);
     for (const { name, route } of webOnly) {
       expect(route.auth, name).toBe("user");

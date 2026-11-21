@@ -40,7 +40,7 @@ const { action } = await finance.agentPendingActions.create({ sessionId: session
 - Amounts are `{ amountMinor, currency }`: an integer in the ISO 4217 minor unit (JPY 0 decimals, USD 2, KWD 3). Convert with `parseDecimalAmount` / `formatMinorAmount`; both are BigInt/string based.
 - Branded ids (`AccountId`, ...) are an output-side type: call inputs accept plain strings and are validated at runtime (URL-safe `[A-Za-z0-9_-]`).
 - Requests are strict (unknown keys fail). Responses tolerate extra fields so the API can grow without breaking old clients.
-- Web-only routes (`webOnly`): `profile.*`, account management (`accounts.create/update/archive/restore/delete`), category and subcategory management (`create/update/archive/restore/delete` on both) and the onboarding defaults (`categories.defaults`, `categories.seedDefaults`). A token minted for a chat (`cid`) gets `forbidden` on them, and they are not pending-action operations, so the chat agent can neither call nor propose them.
+- Web-only routes (`webOnly`): `profile.*`, account management (`accounts.create/update/archive/restore/delete`), category and subcategory management (`create/update/archive/restore/delete` on both), the onboarding defaults (`categories.defaults`, `categories.seedDefaults`) and `transfers.get` (the web's transfer edit dialog). A token minted for a chat (`cid`) gets `forbidden` on them, and they are not pending-action operations, so the chat agent can neither call nor propose them.
 - Adding an operation: add schemas in `schemas.ts` and a line in `routes.ts` (`route` for user, `serviceRoute` for service; one auth kind per group). The client method, route matching and typing follow.
 
 ## Server obligations (PR 3)
