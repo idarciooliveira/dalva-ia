@@ -59,9 +59,12 @@ export const update = apiMutation(routes.debts.update, async (ctx, userId, input
   const debt = await requireOwned(ctx, userId, "debts", id, "id", "Debt");
   const currency = await requireBaseCurrency(ctx, userId);
   const amounts = debtAmounts({ originalAmount, currentBalance, minimumPayment }, currency);
-  const linked = linkedAccountId
-    ? await requireBaseCurrencyAccount(ctx, userId, linkedAccountId, "linkedAccountId", currency)
-    : undefined;
+  // The web resends the current link on every edit: only a new link must be in the base currency
+  // (debts created before this route may be linked to another currency).
+  const linked =
+    linkedAccountId && linkedAccountId !== (debt.linkedAccountId as string | undefined)
+      ? await requireBaseCurrencyAccount(ctx, userId, linkedAccountId, "linkedAccountId", currency)
+      : undefined;
   await debts.updateDebt(ctx, userId, { id: debt._id, ...fields, ...amounts, ...(linked ? { linkedAccountId: linked._id } : {}) });
   return await debtResponse(ctx, debt._id, currency);
 });

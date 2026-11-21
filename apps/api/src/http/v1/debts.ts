@@ -53,11 +53,15 @@ export const debtOperations = {
 
   update: operation(routes.debts.update, async (tx, user, input) => {
     const id = toId(input.id, "id");
-    await debts.getDebt(tx, user.userId, id);
+    const current = await debts.getDebt(tx, user.userId, id);
     const currency = await requireBaseCurrency(tx, user.userId);
     const amounts = debtAmounts(input, currency);
     const linkedAccountId = optionalId(input.linkedAccountId, "linkedAccountId");
-    if (linkedAccountId) await requireBaseCurrencyAccount(tx, user.userId, linkedAccountId, "linkedAccountId", currency);
+    // The web resends the current link on every edit: only a new link must be in the base currency
+    // (Convex never checked, so an existing debt may be linked to another currency).
+    if (linkedAccountId && linkedAccountId !== current.linkedAccountId) {
+      await requireBaseCurrencyAccount(tx, user.userId, linkedAccountId, "linkedAccountId", currency);
+    }
     const debt = await debts.updateDebt(tx, user.userId, id, {
       name: input.name,
       debtType: input.debtType,

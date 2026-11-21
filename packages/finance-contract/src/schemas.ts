@@ -708,7 +708,7 @@ const debtFields = {
   /** Remaining principal, at most `originalAmount`. */
   currentBalance: nonNegativeMoneySchema,
   /** Annual percentage as entered (e.g. 5.5). */
-  interestRate: z.number().min(0).max(1000).optional(),
+  interestRate: z.number().min(0).optional(),
   minimumPayment: nonNegativeMoneySchema.optional(),
   dueDate: isoDateSchema.optional(),
   /** Liability account whose balance payments pay down. */

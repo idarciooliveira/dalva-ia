@@ -200,6 +200,31 @@ describe("api/v1 debts and payments", () => {
     expect(await debtRow(debt)).toMatchObject({ name: "Car loan", archived: false });
   });
 
+  it("edits a debt still linked to an account in another currency, but won't link a new one", async () => {
+    const { alice, asAlice } = await twoUsers();
+    const eurLoan = await seedAccount(alice, { name: "EUR loan", type: "loan", currency: "EUR" });
+    const otherEur = await seedAccount(alice, { currency: "EUR" });
+    // Convex never checked the link's currency.
+    const debt = await carLoan(alice, { linkedAccountId: eurLoan });
+    expect((await asAlice.debts.update({ id: debt, name: "Renamed", linkedAccountId: eurLoan })).debt).toMatchObject({
+      name: "Renamed",
+      linkedAccountId: eurLoan,
+    });
+    await expectApiError(asAlice.debts.update({ id: debt, linkedAccountId: otherEur }), "validation_failed", 400);
+    expect((await debtRow(debt))?.linkedAccountId).toBe(eurLoan);
+  });
+
+  it("drops a deleted debt from the reports", async () => {
+    const { alice, aliceAccount, asAlice } = await twoUsers();
+    const debt = await carLoan(alice);
+    await asAlice.debtPayments.record({ debtId: debt, amount: usd(1_000), date: "2026-02-01", fromAccountId: aliceAccount });
+    expect((await asAlice.reports.netWorth()).totalDebts).toEqual(usd(79_000));
+    expect((await asAlice.reports.debtSummary()).recentPayment).toEqual(usd(1_000));
+    await asAlice.debts.delete({ id: debt });
+    expect(await asAlice.reports.netWorth()).toMatchObject({ totalDebts: usd(0), totalAssets: usd(100_000) });
+    expect(await asAlice.reports.debtSummary()).toMatchObject({ totalRemaining: usd(0), recentPayment: usd(0), debts: [] });
+  });
+
   it("keeps balances exact under parallel payments and removals on one debt", async () => {
     const { alice, aliceAccount, asAlice } = await twoUsers();
     const loan = await seedAccount(alice, { name: "Loan", type: "loan", balance: -80_000 });

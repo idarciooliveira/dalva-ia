@@ -165,4 +165,18 @@ describe("api/v1 debts and payments", () => {
     await expectApiError(chat.finance.debts.create(base), "forbidden", 403);
     expect(await getDoc(t, debt)).toMatchObject({ name: "Car loan" });
   });
+
+  it("edits a debt still linked to an account in another currency, but won't link a new one", async () => {
+    const t = setupApi();
+    const { alice, asAlice } = await twoUsers(t);
+    const eurLoan = await seedAccount(t, alice, { name: "EUR loan", type: "loan", currency: "EUR" });
+    const otherEur = await seedAccount(t, alice, { currency: "EUR" });
+    const debt = await seedDebt(t, alice, { linkedAccountId: eurLoan });
+    expect((await asAlice.debts.update({ id: debt, name: "Renamed", linkedAccountId: eurLoan })).debt).toMatchObject({
+      name: "Renamed",
+      linkedAccountId: eurLoan,
+    });
+    await expectApiError(asAlice.debts.update({ id: debt, linkedAccountId: otherEur }), "validation_failed", 400);
+    expect((await getDoc(t, debt))?.linkedAccountId).toBe(eurLoan);
+  });
 });
