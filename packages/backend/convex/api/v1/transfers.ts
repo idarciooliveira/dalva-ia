@@ -1,10 +1,10 @@
 import { routes } from "@mpf/finance-contract";
 
 import type { Doc, Id } from "../../_generated/dataModel";
-import type { MutationCtx } from "../../_generated/server";
+import type { MutationCtx, QueryCtx } from "../../_generated/server";
 import * as transfers from "../../domain/transfers";
 import { apiError, notFound, validationError } from "./errors";
-import { apiMutation } from "./define";
+import { apiMutation, apiQuery } from "./define";
 import { toMoney } from "./money";
 import { appAmount, owningContribution, requireOwned } from "./shared";
 
@@ -16,7 +16,7 @@ function requireSameCurrency(from: Doc<"accounts">, to: Doc<"accounts">) {
   return from.currency;
 }
 
-async function transferResponse(ctx: MutationCtx, userId: string, id: Id<"transactions">) {
+async function transferResponse(ctx: QueryCtx | MutationCtx, userId: string, id: Id<"transactions">) {
   const view = await transfers.getTransfer(ctx, userId, { id });
   if (!view) throw notFound("Transfer");
   const from = await ctx.db.get(view.fromAccountId);
@@ -46,6 +46,13 @@ async function requireTransfer(ctx: MutationCtx, userId: string, id: string) {
   }
   return tx;
 }
+
+/** Either leg. Not a transfer leg, or a leg whose pair is gone: `not_found`. */
+export const get = apiQuery(routes.transfers.get, async (ctx, userId, input) => {
+  const tx = await requireOwned(ctx, userId, "transactions", input.id, "id", "Transfer");
+  if (tx.type !== "transfer") throw notFound("Transfer");
+  return await transferResponse(ctx, userId, tx._id);
+});
 
 export const create = apiMutation(routes.transfers.create, async (ctx, userId, input) => {
   const from = await requireOwned(ctx, userId, "accounts", input.fromAccountId, "fromAccountId", "Account");
