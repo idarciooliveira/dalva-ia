@@ -38,7 +38,14 @@ describe("route map", () => {
         "accounts.list",
         "accounts.restore",
         "accounts.update",
+        "categories.archive",
+        "categories.create",
+        "categories.defaults",
+        "categories.delete",
         "categories.list",
+        "categories.restore",
+        "categories.seedDefaults",
+        "categories.update",
         "channelIdentities.resolve",
         "channelIdentities.unlink",
         "channelLinks.redeem",
@@ -65,7 +72,12 @@ describe("route map", () => {
         "reports.netWorth",
         "reports.spendingByCategory",
         "reports.transactionSummary",
+        "subcategories.archive",
+        "subcategories.create",
+        "subcategories.delete",
         "subcategories.list",
+        "subcategories.restore",
+        "subcategories.update",
         "transactions.create",
         "transactions.delete",
         "transactions.get",
@@ -85,7 +97,12 @@ describe("route map", () => {
 
   it("only mutates through POST/PATCH/DELETE and reads through GET", () => {
     for (const { name, route } of allRoutes().filter((r) => r.route.auth === "user" && !r.route.scope)) {
-      const read = name.endsWith(".list") || name.endsWith(".get") || name.endsWith(".search") || name.startsWith("reports.");
+      const read =
+        name.endsWith(".list") ||
+        name.endsWith(".get") ||
+        name.endsWith(".search") ||
+        name === "categories.defaults" ||
+        name.startsWith("reports.");
       expect(route.method === "GET", name).toBe(read);
       expect(isWriteRoute(route), name).toBe(!read);
     }
@@ -119,7 +136,7 @@ describe("route map", () => {
     expect(requiredScope(routes.transactions.create)).toBe("finance:write");
   });
 
-  it("marks profile and account management as web-only user routes", () => {
+  it("marks profile, account, category and chat link management as web-only user routes", () => {
     const webOnly = allRoutes().filter((r) => r.route.webOnly);
     expect(webOnly.map((r) => r.name).sort()).toEqual([
       "accounts.archive",
@@ -127,6 +144,13 @@ describe("route map", () => {
       "accounts.delete",
       "accounts.restore",
       "accounts.update",
+      "categories.archive",
+      "categories.create",
+      "categories.defaults",
+      "categories.delete",
+      "categories.restore",
+      "categories.seedDefaults",
+      "categories.update",
       "chatHistory.delete",
       "chatLinks.createCode",
       "chatLinks.list",
@@ -135,6 +159,11 @@ describe("route map", () => {
       "profile.completeOnboarding",
       "profile.create",
       "profile.get",
+      "subcategories.archive",
+      "subcategories.create",
+      "subcategories.delete",
+      "subcategories.restore",
+      "subcategories.update",
     ]);
     for (const { name, route } of webOnly) {
       expect(route.auth, name).toBe("user");
@@ -182,6 +211,9 @@ describe("matchRoute", () => {
       params: { debtId: "d1" },
     });
     expect(matchRoute("GET", "/api/v1/reports/cashflow")?.name).toBe("reports.cashflow");
+    expect(matchRoute("GET", "/api/v1/categories/defaults")?.name).toBe("categories.defaults");
+    expect(matchRoute("POST", "/api/v1/categories/defaults")?.name).toBe("categories.seedDefaults");
+    expect(matchRoute("POST", "/api/v1/categories/c1/archive")).toMatchObject({ name: "categories.archive", params: { id: "c1" } });
   });
 
   it("tolerates a trailing slash and decodes params", () => {

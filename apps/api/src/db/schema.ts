@@ -209,7 +209,7 @@ export const subcategories = pgTable(
   {
     id: id(),
     userId: userId(),
-    /** Deferred FK. The category delete removes its subcategories first. */
+    /** Deferred FK. The category delete removes its subcategories in the same transaction. */
     categoryId: uuid("category_id").notNull(),
     name: text("name").notNull(),
     archived: boolean("archived").notNull().default(false),

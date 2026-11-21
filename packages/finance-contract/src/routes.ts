@@ -30,7 +30,7 @@ export interface RouteDef {
   /** User routes only. Overrides the method-derived finance scope (`agent:state` for the agent store). */
   scope?: TokenScope;
   /**
-   * User routes for the web app only (profile, account management): tokens
+   * User routes for the web app only (profile, account and category management): tokens
    * minted for a chat (`cid`) get `forbidden`, and they are not pending-action
    * operations, so the chat agent can neither call nor propose them.
    */
@@ -99,9 +99,37 @@ export const routes = {
   },
   categories: {
     list: route("GET", "/categories", s.categoriesListRequestSchema, s.categoriesListResponseSchema),
+    // Before any future `GET /categories/:id`: matchRoute takes the first match.
+    defaults: webRoute("GET", "/categories/defaults", s.categoryDefaultsRequestSchema, s.categoryDefaultsResponseSchema),
+    seedDefaults: webRoute(
+      "POST",
+      "/categories/defaults",
+      s.categorySeedDefaultsRequestSchema,
+      s.categorySeedDefaultsResponseSchema,
+    ),
+    create: webRoute("POST", "/categories", s.categoryCreateRequestSchema, s.categoryCreateResponseSchema),
+    update: webRoute("PATCH", "/categories/:id", s.categoryUpdateRequestSchema, s.categoryUpdateResponseSchema),
+    archive: webRoute("POST", "/categories/:id/archive", s.categoryArchiveRequestSchema, s.categoryArchiveResponseSchema),
+    restore: webRoute("POST", "/categories/:id/restore", s.categoryRestoreRequestSchema, s.categoryRestoreResponseSchema),
+    delete: webRoute("DELETE", "/categories/:id", s.categoryDeleteRequestSchema, s.categoryDeleteResponseSchema),
   },
   subcategories: {
     list: route("GET", "/subcategories", s.subcategoriesListRequestSchema, s.subcategoriesListResponseSchema),
+    create: webRoute("POST", "/subcategories", s.subcategoryCreateRequestSchema, s.subcategoryCreateResponseSchema),
+    update: webRoute("PATCH", "/subcategories/:id", s.subcategoryUpdateRequestSchema, s.subcategoryUpdateResponseSchema),
+    archive: webRoute(
+      "POST",
+      "/subcategories/:id/archive",
+      s.subcategoryArchiveRequestSchema,
+      s.subcategoryArchiveResponseSchema,
+    ),
+    restore: webRoute(
+      "POST",
+      "/subcategories/:id/restore",
+      s.subcategoryRestoreRequestSchema,
+      s.subcategoryRestoreResponseSchema,
+    ),
+    delete: webRoute("DELETE", "/subcategories/:id", s.subcategoryDeleteRequestSchema, s.subcategoryDeleteResponseSchema),
   },
   transactions: {
     search: route("GET", "/transactions", s.transactionsSearchRequestSchema, s.transactionsSearchResponseSchema),

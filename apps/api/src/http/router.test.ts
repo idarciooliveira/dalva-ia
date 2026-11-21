@@ -57,11 +57,13 @@ describe("api/v1 router", () => {
       "agentMessages",
       "agentPendingActions",
       "agentSessions",
+      "categories",
       "channelIdentities",
       "channelLinks",
       "chatHistory",
       "chatLinks",
       "profile",
+      "subcategories",
     ]);
     for (const { group, op, route } of allRoutes()) {
       const user = operationFor(operations, group, op);

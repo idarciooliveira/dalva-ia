@@ -1,6 +1,7 @@
 import type { Operations, ServiceOperations } from "../operation";
 import { accountOperations } from "./accounts";
 import { agentHistoryOperations, agentMessageOperations, agentPendingActionOperations, agentSessionOperations } from "./agent";
+import { categoryOperations, subcategoryOperations } from "./categories";
 import { chatHistoryOperations, chatLinkOperations } from "./chatLinks";
 import { profileOperations } from "./profile";
 import { agentEventServiceOperations, channelIdentityServiceOperations, channelLinkServiceOperations } from "./service";
@@ -12,6 +13,8 @@ import { agentEventServiceOperations, channelIdentityServiceOperations, channelL
 export const operations = {
   accounts: accountOperations,
   profile: profileOperations,
+  categories: categoryOperations,
+  subcategories: subcategoryOperations,
   chatLinks: chatLinkOperations,
   chatHistory: chatHistoryOperations,
   agentSessions: agentSessionOperations,
