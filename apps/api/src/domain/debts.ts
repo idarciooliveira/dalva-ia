@@ -107,7 +107,7 @@ export async function createDebt(tx: Tx, userId: string, args: DebtFields): Prom
   return debt!;
 }
 
-/** Changes only the fields given (none can be cleared). The amounts are checked against the stored ones. */
+/** Changes only the fields given (none can be cleared). Changed amounts are checked against the stored ones. */
 export async function updateDebt(
   tx: Tx,
   userId: string,
@@ -115,7 +115,11 @@ export async function updateDebt(
   fields: Partial<DebtFields>,
 ): Promise<Debt> {
   const debt = await getDebt(tx, userId, id);
-  assertAmounts(fields.originalAmount ?? debt.originalAmount, fields.currentBalance ?? debt.currentBalance);
+  // Only when an amount changes: removing a payment may leave the balance above the original amount
+  // (as Convex did), and that must not block renaming the debt.
+  if (fields.originalAmount !== undefined || fields.currentBalance !== undefined) {
+    assertAmounts(fields.originalAmount ?? debt.originalAmount, fields.currentBalance ?? debt.currentBalance);
+  }
   if (fields.linkedAccountId) await getAccount(tx, userId, fields.linkedAccountId);
   const patch = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
   if (Object.keys(patch).length === 0) return debt;

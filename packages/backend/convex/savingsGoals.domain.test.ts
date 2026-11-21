@@ -78,6 +78,18 @@ describe("domain/savingsGoals", () => {
     expect(await t.run((ctx) => ctx.db.get(contributionId))).toBeNull();
   });
 
+  it("deletes every contribution, past the 500-row batch", async () => {
+    const t = setupTest();
+    const id = await seedGoal(t, ALICE);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 501; i++) {
+        await ctx.db.insert("goalContributions", { userId: ALICE, goalId: id, amount: 1, date: "2026-01-01" });
+      }
+    });
+    await t.run((ctx) => savingsGoals.deleteGoal(ctx, ALICE, { id }));
+    expect(await t.run((ctx) => ctx.db.query("goalContributions").collect())).toEqual([]);
+  });
+
   describe("cross-user ownership", () => {
     it("rejects every id-based operation from another user", async () => {
       const t = setupTest();

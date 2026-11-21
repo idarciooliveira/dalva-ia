@@ -65,6 +65,23 @@ describe("domain/debts", () => {
     expect(await debtRow(id)).toMatchObject({ originalAmount: 10_000, currentBalance: 8_000 });
   });
 
+  it("lets a debt be renamed after a removed payment left its balance above the original amount", async () => {
+    const alice = await createTestUser();
+    const from = await seedAccount(alice, { balance: 10_000 });
+    const { id } = await seedDebt(alice);
+    const payment = await pay(alice, { debtId: id, amount: 1_000, fromAccountId: from });
+    await tx((t) => debts.updateDebt(t, alice, id, { currentBalance: 10_000 }));
+    await tx((t) => debts.removeDebtPayment(t, alice, payment.id));
+    expect(await debtRow(id)).toMatchObject({ currentBalance: 11_000, originalAmount: 10_000 });
+
+    expect(await tx((t) => debts.updateDebt(t, alice, id, { name: "Renamed" }))).toMatchObject({ name: "Renamed" });
+    // Changing an amount still checks both.
+    expect(await domainRejection(tx((t) => debts.updateDebt(t, alice, id, { originalAmount: 10_500 })))).toMatchObject({
+      message: "Current balance cannot exceed original amount",
+    });
+    expect(await tx((t) => debts.updateDebt(t, alice, id, { currentBalance: 9_000 }))).toMatchObject({ currentBalance: 9_000 });
+  });
+
   it("sorts open debts by due date, undated after dated, and paid-off debts last", async () => {
     const alice = await createTestUser();
     await seedDebt(alice, { name: "Completed later", currentBalance: 0, dueDate: "2026-12-01" });

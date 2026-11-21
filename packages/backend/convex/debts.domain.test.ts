@@ -74,6 +74,32 @@ describe("domain/debts", () => {
     expect(summary.debts).toHaveLength(1);
   });
 
+  it("deletes every payment and reverses it, past the 500-row batch", async () => {
+    const t = setupTest();
+    const from = await t.run((ctx) =>
+      accounts.createAccount(ctx, ALICE, { name: "A", type: "bank", balance: 10_000, currency: "USD" }),
+    );
+    const id = await seedDebt(t, ALICE);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 501; i++) {
+        const sourceTransactionId = await ctx.db.insert("transactions", {
+          userId: ALICE, type: "expense", amount: 1, accountId: from, date: "2026-01-01",
+        });
+        await ctx.db.insert("debtPayments", {
+          userId: ALICE, debtId: id, amount: 1, principalAmount: 1, interestAmount: 0,
+          date: "2026-01-01", fromAccountId: from, sourceTransactionId,
+        });
+      }
+      const account = await ctx.db.get(from);
+      await ctx.db.patch(from, { balance: account!.balance - 501 });
+    });
+
+    await t.run((ctx) => debts.deleteDebt(ctx, ALICE, { id }));
+    expect(await t.run((ctx) => ctx.db.query("debtPayments").collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("transactions").collect())).toEqual([]);
+    expect((await t.run((ctx) => ctx.db.get(from)))?.balance).toBe(10_000);
+  });
+
   describe("cross-user ownership", () => {
     it("rejects every id-based operation from another user", async () => {
       const t = setupTest();

@@ -1,7 +1,8 @@
 import { routes } from "@mpf/finance-contract";
 
 import * as goals from "../../domain/goals";
-import { appAmount } from "../../domain/money";
+import { invalid } from "../../domain/errors";
+import { appAmount, fitsMoney } from "../../domain/money";
 import { operation } from "../operation";
 import { requireBaseCurrency, requireBaseCurrencyAccount } from "./currency";
 import { contributionDto, goalDto, optionalId, toId } from "./shared";
@@ -81,6 +82,8 @@ export const goalContributionOperations = {
     const goal = await goals.getGoal(tx, user.userId, toId(input.goalId, "goalId"));
     const currency = await requireBaseCurrency(tx, user.userId);
     const amount = appAmount(input.amount, currency, "amount");
+    // The goal is read in this transaction: a concurrent contribution reruns it with the new total.
+    if (!fitsMoney(goal.currentAmount + amount, currency)) throw invalid("amount.amountMinor", "Goal total out of range");
     const fromAccountId = optionalId(input.fromAccountId, "fromAccountId");
     if (goals.isAccountLinked(goal) && fromAccountId) {
       await requireBaseCurrencyAccount(tx, user.userId, fromAccountId, "fromAccountId", currency, { owner: "goal" });
