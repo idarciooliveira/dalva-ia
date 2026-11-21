@@ -3,6 +3,8 @@ import { accountOperations } from "./accounts";
 import { agentHistoryOperations, agentMessageOperations, agentPendingActionOperations, agentSessionOperations } from "./agent";
 import { categoryOperations, subcategoryOperations } from "./categories";
 import { chatHistoryOperations, chatLinkOperations } from "./chatLinks";
+import { debtOperations, debtPaymentOperations } from "./debts";
+import { goalContributionOperations, goalOperations } from "./goals";
 import { profileOperations } from "./profile";
 import { reportOperations } from "./reports";
 import { transactionOperations } from "./transactions";
@@ -21,6 +23,10 @@ export const operations = {
   transactions: transactionOperations,
   transfers: transferOperations,
   reports: reportOperations,
+  goals: goalOperations,
+  goalContributions: goalContributionOperations,
+  debts: debtOperations,
+  debtPayments: debtPaymentOperations,
   chatLinks: chatLinkOperations,
   chatHistory: chatHistoryOperations,
   agentSessions: agentSessionOperations,

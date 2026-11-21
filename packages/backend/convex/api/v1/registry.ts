@@ -85,6 +85,11 @@ export const implementations: Implementations = {
   goals: {
     list: internal.api.v1.goals.list,
     get: internal.api.v1.goals.get,
+    create: internal.api.v1.goals.create,
+    update: internal.api.v1.goals.update,
+    archive: internal.api.v1.goals.archive,
+    restore: internal.api.v1.goals.restore,
+    delete: internal.api.v1.goals.remove,
   },
   goalContributions: {
     list: internal.api.v1.goals.listContributions,
@@ -94,6 +99,11 @@ export const implementations: Implementations = {
   debts: {
     list: internal.api.v1.debts.list,
     get: internal.api.v1.debts.get,
+    create: internal.api.v1.debts.create,
+    update: internal.api.v1.debts.update,
+    archive: internal.api.v1.debts.archive,
+    restore: internal.api.v1.debts.restore,
+    delete: internal.api.v1.debts.remove,
   },
   debtPayments: {
     list: internal.api.v1.debts.listPayments,

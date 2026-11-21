@@ -4,7 +4,9 @@ import * as contributions from "../../domain/goalContributions";
 import * as goals from "../../domain/savingsGoals";
 import { apiError, notFound, validationError } from "./errors";
 import { apiMutation, apiQuery } from "./define";
-import { appAmount, contributionDto, goalDto, requireBaseCurrency, requireOwned } from "./shared";
+import type { Id } from "../../_generated/dataModel";
+import type { MutationCtx } from "../../_generated/server";
+import { appAmount, contributionDto, goalDto, requireBaseCurrency, requireBaseCurrencyAccount, requireOwned } from "./shared";
 
 export const list = apiQuery(routes.goals.list, async (ctx, userId, input) => {
   const currency = await requireBaseCurrency(ctx, userId);
@@ -15,6 +17,62 @@ export const list = apiQuery(routes.goals.list, async (ctx, userId, input) => {
 export const get = apiQuery(routes.goals.get, async (ctx, userId, input) => {
   const goal = await requireOwned(ctx, userId, "savingsGoals", input.id, "id", "Goal");
   return { goal: goalDto(goal, await requireBaseCurrency(ctx, userId)) };
+});
+
+/* Web-only management ------------------------------------------------------ */
+
+const goalResponse = async (ctx: MutationCtx, id: Id<"savingsGoals">, currency: string) => ({
+  goal: goalDto((await ctx.db.get(id))!, currency),
+});
+
+export const create = apiMutation(routes.goals.create, async (ctx, userId, input) => {
+  const currency = await requireBaseCurrency(ctx, userId);
+  const targetAmount = appAmount(input.targetAmount, currency, "targetAmount");
+  const linked = input.linkedAccountId
+    ? await requireBaseCurrencyAccount(ctx, userId, input.linkedAccountId, "linkedAccountId", currency)
+    : undefined;
+  const id = await goals.createGoal(ctx, userId, {
+    name: input.name,
+    targetAmount,
+    isVirtual: input.isVirtual,
+    ...(input.targetDate ? { targetDate: input.targetDate } : {}),
+    ...(linked ? { linkedAccountId: linked._id } : {}),
+    ...(input.icon ? { icon: input.icon } : {}),
+    ...(input.color ? { color: input.color } : {}),
+  });
+  return await goalResponse(ctx, id, currency);
+});
+
+export const update = apiMutation(routes.goals.update, async (ctx, userId, input) => {
+  const { id, targetAmount, ...fields } = input;
+  const goal = await requireOwned(ctx, userId, "savingsGoals", id, "id", "Goal");
+  const currency = await requireBaseCurrency(ctx, userId);
+  await goals.updateGoal(ctx, userId, {
+    id: goal._id,
+    ...fields,
+    ...(targetAmount ? { targetAmount: appAmount(targetAmount, currency, "targetAmount") } : {}),
+  });
+  return await goalResponse(ctx, goal._id, currency);
+});
+
+export const archive = apiMutation(routes.goals.archive, async (ctx, userId, input) => {
+  const goal = await requireOwned(ctx, userId, "savingsGoals", input.id, "id", "Goal");
+  const currency = await requireBaseCurrency(ctx, userId);
+  await goals.archiveGoal(ctx, userId, { id: goal._id });
+  return await goalResponse(ctx, goal._id, currency);
+});
+
+export const restore = apiMutation(routes.goals.restore, async (ctx, userId, input) => {
+  const goal = await requireOwned(ctx, userId, "savingsGoals", input.id, "id", "Goal");
+  const currency = await requireBaseCurrency(ctx, userId);
+  await goals.restoreGoal(ctx, userId, { id: goal._id });
+  return await goalResponse(ctx, goal._id, currency);
+});
+
+export const remove = apiMutation(routes.goals.delete, async (ctx, userId, input) => {
+  const goal = await requireOwned(ctx, userId, "savingsGoals", input.id, "id", "Goal");
+  await goals.deleteGoal(ctx, userId, { id: goal._id });
+  return { id: goal._id as string };
 });
 
 export const listContributions = apiQuery(routes.goalContributions.list, async (ctx, userId, input) => {

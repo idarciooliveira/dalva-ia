@@ -138,7 +138,7 @@ export async function seedDebt(
 }
 
 /**
- * A debt payment as the debt flow (PR 7) records it: an expense on the paying
+ * A debt payment as the debt flow records it: an expense on the paying
  * account plus, when the debt has a linked account, an adjustment on it.
  * Rows only, no balances.
  */
@@ -169,7 +169,7 @@ export async function seedDebtPayment(
   return { id: row!.id, sourceTransactionId, liabilityTransactionId };
 }
 
-/** A goal contribution owning the transfer whose outgoing leg is `transactionId` (the goal flow is PR 7). */
+/** A goal contribution owning the transfer whose outgoing leg is `transactionId`. */
 export async function seedContribution(userId: string, transactionId: string, linkedAccountId: string): Promise<string> {
   const [goal] = await testDb()
     .insert(savingsGoals)

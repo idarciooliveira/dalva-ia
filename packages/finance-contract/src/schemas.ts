@@ -636,6 +636,127 @@ export const subcategoryRestoreResponseSchema = subcategoryResponse;
 export const subcategoryDeleteRequestSchema = z.strictObject({ id: subcategoryIdSchema });
 export const subcategoryDeleteResponseSchema = deleted(subcategoryIdSchema);
 
+/*
+ * Goal and debt management: web-only routes (`webOnly` in routes.ts), like
+ * account management. Amounts are in the user's base currency; a linked
+ * account must be in it too. Fields can be changed, not cleared.
+ */
+
+/** Zero or more. */
+const nonNegativeMoneySchema = moneyInputSchema.refine((m) => m.amountMinor >= 0, {
+  message: "Must not be negative",
+  path: ["amountMinor"],
+});
+const goalResponse = z.object({ goal: goalSchema });
+const debtResponse = z.object({ debt: debtSchema });
+
+/**
+ * A virtual goal only tracks progress. A goal with `isVirtual: false` names the
+ * account its contributions move money into (`linkedAccountId`), as a transfer.
+ */
+export const goalCreateRequestSchema = z
+  .strictObject({
+    name: categoryName,
+    targetAmount: positiveMoneySchema,
+    targetDate: isoDateSchema.optional(),
+    isVirtual: z.boolean(),
+    linkedAccountId: accountIdSchema.optional(),
+    icon: categoryStyle.optional(),
+    color: categoryStyle.optional(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.isVirtual && v.linkedAccountId) {
+      ctx.addIssue({ code: "custom", message: "Virtual goals have no linked account", path: ["linkedAccountId"] });
+    }
+    if (!v.isVirtual && !v.linkedAccountId) {
+      ctx.addIssue({ code: "custom", message: "Account-linked goals need linkedAccountId", path: ["linkedAccountId"] });
+    }
+  });
+export const goalCreateResponseSchema = goalResponse;
+
+/** Only the given fields change. The linked account and `isVirtual` can't be changed. */
+export const goalUpdateRequestSchema = z
+  .strictObject({
+    id: goalIdSchema,
+    name: categoryName.optional(),
+    targetAmount: positiveMoneySchema.optional(),
+    targetDate: isoDateSchema.optional(),
+    icon: categoryStyle.optional(),
+    color: categoryStyle.optional(),
+  })
+  .refine(hasChangesBesidesId, { message: NO_CHANGES });
+export const goalUpdateResponseSchema = goalResponse;
+
+/** Archived goals are hidden from `goals.list` unless `includeArchived`. */
+export const goalArchiveRequestSchema = z.strictObject({ id: goalIdSchema });
+export const goalArchiveResponseSchema = goalResponse;
+export const goalRestoreRequestSchema = z.strictObject({ id: goalIdSchema });
+export const goalRestoreResponseSchema = goalResponse;
+
+/**
+ * Deletes the goal and its contributions for good. Transfers made by
+ * contributions stay (the money did move) and become plain transfers.
+ */
+export const goalDeleteRequestSchema = z.strictObject({ id: goalIdSchema });
+export const goalDeleteResponseSchema = deleted(goalIdSchema);
+
+const debtFields = {
+  name: categoryName,
+  debtType: debtTypeSchema,
+  lender: categoryName.optional(),
+  originalAmount: positiveMoneySchema,
+  /** Remaining principal, at most `originalAmount`. */
+  currentBalance: nonNegativeMoneySchema,
+  /** Annual percentage as entered (e.g. 5.5). */
+  interestRate: z.number().min(0).optional(),
+  minimumPayment: nonNegativeMoneySchema.optional(),
+  dueDate: isoDateSchema.optional(),
+  /** Liability account whose balance payments pay down. */
+  linkedAccountId: accountIdSchema.optional(),
+};
+
+/** `currentBalance` above `originalAmount` is `validation_failed`. */
+export const debtCreateRequestSchema = z.strictObject(debtFields).superRefine((v, ctx) => {
+  if (v.currentBalance.currency === v.originalAmount.currency && v.currentBalance.amountMinor > v.originalAmount.amountMinor) {
+    ctx.addIssue({ code: "custom", message: "Current balance cannot exceed original amount", path: ["currentBalance", "amountMinor"] });
+  }
+});
+export const debtCreateResponseSchema = debtResponse;
+
+/**
+ * Only the given fields change. The amounts are checked against the stored
+ * ones (`currentBalance` at most `originalAmount`). Payments don't change
+ * when the balance is edited by hand.
+ */
+export const debtUpdateRequestSchema = z
+  .strictObject({
+    id: debtIdSchema,
+    name: debtFields.name.optional(),
+    debtType: debtFields.debtType.optional(),
+    lender: debtFields.lender,
+    originalAmount: debtFields.originalAmount.optional(),
+    currentBalance: debtFields.currentBalance.optional(),
+    interestRate: debtFields.interestRate,
+    minimumPayment: debtFields.minimumPayment,
+    dueDate: debtFields.dueDate,
+    linkedAccountId: debtFields.linkedAccountId,
+  })
+  .refine(hasChangesBesidesId, { message: NO_CHANGES });
+export const debtUpdateResponseSchema = debtResponse;
+
+/** Archived debts are hidden from `debts.list` unless `includeArchived` and left out of the reports. */
+export const debtArchiveRequestSchema = z.strictObject({ id: debtIdSchema });
+export const debtArchiveResponseSchema = debtResponse;
+export const debtRestoreRequestSchema = z.strictObject({ id: debtIdSchema });
+export const debtRestoreResponseSchema = debtResponse;
+
+/**
+ * Deletes the debt and its payments for good, with the transactions the
+ * payments created; their balance effects are reversed.
+ */
+export const debtDeleteRequestSchema = z.strictObject({ id: debtIdSchema });
+export const debtDeleteResponseSchema = deleted(debtIdSchema);
+
 export const goalContributionAddRequestSchema = z.strictObject({
   goalId: goalIdSchema,
   amount: positiveMoneySchema,

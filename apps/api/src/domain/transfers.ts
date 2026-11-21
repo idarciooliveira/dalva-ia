@@ -202,7 +202,15 @@ export async function updateLoadedTransfer(
  * is gone is deleted alone, reversing its own effect.
  */
 export async function deleteTransfer(tx: Tx, userId: string, id: string): Promise<void> {
-  const { outgoing, incoming } = await legsOf(tx, userId, await getEditableLeg(tx, userId, id));
+  await deleteTransferLegs(tx, userId, await getEditableLeg(tx, userId, id));
+}
+
+/**
+ * `deleteTransfer` from a leg the caller loaded, without the goal-contribution
+ * check: for the contribution flow removing its own transfer.
+ */
+export async function deleteTransferLegs(tx: Tx, userId: string, leg: Transaction): Promise<void> {
+  const { outgoing, incoming } = await legsOf(tx, userId, leg);
   const legs = [outgoing, incoming].filter((leg): leg is Transaction => leg !== null);
   await tx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, legs.map((leg) => leg.id))));
   await addToBalances(tx, userId, [

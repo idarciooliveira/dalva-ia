@@ -160,15 +160,17 @@ export async function deleteGoal(
     throw new Error("Goal not found");
   }
 
-  // Delete all contributions for this goal
-  const contributions = await ctx.db
-    .query("goalContributions")
-    .withIndex("by_goalId", (q) => q.eq("goalId", args.id))
-    .take(500);
-
-  for (const c of contributions) {
-    await ctx.db.delete(c._id);
-  }
+  // Delete all contributions for this goal, in batches until one comes back short.
+  let batch;
+  do {
+    batch = await ctx.db
+      .query("goalContributions")
+      .withIndex("by_goalId", (q) => q.eq("goalId", args.id))
+      .take(500);
+    for (const c of batch) {
+      await ctx.db.delete(c._id);
+    }
+  } while (batch.length === 500);
 
   await ctx.db.delete(args.id);
 }

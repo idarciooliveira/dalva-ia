@@ -57,13 +57,23 @@ describe("route map", () => {
         "debtPayments.list",
         "debtPayments.record",
         "debtPayments.remove",
+        "debts.archive",
+        "debts.create",
+        "debts.delete",
         "debts.get",
         "debts.list",
+        "debts.restore",
+        "debts.update",
         "goalContributions.add",
         "goalContributions.list",
         "goalContributions.remove",
+        "goals.archive",
+        "goals.create",
+        "goals.delete",
         "goals.get",
         "goals.list",
+        "goals.restore",
+        "goals.update",
         "profile.completeOnboarding",
         "profile.create",
         "profile.get",
@@ -137,7 +147,7 @@ describe("route map", () => {
     expect(requiredScope(routes.transactions.create)).toBe("finance:write");
   });
 
-  it("marks profile, account, category and chat link management and transfer reads as web-only user routes", () => {
+  it("marks profile, account, category, goal, debt and chat link management and transfer reads as web-only user routes", () => {
     const webOnly = allRoutes().filter((r) => r.route.webOnly);
     expect(webOnly.map((r) => r.name).sort()).toEqual([
       "accounts.archive",
@@ -157,6 +167,16 @@ describe("route map", () => {
       "chatLinks.list",
       "chatLinks.setReadOnly",
       "chatLinks.unlink",
+      "debts.archive",
+      "debts.create",
+      "debts.delete",
+      "debts.restore",
+      "debts.update",
+      "goals.archive",
+      "goals.create",
+      "goals.delete",
+      "goals.restore",
+      "goals.update",
       "profile.completeOnboarding",
       "profile.create",
       "profile.get",
@@ -216,6 +236,9 @@ describe("matchRoute", () => {
     expect(matchRoute("GET", "/api/v1/categories/defaults")?.name).toBe("categories.defaults");
     expect(matchRoute("POST", "/api/v1/categories/defaults")?.name).toBe("categories.seedDefaults");
     expect(matchRoute("POST", "/api/v1/categories/c1/archive")).toMatchObject({ name: "categories.archive", params: { id: "c1" } });
+    expect(matchRoute("POST", "/api/v1/goals/g1/archive")).toMatchObject({ name: "goals.archive", params: { id: "g1" } });
+    expect(matchRoute("POST", "/api/v1/goals/g1/contributions")).toMatchObject({ name: "goalContributions.add", params: { goalId: "g1" } });
+    expect(matchRoute("DELETE", "/api/v1/debts/d1")).toMatchObject({ name: "debts.delete", params: { id: "d1" } });
   });
 
   it("tolerates a trailing slash and decodes params", () => {

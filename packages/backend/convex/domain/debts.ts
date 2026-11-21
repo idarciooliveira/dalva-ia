@@ -196,38 +196,42 @@ export async function deleteDebt(
 ) {
   await requireOwnedDebt(ctx, args.id, userId);
 
-  const payments = await ctx.db
-    .query("debtPayments")
-    .withIndex("by_debtId", (q) => q.eq("debtId", args.id))
-    .take(500);
+  // Every payment goes, in batches until one comes back short (each batch deletes what it read).
+  let payments;
+  do {
+    payments = await ctx.db
+      .query("debtPayments")
+      .withIndex("by_debtId", (q) => q.eq("debtId", args.id))
+      .take(500);
 
-  for (const payment of payments) {
-    const sourceTx = await ctx.db.get(payment.sourceTransactionId);
-    if (sourceTx) {
-      const sourceAccount = await ctx.db.get(sourceTx.accountId);
-      if (sourceAccount) {
-        await ctx.db.patch(sourceTx.accountId, {
-          balance: sourceAccount.balance + sourceTx.amount,
-        });
-      }
-      await ctx.db.delete(sourceTx._id);
-    }
-
-    if (payment.liabilityTransactionId) {
-      const liabilityTx = await ctx.db.get(payment.liabilityTransactionId);
-      if (liabilityTx) {
-        const liabilityAccount = await ctx.db.get(liabilityTx.accountId);
-        if (liabilityAccount) {
-          await ctx.db.patch(liabilityTx.accountId, {
-            balance: liabilityAccount.balance - liabilityTx.amount,
+    for (const payment of payments) {
+      const sourceTx = await ctx.db.get(payment.sourceTransactionId);
+      if (sourceTx) {
+        const sourceAccount = await ctx.db.get(sourceTx.accountId);
+        if (sourceAccount) {
+          await ctx.db.patch(sourceTx.accountId, {
+            balance: sourceAccount.balance + sourceTx.amount,
           });
         }
-        await ctx.db.delete(liabilityTx._id);
+        await ctx.db.delete(sourceTx._id);
       }
-    }
 
-    await ctx.db.delete(payment._id);
-  }
+      if (payment.liabilityTransactionId) {
+        const liabilityTx = await ctx.db.get(payment.liabilityTransactionId);
+        if (liabilityTx) {
+          const liabilityAccount = await ctx.db.get(liabilityTx.accountId);
+          if (liabilityAccount) {
+            await ctx.db.patch(liabilityTx.accountId, {
+              balance: liabilityAccount.balance - liabilityTx.amount,
+            });
+          }
+          await ctx.db.delete(liabilityTx._id);
+        }
+      }
+
+      await ctx.db.delete(payment._id);
+    }
+  } while (payments.length === 500);
 
   await ctx.db.delete(args.id);
 }

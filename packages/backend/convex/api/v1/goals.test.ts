@@ -2,7 +2,7 @@ import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
 import type { Id } from "../../_generated/dataModel";
-import { clientFor, expectApiError, expectConforms, getDoc, raw, seedAccount, seedUser, setupApi, tokenFor, twoUsers, type T } from "./test.helpers";
+import { clientFor, expectApiError, expectConforms, getDoc, linkedChat, raw, seedAccount, seedUser, setupApi, tokenFor, twoUsers, type T } from "./test.helpers";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
@@ -90,5 +90,66 @@ describe("api/v1 goals and contributions", () => {
     await expectApiError(asBob.goalContributions.remove({ id: contribution.id }), "not_found");
     expect((await asBob.goals.list()).items).toEqual([]);
     expect((await getDoc(t, goal))?.currentAmount).toBe(100);
+  });
+
+  it("creates, updates, archives, restores and deletes goals (web only)", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asAlice } = await twoUsers(t);
+    const token = await tokenFor(alice);
+    const created = await raw(t, "POST", "/goals", {
+      token,
+      idempotencyKey: "goal-create-01",
+      body: { name: "Trip", targetAmount: usd(50_000), isVirtual: true, targetDate: "2027-01-01", color: "#a3e635" },
+    });
+    const { goal } = expectConforms(routes.goals.create, created) as { goal: { id: string } };
+    expect(goal).toEqual({
+      id: expect.any(String),
+      name: "Trip",
+      targetAmount: usd(50_000),
+      currentAmount: usd(0),
+      targetDate: "2027-01-01",
+      isVirtual: true,
+      color: "#a3e635",
+      createdAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+    });
+
+    const updated = await asAlice.goals.update({ id: goal.id, name: "Big trip", targetAmount: usd(60_000) });
+    expect(updated.goal).toMatchObject({ name: "Big trip", targetAmount: usd(60_000), targetDate: "2027-01-01" });
+    expect((await asAlice.goals.archive({ id: goal.id })).goal.archived).toBe(true);
+    expect((await asAlice.goals.list()).items).toEqual([]);
+    expect((await asAlice.goals.restore({ id: goal.id })).goal.archived).toBeFalsy();
+
+    const linked = await asAlice.goals.create({ name: "House", targetAmount: usd(1_000), isVirtual: false, linkedAccountId: aliceAccount });
+    expect(linked.goal).toMatchObject({ isVirtual: false, linkedAccountId: aliceAccount });
+
+    await asAlice.goalContributions.add({ goalId: goal.id, amount: usd(100), date: "2026-01-01" });
+    expect(await asAlice.goals.delete({ id: goal.id })).toEqual({ id: goal.id });
+    await expectApiError(asAlice.goals.get({ id: goal.id }), "not_found", 404);
+  });
+
+  it("validates goal management input", async () => {
+    const t = setupApi();
+    const { alice, bobAccount, asAlice } = await twoUsers(t);
+    const eur = await seedAccount(t, alice, { currency: "EUR" });
+    await expectApiError(asAlice.goals.create({ name: "x", targetAmount: { amountMinor: 1, currency: "EUR" }, isVirtual: true }), "validation_failed");
+    await expectApiError(asAlice.goals.create({ name: "x", targetAmount: usd(1), isVirtual: false, linkedAccountId: eur }), "validation_failed");
+    await expectApiError(asAlice.goals.create({ name: "x", targetAmount: usd(1), isVirtual: false, linkedAccountId: bobAccount }), "not_found");
+    const goal = await seedGoal(t, alice);
+    await expectApiError(asAlice.goals.update({ id: goal, targetAmount: { amountMinor: 1, currency: "EUR" } }), "validation_failed");
+    expect((await getDoc(t, goal))?.targetAmount).toBe(100_000);
+  });
+
+  it("keeps goal management away from chat tokens and other users", async () => {
+    const t = setupApi();
+    const chat = await linkedChat(t);
+    const goal = await seedGoal(t, chat.userId);
+    await expectApiError(chat.finance.goals.create({ name: "x", targetAmount: usd(1), isVirtual: true }), "forbidden", 403);
+    await expectApiError(chat.finance.goals.delete({ id: goal }), "forbidden", 403);
+    const { asBob } = await twoUsers(t);
+    await expectApiError(asBob.goals.update({ id: goal, name: "x" }), "not_found", 404);
+    await expectApiError(asBob.goals.archive({ id: goal }), "not_found");
+    await expectApiError(asBob.goals.restore({ id: goal }), "not_found");
+    await expectApiError(asBob.goals.delete({ id: goal }), "not_found");
+    expect(await getDoc(t, goal)).toMatchObject({ name: "Trip" });
   });
 });

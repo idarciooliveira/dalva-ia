@@ -62,6 +62,10 @@ describe("api/v1 router", () => {
       "channelLinks",
       "chatHistory",
       "chatLinks",
+      "debtPayments",
+      "debts",
+      "goalContributions",
+      "goals",
       "profile",
       "reports",
       "subcategories",
@@ -157,7 +161,9 @@ describe("api/v1 router", () => {
   });
 
   it("answers not_found for contract routes not ported yet, after authenticating", async () => {
-    const { app } = testApp();
+    // Every group is ported now: drop two to check the fallback.
+    const { goals: _goals, debtPayments: _debtPayments, ...partial } = operations;
+    const { app } = testApp({ operations: partial });
     const token = await tokenFor(await seedUser());
     expectError(await raw(app, "GET", "/goals"), "unauthorized", 401);
     expectError(await raw(app, "GET", "/goals", { token }), "not_found", 404);
