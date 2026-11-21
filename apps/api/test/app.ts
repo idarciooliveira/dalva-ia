@@ -5,7 +5,7 @@ import { createAuth } from "../src/auth/auth";
 import type { SignInLimiter } from "../src/auth/sign-in-limit";
 import { createUserTokens } from "../src/auth/tokens";
 import { users } from "../src/db/schema";
-import type { Operations } from "../src/http/operation";
+import type { Operations, ServiceOperations } from "../src/http/operation";
 import { createLogger, type Logger } from "../src/log";
 import { testDb } from "./db";
 
@@ -14,6 +14,8 @@ export const TEST_AUTH_SECRET = "test-secret-test-secret-test-secret-0123";
 /** The Convex API tests' secret too, so tokens minted there verify here. */
 export const TEST_TOKEN_SECRET = "finance-api-test-secret-0123456789abcdef";
 export const testTokens = createUserTokens(TEST_TOKEN_SECRET);
+/** The Convex API tests' service key too. */
+export const TEST_SERVICE_KEY = "finance-api-test-service-key-fedcba9876543210";
 
 export const silentLogger = createLogger({ level: "error", write: () => {} });
 
@@ -25,6 +27,9 @@ export function testApp(
     clientIpHeader?: string;
     signInLimiter?: SignInLimiter;
     operations?: Operations;
+    serviceOperations?: ServiceOperations;
+    /** Default `TEST_SERVICE_KEY`; `null` leaves the service key unconfigured. */
+    serviceKey?: string | null;
   } = {},
 ) {
   const logger = options.logger ?? silentLogger;
@@ -38,6 +43,8 @@ export function testApp(
     publicUrl,
     signInLimiter: options.signInLimiter,
     operations: options.operations,
+    serviceOperations: options.serviceOperations,
+    serviceKey: options.serviceKey === null ? undefined : (options.serviceKey ?? TEST_SERVICE_KEY),
   });
   return { app, auth };
 }

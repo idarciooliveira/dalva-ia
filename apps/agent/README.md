@@ -12,7 +12,7 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 | `TELEGRAM_MODE` | `webhook` (prod) or `polling` (local dev) |
 | `TELEGRAM_WEBHOOK_SECRET` | Webhook mode only. 32-256 chars `[A-Za-z0-9_-]`, also passed as `secret_token` to `setWebhook` |
 | `TELEGRAM_BOT_USERNAME` | Without `@`; commands addressed to other bots are ignored |
-| `FINANCE_API_URL` | Finance API origin (Convex site URL) |
+| `FINANCE_API_URL` | Finance API origin (Convex site URL, or `apps/api`) |
 | `FINANCE_API_SERVICE_KEY` | Same as the backend's `FINANCE_API_SERVICE_KEY` |
 | `PORT` | Default `8080` |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error`, default `info` |
@@ -36,6 +36,8 @@ bun run dev     # or bun run dev:agent with the backend already running
 ```
 
 Bun loads `.env.local` over `.env`, so the bot uses the local backend even if `.env` points elsewhere. Delete `.env.local` to use the values in `.env`.
+
+To run the bot against the new backend (`apps/api`) instead of Convex: set `FINANCE_API_SERVICE_KEY` in `apps/api/.env.local`, start it (`bun run dev:api`), then `bun run dev:agent:api`. It takes `FINANCE_API_URL` (`http://localhost:$PORT`) and the service key from `apps/api/.env.local`, over the agent's own env files. Plain `dev:agent` keeps using Convex.
 
 Polling calls `deleteWebhook` first (pending updates are kept), so don't point a dev bot at a production webhook. Use a separate bot for dev.
 

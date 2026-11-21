@@ -6,6 +6,7 @@ import {
   type RouteDef,
   routes,
 } from "@mpf/finance-contract";
+import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -21,10 +22,13 @@ import {
   seedUser,
   tokenFor,
 } from "../../test/api";
-import { testApp, testTokens, TEST_PUBLIC_URL } from "../../test/app";
+import { TEST_SERVICE_KEY, TEST_TOKEN_SECRET, testApp, testTokens, TEST_PUBLIC_URL } from "../../test/app";
+import { testDb } from "../../test/db";
+import { accounts, agentInboundEvents } from "../db/schema";
+import { conflict } from "../domain/errors";
 import { BodyTooLargeError, readBodyText } from "./router";
-import { operation, operationFor } from "./operation";
-import { operations } from "./v1";
+import { commitThenFail, operation, operationFor, serviceOperation, serviceOperationFor } from "./operation";
+import { operations, serviceOperations } from "./v1";
 
 const KEY = "router-test-key-0001";
 /** A valid-looking path for a route; ids don't need to exist for auth checks. */
@@ -35,35 +39,70 @@ async function forgedToken(userId: string) {
   return `${h}.${p}.${"A".repeat(43)}`;
 }
 
-const implemented = allRoutes().filter((r) => operationFor(operations, r.group, r.op) !== null);
+const implemented = allRoutes().filter(
+  (r) => operationFor(operations, r.group, r.op) !== null || serviceOperationFor(serviceOperations, r.group, r.op) !== null,
+);
 const userRoutes = implemented.filter((r) => r.route.auth === "user");
-const serviceRoutes = allRoutes().filter((r) => r.route.auth === "service");
+const serviceRoutes = implemented.filter((r) => r.route.auth === "service");
 const optionsFor = (route: RouteDef) =>
   requiresIdempotencyKey(route) ? { idempotencyKey: KEY, body: {} } : isWriteRoute(route) ? { body: {} } : {};
 
 describe("api/v1 router", () => {
-  it("implements whole contract groups, each operation bound to its own route", () => {
+  it("implements whole contract groups, each operation bound to its own route and credential", () => {
     const groups = new Set(implemented.map((r) => r.group));
-    expect([...groups].sort()).toEqual(["accounts", "categories", "profile", "subcategories"]);
+    expect([...groups].sort()).toEqual([
+      "accounts",
+      "agentEvents",
+      "agentHistory",
+      "agentMessages",
+      "agentPendingActions",
+      "agentSessions",
+      "categories",
+      "channelIdentities",
+      "channelLinks",
+      "chatHistory",
+      "chatLinks",
+      "profile",
+      "subcategories",
+    ]);
     for (const { group, op, route } of allRoutes()) {
-      const found = operationFor(operations, group, op);
+      const user = operationFor(operations, group, op);
+      const service = serviceOperationFor(serviceOperations, group, op);
       if (!groups.has(group)) {
-        expect(found, `${group}.${op}`).toBeNull();
+        expect([user, service], `${group}.${op}`).toEqual([null, null]);
         continue;
       }
-      expect(found?.route, `${group}.${op}`).toBe(route);
-      expect(route.auth, `${group}.${op}`).toBe("user");
+      expect((route.auth === "user" ? user : service)?.route, `${group}.${op}`).toBe(route);
+      expect(route.auth === "user" ? service : user, `${group}.${op}`).toBeNull();
     }
   });
 
   describe.each(serviceRoutes.map((r) => [r.name, r] as const))("%s service auth", (_name, { route }) => {
-    it("answers unauthorized to everything until service-key auth lands", async () => {
+    const path = pathOf(route.path);
+    const body = isWriteRoute(route) ? { body: {} } : {};
+
+    it("rejects no credential, a wrong key and user tokens with 401", async () => {
       const { app } = testApp();
       const user = await seedUser();
-      const options = optionsFor(route);
-      expectError(await raw(app, route.method, pathOf(route.path), options), "unauthorized", 401);
-      expectError(await raw(app, route.method, pathOf(route.path), { ...options, token: "x".repeat(48) }), "unauthorized", 401);
-      expectError(await raw(app, route.method, pathOf(route.path), { ...options, token: await tokenFor(user) }), "unauthorized", 401);
+      expectError(await raw(app, route.method, path, body), "unauthorized", 401);
+      expectError(await raw(app, route.method, path, { ...body, token: "x".repeat(48) }), "unauthorized", 401);
+      expectError(await raw(app, route.method, path, { ...body, token: TEST_SERVICE_KEY.slice(0, -1) }), "unauthorized", 401);
+      for (const scopes of [["finance:read"], ALL_SCOPES] as const) {
+        expectError(await raw(app, route.method, path, { ...body, token: await tokenFor(user, [...scopes]) }), "unauthorized", 401);
+      }
+      // The token secret is not the service key either.
+      expectError(await raw(app, route.method, path, { ...body, token: TEST_TOKEN_SECRET }), "unauthorized", 401);
+      expectError(await raw(app, route.method, path, { ...body, headers: { Authorization: `Basic ${TEST_SERVICE_KEY}` } }), "unauthorized", 401);
+    });
+
+    it("accepts the service key without an Idempotency-Key and validates the input", async () => {
+      const { app } = testApp();
+      expectError(await raw(app, route.method, path, { ...body, token: TEST_SERVICE_KEY }), "validation_failed", 400);
+    });
+
+    it("answers 401 to every credential when no service key is configured", async () => {
+      const { app } = testApp({ serviceKey: null });
+      expectError(await raw(app, route.method, path, { ...body, token: TEST_SERVICE_KEY }), "unauthorized", 401);
     });
   });
 
@@ -99,9 +138,17 @@ describe("api/v1 router", () => {
       }
     });
 
+    it("rejects the service key with 401", async () => {
+      const { app } = testApp();
+      expectError(await raw(app, route.method, path, { ...options, token: TEST_SERVICE_KEY }), "unauthorized", 401);
+    });
+
     it("never 500s on unknown ids or empty input", async () => {
       const { app } = testApp();
-      const response = await raw(app, route.method, path, { ...options, token: await tokenFor(await seedUser()) });
+      const user = await seedUser();
+      // Agent-store routes act for a linked chat; the rest for the plain user.
+      const channelIdentityId = route.scope ? await seedChannelIdentity(user) : undefined;
+      const response = await raw(app, route.method, path, { ...options, token: await tokenFor(user, ALL_SCOPES, { channelIdentityId }) });
       expect([200, 400, 404]).toContain(response.status);
     });
   });
@@ -346,6 +393,71 @@ describe("api/v1 router", () => {
     const identity = await seedChannelIdentity(user, { readOnly: true });
     const chat = await raw(app, "DELETE", "/agent/history", { token: await tokenFor(user, ["agent:state"], { channelIdentityId: identity }) });
     expect(chat.status).toBe(200);
+  });
+
+  describe("commitThenFail", () => {
+    const missingId = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
+
+    it("commits the handler's writes, then answers the error", async () => {
+      // A fake agent-store write: stores a row, then reports a conflict (like confirming an expired action).
+      const agentPendingActions = {
+        ...operations.agentPendingActions,
+        cancel: operation(routes.agentPendingActions.cancel, async (tx) => {
+          await tx.insert(agentInboundEvents).values({
+            channel: "telegram",
+            eventId: "kept",
+            status: "received",
+            payload: "{}",
+            receivedAt: new Date(),
+            updatedAt: new Date(),
+          });
+          return commitThenFail(conflict("Pending action expired", { status: "expired" }));
+        }),
+      };
+      const { app } = testApp({ operations: { ...operations, agentPendingActions } });
+      const user = await seedUser();
+      const token = await tokenFor(user, ["agent:state"], { channelIdentityId: await seedChannelIdentity(user) });
+      const response = await raw(app, "POST", `/agent/pending-actions/${missingId}/cancel`, { token, body: {} });
+      expectError(response, "conflict", 409);
+      expect(response.body.error).toEqual({ code: "conflict", message: "Pending action expired", details: { status: "expired" } });
+      expect(await testDb().select().from(agentInboundEvents)).toHaveLength(1);
+    });
+
+    it("is a 500 on a route with an Idempotency-Key, and rolls back", async () => {
+      const failing = {
+        ...operations.accounts,
+        adjust: operation(routes.accounts.adjust, async (tx, user) => {
+          await tx.update(accounts).set({ balance: 1 }).where(eq(accounts.userId, user.userId));
+          return commitThenFail(conflict("nope"));
+        }),
+      };
+      const { app } = testApp({ operations: { ...operations, accounts: failing } });
+      const user = await seedUser();
+      const account = await seedAccount(user);
+      const response = await raw(app, "POST", `/accounts/${account}/adjustments`, {
+        token: await tokenFor(user),
+        idempotencyKey: KEY,
+        body: { amount: { amountMinor: 1, currency: "USD" } },
+      });
+      expectError(response, "internal", 500);
+      expect((await getAccountRow(account))?.balance).toBe(0);
+    });
+  });
+
+  it("runs service handlers in a transaction: a failed write rolls back", async () => {
+    const agentEvents = {
+      ...serviceOperations.agentEvents,
+      claim: serviceOperation(routes.agentEvents.claim, async (tx, _ctx, input) => {
+        await tx
+          .insert(agentInboundEvents)
+          .values({ channel: input.channel, eventId: input.eventId, status: "received", payload: "{}", receivedAt: new Date(), updatedAt: new Date() });
+        throw conflict("after the write");
+      }),
+    };
+    const { app } = testApp({ serviceOperations: { ...serviceOperations, agentEvents } });
+    const response = await raw(app, "POST", "/agent/events/claim", { token: TEST_SERVICE_KEY, body: { channel: "telegram", eventId: "1", payload: "{}" } });
+    expectError(response, "conflict", 409);
+    expect(await testDb().select().from(agentInboundEvents)).toHaveLength(0);
   });
 
   describe("session cookies (web)", () => {

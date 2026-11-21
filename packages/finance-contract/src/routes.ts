@@ -35,6 +35,12 @@ export interface RouteDef {
    * operations, so the chat agent can neither call nor propose them.
    */
   webOnly?: boolean;
+  /**
+   * `false`: a user write that takes no `Idempotency-Key` (and stores no
+   * replay), for responses that must not be kept (a link code) or writes that
+   * are safe to repeat. Default: every finance write needs one.
+   */
+  idempotent?: false;
 }
 
 const route = <Req extends z.ZodType, Res extends z.ZodType>(
@@ -46,6 +52,10 @@ const route = <Req extends z.ZodType, Res extends z.ZodType>(
 
 const webRoute = <Req extends z.ZodType, Res extends z.ZodType>(...args: Parameters<typeof route<Req, Res>>) =>
   ({ ...route(...args), webOnly: true as const }) satisfies RouteDef;
+
+/** Web-only write without `Idempotency-Key` (see `RouteDef.idempotent`). */
+const webRouteNoKey = <Req extends z.ZodType, Res extends z.ZodType>(...args: Parameters<typeof route<Req, Res>>) =>
+  ({ ...webRoute(...args), idempotent: false as const }) satisfies RouteDef;
 
 const serviceRoute = <Req extends z.ZodType, Res extends z.ZodType>(
   method: HttpMethod,
@@ -193,6 +203,21 @@ export const routes = {
       s.debtPaymentRemoveResponseSchema,
     ),
   },
+  /* Chat links from the web app (Settings → Telegram). No Idempotency-Key: see schemas.ts. */
+  chatLinks: {
+    list: webRoute("GET", "/chat-links", s.chatLinksListRequestSchema, s.chatLinksListResponseSchema),
+    createCode: webRouteNoKey("POST", "/chat-links/codes", s.chatLinkCreateCodeRequestSchema, s.chatLinkCreateCodeResponseSchema),
+    unlink: webRouteNoKey("POST", "/chat-links/:id/unlink", s.chatLinkUnlinkRequestSchema, s.chatLinkUnlinkResponseSchema),
+    setReadOnly: webRouteNoKey(
+      "POST",
+      "/chat-links/:id/read-only",
+      s.chatLinkSetReadOnlyRequestSchema,
+      s.chatLinkSetReadOnlyResponseSchema,
+    ),
+  },
+  chatHistory: {
+    delete: webRouteNoKey("DELETE", "/chat-history", s.chatHistoryDeleteRequestSchema, s.chatHistoryDeleteResponseSchema),
+  },
   // Service routes. Every op in a group shares one `auth` (checked in routes.test.ts).
   channelLinks: {
     redeem: serviceRoute(
@@ -309,9 +334,12 @@ export function isWriteRoute(route: Pick<RouteDef, "method">): boolean {
   return route.method !== "GET";
 }
 
-/** Finance user-route writes require an `Idempotency-Key` header; service and agent-store routes never take one. */
-export function requiresIdempotencyKey(route: Pick<RouteDef, "method" | "auth" | "scope">): boolean {
-  return route.auth === "user" && route.scope === undefined && isWriteRoute(route);
+/**
+ * Finance user-route writes require an `Idempotency-Key` header; service and
+ * agent-store routes, and routes marked `idempotent: false`, never take one.
+ */
+export function requiresIdempotencyKey(route: Pick<RouteDef, "method" | "auth" | "scope" | "idempotent">): boolean {
+  return route.auth === "user" && route.scope === undefined && route.idempotent !== false && isWriteRoute(route);
 }
 
 /** The scope a user token needs for a route: its explicit `scope`, else `finance:read` (GET) or `finance:write`. */

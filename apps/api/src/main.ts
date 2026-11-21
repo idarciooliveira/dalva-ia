@@ -3,6 +3,7 @@ import { createAuth } from "./auth/auth";
 import { createUserTokens } from "./auth/tokens";
 import { ConfigError, configSecrets, loadConfig } from "./config";
 import { createDatabase } from "./db/client";
+import { startRetentionJobs } from "./jobs/retention";
 import { createLogger, errorFields } from "./log";
 
 /** Below Docker's default 10s stop timeout (SIGKILL after). */
@@ -33,8 +34,17 @@ function main() {
   });
   if (!config.CLIENT_IP_HEADER) logger.warn("auth_rate_limit_off", { reason: "CLIENT_IP_HEADER unset" });
   const tokens = createUserTokens(config.FINANCE_API_TOKEN_SECRET);
-  const app = createApp({ db: database.db, logger, auth, tokens, publicUrl: config.PUBLIC_URL });
+  if (!config.FINANCE_API_SERVICE_KEY) logger.warn("service_routes_off", { reason: "FINANCE_API_SERVICE_KEY unset" });
+  const app = createApp({
+    db: database.db,
+    logger,
+    auth,
+    tokens,
+    serviceKey: config.FINANCE_API_SERVICE_KEY,
+    publicUrl: config.PUBLIC_URL,
+  });
   const server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });
+  const jobs = startRetentionJobs(database.db, logger);
   logger.info("server_started", { port: config.PORT, publicUrl: config.PUBLIC_URL });
 
   let stopping = false;
@@ -47,8 +57,8 @@ function main() {
       process.exit(1);
     }, SHUTDOWN_TIMEOUT_MS);
     try {
-      // Stop accepting, let in-flight requests finish, then close the pool.
-      await server.stop();
+      // Stop accepting and scheduling, let in-flight requests and job runs finish, then close the pool.
+      await Promise.all([server.stop(), jobs.stop()]);
       await database.close(5);
       clearTimeout(deadline);
       logger.info("shutdown_complete");

@@ -49,6 +49,11 @@ describe("route map", () => {
         "channelIdentities.resolve",
         "channelIdentities.unlink",
         "channelLinks.redeem",
+        "chatHistory.delete",
+        "chatLinks.createCode",
+        "chatLinks.list",
+        "chatLinks.setReadOnly",
+        "chatLinks.unlink",
         "debtPayments.list",
         "debtPayments.record",
         "debtPayments.remove",
@@ -131,7 +136,7 @@ describe("route map", () => {
     expect(requiredScope(routes.transactions.create)).toBe("finance:write");
   });
 
-  it("marks profile, account and category management as web-only user routes", () => {
+  it("marks profile, account, category and chat link management as web-only user routes", () => {
     const webOnly = allRoutes().filter((r) => r.route.webOnly);
     expect(webOnly.map((r) => r.name).sort()).toEqual([
       "accounts.archive",
@@ -146,6 +151,11 @@ describe("route map", () => {
       "categories.restore",
       "categories.seedDefaults",
       "categories.update",
+      "chatHistory.delete",
+      "chatLinks.createCode",
+      "chatLinks.list",
+      "chatLinks.setReadOnly",
+      "chatLinks.unlink",
       "profile.completeOnboarding",
       "profile.create",
       "profile.get",
@@ -175,6 +185,11 @@ describe("route map", () => {
     expect(requiresIdempotencyKey(routes.channelLinks.redeem)).toBe(false);
     expect(requiresIdempotencyKey(routes.channelIdentities.unlink)).toBe(false);
     expect(requiresIdempotencyKey(routes.agentEvents.claim)).toBe(false);
+    // Chat-link writes from the web: a stored replay would keep the link code.
+    expect(requiresIdempotencyKey(routes.chatLinks.createCode)).toBe(false);
+    const withoutKey = allRoutes().filter((r) => r.route.idempotent === false).map((r) => r.name).sort();
+    expect(withoutKey).toEqual(["chatHistory.delete", "chatLinks.createCode", "chatLinks.setReadOnly", "chatLinks.unlink"]);
+    for (const name of withoutKey) expect(name.startsWith("chat"), name).toBe(true);
   });
 
   it("declares every path param in the request schema", () => {

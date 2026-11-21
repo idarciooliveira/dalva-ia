@@ -1,9 +1,10 @@
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
+import postgres, { type Sql } from "postgres";
 
 import * as schema from "./schema";
 
-export type Database = PostgresJsDatabase<typeof schema>;
+/** Drizzle over the postgres.js pool; `$client` is the pool itself (advisory locks reserve a connection from it). */
+export type Database = PostgresJsDatabase<typeof schema> & { $client: Sql };
 
 export interface DatabaseHandle {
   db: Database;

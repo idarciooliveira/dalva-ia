@@ -760,6 +760,57 @@ export const channelIdentityUnlinkRequestSchema = z.strictObject({
 });
 export const channelIdentityUnlinkResponseSchema = deleted(channelIdentityIdSchema);
 
+/*
+ * Chat links from the web app (Settings → Telegram): web-only user routes.
+ * They take no `Idempotency-Key` (`idempotent: false` in routes.ts): a stored
+ * replay of `createCode` would keep the raw code, and the rest are safe to
+ * repeat (a second unlink is `not_found`).
+ */
+
+/** A linked chat as the settings page shows it. */
+export const chatLinkSchema = z.object({
+  id: channelIdentityIdSchema,
+  channel: channelSchema,
+  username: z.string().optional(),
+  /** ISO 8601. */
+  linkedAt: z.string(),
+  /** True when the chat may read but not change finance data. */
+  readOnly: z.boolean(),
+});
+
+/** The user's active links, at most one per channel. */
+export const chatLinksListRequestSchema = z.strictObject({});
+export const chatLinksListResponseSchema = z.object({ items: z.array(chatLinkSchema) });
+
+/**
+ * A single-use code for `/start <code>`, valid 10 minutes. Creating one
+ * replaces the previous code for the channel. `conflict` while the channel is
+ * already linked. Only the code's hash is stored; this response is the only
+ * copy of the code.
+ */
+export const chatLinkCreateCodeRequestSchema = z.strictObject({
+  channel: channelSchema,
+  /** The user agreed to let the bot read and change their finance data. */
+  consent: z.literal(true, "Consent is required to link a chat channel"),
+});
+export const chatLinkCreateCodeResponseSchema = z.object({
+  code: z.string(),
+  /** ISO 8601. */
+  expiresAt: z.string(),
+});
+
+/** Unlink a chat and delete its conversation history. */
+export const chatLinkUnlinkRequestSchema = z.strictObject({ id: channelIdentityIdSchema });
+export const chatLinkUnlinkResponseSchema = deleted(channelIdentityIdSchema);
+
+/** Read-only: the bot keeps `finance:read` only. Applies to tokens already minted. */
+export const chatLinkSetReadOnlyRequestSchema = z.strictObject({ id: channelIdentityIdSchema, readOnly: z.boolean() });
+export const chatLinkSetReadOnlyResponseSchema = z.object({ link: chatLinkSchema });
+
+/** The web "Delete chat history" button: the user's sessions, messages and pending actions, every channel. */
+export const chatHistoryDeleteRequestSchema = z.strictObject({});
+export const chatHistoryDeleteResponseSchema = z.object({ deleted: z.literal(true) });
+
 /* -------------------------------------------------------------------------- */
 /*  Agent store: inbound events (service key) and conversation state (token)  */
 /* -------------------------------------------------------------------------- */
@@ -1037,6 +1088,7 @@ export type TransactionType = z.output<typeof transactionTypeSchema>;
 export type DebtType = z.output<typeof debtTypeSchema>;
 export type Channel = z.output<typeof channelSchema>;
 export type ChannelIdentity = z.output<typeof channelIdentitySchema>;
+export type ChatLink = z.output<typeof chatLinkSchema>;
 export type TokenScope = z.output<typeof tokenScopeSchema>;
 export type AgentSession = z.output<typeof agentSessionSchema>;
 export type AgentMessage = z.output<typeof agentMessageSchema>;
