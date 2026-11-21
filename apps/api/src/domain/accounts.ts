@@ -4,12 +4,12 @@
  * missing and foreign accounts are both "Account not found". Amounts are
  * stored minor units (value × 100).
  */
-import { currencyExponent } from "@mpf/finance-contract";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import { accounts, debtPayments, debts, savingsGoals, transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
 import { conflict, invalid, notFound } from "./errors";
+import { fitsMoney } from "./money";
 
 export type Account = typeof accounts.$inferSelect;
 export type AccountType = Account["type"];
@@ -102,14 +102,7 @@ export async function adjustBalance(
   userId: string,
   args: { id: string; amount: number; date: string; note?: string },
 ): Promise<Account> {
-  const [account] = await tx
-    .update(accounts)
-    .set({ balance: sql`${accounts.balance} + ${args.amount}` })
-    .where(owned(userId, args.id))
-    .returning();
-  if (!account) throw notFound("Account");
-  // bigint is read as a JS number: refuse a balance it can't hold exactly (the transaction rolls back).
-  if (!Number.isSafeInteger(account.balance)) throw invalid("amount.amountMinor", "Balance out of range");
+  await addToBalances(tx, userId, [[args.id, args.amount]]);
   await tx.insert(transactions).values({
     userId,
     type: "adjustment",
@@ -119,7 +112,7 @@ export async function adjustBalance(
     description: "Balance adjustment",
     note: args.note ?? null,
   });
-  return account;
+  return await getAccount(tx, userId, args.id);
 }
 
 /**
@@ -146,7 +139,8 @@ export async function addToBalances(tx: Tx, userId: string, deltas: Array<[accou
     if (!account) throw notFound("Account");
     // bigint is read as a JS number, and the API shows the balance in ISO minor units (×10 for KWD):
     // refuse a balance either can't hold exactly (the transaction rolls back).
-    const scale = 10 ** Math.max(0, currencyExponent(account.currency) - 2);
-    if (!Number.isSafeInteger(account.balance * scale)) throw invalid("amount.amountMinor", "Balance out of range");
+    if (!Number.isSafeInteger(account.balance) || !fitsMoney(account.balance, account.currency)) {
+      throw invalid("amount.amountMinor", "Balance out of range");
+    }
   }
 }

@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
-  getAccountRow,
+  balanceOf,
+  domainRejection,
   getTransactionRow,
   seedAccount,
   seedCategory,
@@ -15,23 +16,12 @@ import {
 import { createTestUser } from "../../test/app";
 import { testDb } from "../../test/db";
 import { readTx, type Tx, withTx } from "../db/tx";
-import { DomainError } from "./errors";
 import * as transactions from "./transactions";
 import * as transfers from "./transfers";
 
 const tx = <T>(fn: (tx: Tx) => Promise<T>) => withTx(testDb(), fn);
 const read = <T>(fn: (tx: Tx) => Promise<T>) => readTx(testDb(), fn);
-const balanceOf = async (id: string) => (await getAccountRow(id))?.balance;
 
-/** A rejected domain call: its code and message. */
-async function rejection(promise: Promise<unknown>) {
-  const error = await promise.then(
-    () => null,
-    (e: unknown) => e,
-  );
-  expect(error).toBeInstanceOf(DomainError);
-  return { code: (error as DomainError).code, message: (error as DomainError).message };
-}
 
 async function users() {
   const alice = await createTestUser();
@@ -68,15 +58,15 @@ describe("domain/transactions", () => {
     const categoryId = await seedCategory(alice);
     const subcategoryId = await seedSubcategory(alice, categoryId);
 
-    expect(await rejection(create(alice, { type: "adjustment", accountId, categoryId }))).toMatchObject({
+    expect(await domainRejection(create(alice, { type: "adjustment", accountId, categoryId }))).toMatchObject({
       code: "validation_failed",
       message: "Adjustments cannot have a category",
     });
-    expect(await rejection(create(alice, { type: "adjustment", accountId, subcategoryId }))).toMatchObject({
+    expect(await domainRejection(create(alice, { type: "adjustment", accountId, subcategoryId }))).toMatchObject({
       message: "Adjustments cannot have a subcategory",
     });
     const expense = await create(alice, { accountId, categoryId });
-    expect(await rejection(tx((t) => transactions.updateTransaction(t, alice, expense.id, { type: "adjustment" })))).toMatchObject({
+    expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, expense.id, { type: "adjustment" })))).toMatchObject({
       message: "Adjustments cannot have a category",
     });
     expect(await balanceOf(accountId)).toBe(9_900);
@@ -89,10 +79,10 @@ describe("domain/transactions", () => {
     const transport = await seedCategory(alice, { name: "Transport" });
     const groceries = await seedSubcategory(alice, food, "Groceries");
 
-    expect(await rejection(create(alice, { accountId, categoryId: transport, subcategoryId: groceries }))).toMatchObject({
+    expect(await domainRejection(create(alice, { accountId, categoryId: transport, subcategoryId: groceries }))).toMatchObject({
       code: "validation_failed",
     });
-    expect(await rejection(create(alice, { accountId, subcategoryId: groceries }))).toMatchObject({ code: "validation_failed" });
+    expect(await domainRejection(create(alice, { accountId, subcategoryId: groceries }))).toMatchObject({ code: "validation_failed" });
     const row = await create(alice, { accountId, categoryId: food });
     // The current category counts when the update names no category.
     const updated = await tx((t) => transactions.updateTransaction(t, alice, row.id, { subcategoryId: groceries }));
@@ -153,7 +143,7 @@ describe("domain/transactions", () => {
       const accountId = await seedAccount(alice, { balance: 10_000 });
       for (const type of ["income", "expense"] as const) {
         for (const amount of [0, -100, 10.5, Number.NaN]) {
-          expect(await rejection(create(alice, { type, amount, accountId }))).toMatchObject({ code: "validation_failed" });
+          expect(await domainRejection(create(alice, { type, amount, accountId }))).toMatchObject({ code: "validation_failed" });
         }
       }
       expect(await balanceOf(accountId)).toBe(10_000);
@@ -162,15 +152,15 @@ describe("domain/transactions", () => {
     it("rejects non-finite adjustment amounts and the transfer type", async () => {
       const { alice } = await users();
       const accountId = await seedAccount(alice, { balance: 10_000 });
-      expect(await rejection(create(alice, { type: "adjustment", amount: Number.NaN, accountId }))).toMatchObject({
+      expect(await domainRejection(create(alice, { type: "adjustment", amount: Number.NaN, accountId }))).toMatchObject({
         code: "validation_failed",
       });
       const asTransfer = { type: "transfer" } as unknown as { type: "income" };
-      expect(await rejection(create(alice, { ...asTransfer, accountId }))).toMatchObject({
+      expect(await domainRejection(create(alice, { ...asTransfer, accountId }))).toMatchObject({
         message: "Use the transfer create for transfers",
       });
       const row = await create(alice, { accountId });
-      expect(await rejection(tx((t) => transactions.updateTransaction(t, alice, row.id, asTransfer)))).toMatchObject({
+      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, row.id, asTransfer)))).toMatchObject({
         message: "Use the transfer create for transfers",
       });
       expect(await balanceOf(accountId)).toBe(9_900);
@@ -189,12 +179,12 @@ describe("domain/transactions", () => {
       const adjustment = await create(alice, { type: "adjustment", amount: -500, accountId });
       const expense = await create(alice, { amount: 1_000, accountId });
       for (const amount of [0, -5]) {
-        expect(await rejection(tx((t) => transactions.updateTransaction(t, alice, expense.id, { amount })))).toMatchObject({
+        expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, expense.id, { amount })))).toMatchObject({
           message: "Amount must be positive",
         });
       }
       // Switching a negative adjustment to income without a new amount is invalid.
-      expect(await rejection(tx((t) => transactions.updateTransaction(t, alice, adjustment.id, { type: "income" })))).toMatchObject({
+      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, adjustment.id, { type: "income" })))).toMatchObject({
         message: "Amount must be positive",
       });
       expect(await balanceOf(accountId)).toBe(8_500);
@@ -203,7 +193,7 @@ describe("domain/transactions", () => {
     it("refuses a balance past the safe integer range, writing nothing", async () => {
       const { alice } = await users();
       const accountId = await seedAccount(alice, { balance: Number.MAX_SAFE_INTEGER - 10 });
-      expect(await rejection(create(alice, { type: "income", amount: 100, accountId }))).toMatchObject({ code: "validation_failed" });
+      expect(await domainRejection(create(alice, { type: "income", amount: 100, accountId }))).toMatchObject({ code: "validation_failed" });
       expect(await balanceOf(accountId)).toBe(Number.MAX_SAFE_INTEGER - 10);
       expect(await read((t) => transactions.searchTransactions(t, alice, { limit: 10 }))).toEqual({ items: [], nextCursor: null });
     });
@@ -217,11 +207,11 @@ describe("domain/transactions", () => {
       const outgoing = await tx((t) => transfers.createTransfer(t, alice, { amount: 2_000, fromAccountId: from, toAccountId: to, date: "2026-01-01" }));
       const incoming = (await getTransactionRow(outgoing))!.linkedTransactionId!;
       for (const id of [outgoing, incoming]) {
-        expect(await rejection(tx((t) => transactions.deleteTransaction(t, alice, id)))).toEqual({
+        expect(await domainRejection(tx((t) => transactions.deleteTransaction(t, alice, id)))).toEqual({
           code: "conflict",
           message: transactions.TRANSFER_MANAGED_MESSAGE,
         });
-        expect(await rejection(tx((t) => transactions.updateTransaction(t, alice, id, { amount: 1 })))).toMatchObject({ code: "conflict" });
+        expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, id, { amount: 1 })))).toMatchObject({ code: "conflict" });
       }
       expect(await balanceOf(from)).toBe(8_000);
       expect(await balanceOf(to)).toBe(7_000);
@@ -234,11 +224,11 @@ describe("domain/transactions", () => {
       const debtId = await seedDebt(alice, { linkedAccountId: loan });
       const payment = await seedDebtPayment(alice, { debtId, fromAccountId: accountId, liabilityAccountId: loan });
       for (const id of [payment.sourceTransactionId, payment.liabilityTransactionId!]) {
-        expect(await rejection(tx((t) => transactions.deleteTransaction(t, alice, id)))).toEqual({
+        expect(await domainRejection(tx((t) => transactions.deleteTransaction(t, alice, id)))).toEqual({
           code: "conflict",
           message: transactions.DEBT_PAYMENT_MANAGED_MESSAGE,
         });
-        expect(await rejection(tx((t) => transactions.updateTransaction(t, alice, id, { note: "x" })))).toMatchObject({ code: "conflict" });
+        expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, id, { note: "x" })))).toMatchObject({ code: "conflict" });
       }
     });
 
@@ -265,12 +255,12 @@ describe("domain/transactions", () => {
       const bobCategory = await seedCategory(bob);
       const bobSub = await seedSubcategory(bob, bobCategory);
 
-      expect(await rejection(create(alice, { accountId: bobAccount }))).toEqual({ code: "not_found", message: "Account not found" });
-      expect(await rejection(create(alice, { accountId: aliceAccount, categoryId: bobCategory }))).toEqual({
+      expect(await domainRejection(create(alice, { accountId: bobAccount }))).toEqual({ code: "not_found", message: "Account not found" });
+      expect(await domainRejection(create(alice, { accountId: aliceAccount, categoryId: bobCategory }))).toEqual({
         code: "not_found",
         message: "Category not found",
       });
-      expect(await rejection(create(alice, { accountId: aliceAccount, subcategoryId: bobSub }))).toEqual({
+      expect(await domainRejection(create(alice, { accountId: aliceAccount, subcategoryId: bobSub }))).toEqual({
         code: "not_found",
         message: "Subcategory not found",
       });
@@ -283,12 +273,12 @@ describe("domain/transactions", () => {
       const bobAccount = await seedAccount(bob, { balance: 10_000 });
       const row = await create(alice, { accountId: aliceAccount });
 
-      expect(await rejection(tx((t) => transactions.updateTransaction(t, bob, row.id, { amount: 1 })))).toEqual({
+      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, bob, row.id, { amount: 1 })))).toEqual({
         code: "not_found",
         message: "Transaction not found",
       });
-      expect(await rejection(tx((t) => transactions.deleteTransaction(t, bob, row.id)))).toMatchObject({ code: "not_found" });
-      expect(await rejection(tx((t) => transactions.updateTransaction(t, alice, row.id, { accountId: bobAccount })))).toEqual({
+      expect(await domainRejection(tx((t) => transactions.deleteTransaction(t, bob, row.id)))).toMatchObject({ code: "not_found" });
+      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, row.id, { accountId: bobAccount })))).toEqual({
         code: "not_found",
         message: "Account not found",
       });

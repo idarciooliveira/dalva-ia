@@ -44,8 +44,9 @@ export async function requireBaseCurrencyOnly(
   sources: { accountIds?: Array<string | null>; currencies?: string[] },
 ): Promise<void> {
   const accountIds = sources.accountIds ?? [];
-  if (accountIds.includes(null)) throw conflict(UNKNOWN_CURRENCY_MESSAGE, { reason: "unknown_currency" });
-  const known = await currenciesOf(tx, userId, [...new Set(accountIds as string[])]);
+  const live = accountIds.filter((id): id is string => id !== null);
+  if (live.length < accountIds.length) throw conflict(UNKNOWN_CURRENCY_MESSAGE, { reason: "unknown_currency" });
+  const known = await currenciesOf(tx, userId, [...new Set(live)]);
   const currencies = new Set([...(sources.currencies ?? []), ...known.values()]);
   if ([...currencies].every((c) => c === baseCurrency)) return;
   currencies.add(baseCurrency);

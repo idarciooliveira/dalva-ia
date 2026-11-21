@@ -5,16 +5,8 @@ import * as accounts from "../../domain/accounts";
 import { invalid, notFound } from "../../domain/errors";
 import * as transfers from "../../domain/transfers";
 import { operation } from "../operation";
-import { appAmount } from "./money";
-import { toId, transferDto } from "./shared";
-
-/** No currency conversion: both accounts must share one currency. */
-function requireSameCurrency(from: accounts.Account, to: accounts.Account): string {
-  if (from.currency !== to.currency) {
-    throw invalid("toAccountId", `Cross-currency transfers are not supported (${from.currency} -> ${to.currency})`);
-  }
-  return from.currency;
-}
+import { appAmount } from "../../domain/money";
+import { optionalId, toId, transferDto } from "./shared";
 
 async function transferResponse(tx: Tx, userId: string, id: string) {
   const transfer = await transfers.getTransfer(tx, userId, id);
@@ -31,7 +23,7 @@ export const transferOperations = {
   create: operation(routes.transfers.create, async (tx, user, input) => {
     const from = await accounts.getAccount(tx, user.userId, toId(input.fromAccountId, "fromAccountId"));
     const to = await accounts.getAccount(tx, user.userId, toId(input.toAccountId, "toAccountId"));
-    const currency = requireSameCurrency(from, to);
+    const currency = transfers.transferCurrency(from, to);
     const id = await transfers.createTransfer(tx, user.userId, {
       amount: appAmount(input.amount, currency, "amount"),
       fromAccountId: from.id,
@@ -46,13 +38,12 @@ export const transferOperations = {
   update: operation(routes.transfers.update, async (tx, user, input) => {
     const id = toId(input.id, "id");
     const current = await transfers.getTransfer(tx, user.userId, id, { editable: true });
-    const from = input.fromAccountId
-      ? await accounts.getAccount(tx, user.userId, toId(input.fromAccountId, "fromAccountId"))
-      : current.fromAccount;
-    const to = input.toAccountId ? await accounts.getAccount(tx, user.userId, toId(input.toAccountId, "toAccountId")) : current.toAccount;
+    const fromAccountId = optionalId(input.fromAccountId, "fromAccountId");
+    const toAccountId = optionalId(input.toAccountId, "toAccountId");
+    const from = fromAccountId ? await accounts.getAccount(tx, user.userId, fromAccountId) : current.fromAccount;
+    const to = toAccountId ? await accounts.getAccount(tx, user.userId, toAccountId) : current.toAccount;
     if (!from || !to) throw notFound("Account");
-    if (from.id === to.id) throw invalid("toAccountId", "Cannot transfer to the same account");
-    const currency = requireSameCurrency(from, to);
+    const currency = transfers.transferCurrency(from, to);
 
     let amount: number | undefined;
     if (input.amount) {
@@ -63,8 +54,8 @@ export const transferOperations = {
 
     const outgoingId = await transfers.updateLoadedTransfer(tx, user.userId, current, {
       amount,
-      fromAccountId: input.fromAccountId === undefined ? undefined : from.id,
-      toAccountId: input.toAccountId === undefined ? undefined : to.id,
+      fromAccountId,
+      toAccountId,
       date: input.date,
       description: input.description,
       note: input.note,

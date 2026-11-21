@@ -5,7 +5,7 @@ import { invalid } from "../../domain/errors";
 import type { Transaction } from "../../domain/transactions";
 import type { Transfer } from "../../domain/transfers";
 import type { UserProfile } from "../../domain/userProfiles";
-import { toMoney } from "./money";
+import { toMoney } from "../../domain/money";
 
 /* Ids ---------------------------------------------------------------------- */
 
@@ -22,6 +22,8 @@ export function toId(value: string, field: string): string {
  * one behaves the same: `accounts.get` answers `not_found`.
  */
 export const MISSING_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
+
+export const optionalId = (value: string | undefined, field: string) => (value === undefined ? undefined : toId(value, field));
 
 /* Dates -------------------------------------------------------------------- */
 

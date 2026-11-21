@@ -13,6 +13,8 @@
  */
 import { randomUUID } from "node:crypto";
 
+import { and, eq, inArray } from "drizzle-orm";
+
 import { transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
 import { type Account, addToBalances, getAccount } from "./accounts";
@@ -21,12 +23,6 @@ import { getTransaction, ownedByContribution, ownedTransaction, type Transaction
 
 export const CONTRIBUTION_MANAGED_MESSAGE =
   "Goal contribution transfers must be changed through the goal contribution endpoints";
-
-export interface TransferLegs {
-  outgoing: Transaction;
-  /** Null for a legacy leg whose pair is gone. */
-  incoming: Transaction | null;
-}
 
 export interface Transfer {
   outgoing: Transaction;
@@ -92,15 +88,19 @@ function assertAmount(amount: number) {
   if (!Number.isSafeInteger(amount) || amount <= 0) throw invalid("amount", "Amount must be positive");
 }
 
-/** Distinct accounts of the user's, in one currency (there is no conversion). */
-async function transferAccounts(tx: Tx, userId: string, fromAccountId: string, toAccountId: string) {
-  if (fromAccountId === toAccountId) throw invalid("toAccountId", "Cannot transfer to the same account");
-  const from = await getAccount(tx, userId, fromAccountId);
-  const to = await getAccount(tx, userId, toAccountId);
+/** Two distinct accounts in one currency (there is no conversion). Returns that currency. */
+export function transferCurrency(from: Account, to: Account): string {
+  if (from.id === to.id) throw invalid("toAccountId", "Cannot transfer to the same account");
   if (from.currency !== to.currency) {
     throw invalid("toAccountId", `Cross-currency transfers are not supported (${from.currency} -> ${to.currency})`);
   }
-  return { from, to };
+  return from.currency;
+}
+
+/** Distinct accounts of the user's, in one currency. */
+async function transferAccounts(tx: Tx, userId: string, fromAccountId: string, toAccountId: string) {
+  if (fromAccountId === toAccountId) throw invalid("toAccountId", "Cannot transfer to the same account");
+  transferCurrency(await getAccount(tx, userId, fromAccountId), await getAccount(tx, userId, toAccountId));
 }
 
 export interface TransferFields {
@@ -203,14 +203,10 @@ export async function updateLoadedTransfer(
  */
 export async function deleteTransfer(tx: Tx, userId: string, id: string): Promise<void> {
   const { outgoing, incoming } = await legsOf(tx, userId, await getEditableLeg(tx, userId, id));
-  const deltas: Array<[string | null, number]> = [];
-  if (outgoing) {
-    await tx.delete(transactions).where(ownedTransaction(userId, outgoing.id));
-    deltas.push([outgoing.accountId, outgoing.amount]);
-  }
-  if (incoming) {
-    await tx.delete(transactions).where(ownedTransaction(userId, incoming.id));
-    deltas.push([incoming.accountId, -incoming.amount]);
-  }
-  await addToBalances(tx, userId, deltas);
+  const legs = [outgoing, incoming].filter((leg): leg is Transaction => leg !== null);
+  await tx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, legs.map((leg) => leg.id))));
+  await addToBalances(tx, userId, [
+    [outgoing?.accountId ?? null, outgoing?.amount ?? 0],
+    [incoming?.accountId ?? null, -(incoming?.amount ?? 0)],
+  ]);
 }

@@ -6,10 +6,8 @@ import { invalid, notFound } from "../../domain/errors";
 import * as transactions from "../../domain/transactions";
 import { operation } from "../operation";
 import { transactionDtos } from "./currency";
-import { appAmount } from "./money";
-import { toId, transactionDto } from "./shared";
-
-const optionalId = (value: string | undefined, field: string) => (value === undefined ? undefined : toId(value, field));
+import { appAmount } from "../../domain/money";
+import { optionalId, toId, transactionDto } from "./shared";
 
 export const transactionOperations = {
   search: operation(routes.transactions.search, async (tx, user, input) => {
@@ -74,10 +72,7 @@ export const transactionOperations = {
         throw invalid("amount", "Provide amount when moving a transaction to an account in another currency");
       }
     }
-    // The sign rule needs the effective type, which the request schema can't see.
-    if ((input.type ?? row.type) !== "adjustment" && (amount ?? row.amount) <= 0) {
-      throw invalid("amount.amountMinor", "Amount must be positive");
-    }
+    // The sign rule needs the effective type, which the request schema can't see: the domain checks it.
 
     const updated = await transactions.updateLoadedTransaction(tx, user.userId, row, {
       type: input.type,

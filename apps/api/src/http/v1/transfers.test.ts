@@ -3,9 +3,9 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
+  balanceOf,
   expectApiError,
   expectConforms,
-  getAccountRow,
   raw,
   seedAccount,
   seedChannelIdentity,
@@ -20,7 +20,6 @@ import { transactions } from "../../db/schema";
 import { MISSING_ACCOUNT_ID } from "./shared";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
-const balanceOf = async (id: string) => (await getAccountRow(id))?.balance;
 
 describe("api/v1 transfers", () => {
   it("creates, updates (via either leg) and deletes a transfer", async () => {

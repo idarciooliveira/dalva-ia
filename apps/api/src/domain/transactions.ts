@@ -28,11 +28,10 @@ import { conflict, invalid, notFound } from "./errors";
 export type Transaction = typeof transactions.$inferSelect;
 export type TransactionType = Transaction["type"];
 /** Types the transaction endpoints write. Transfers have their own. */
-export type WritableTransactionType = Exclude<TransactionType, "transfer">;
+type WritableTransactionType = Exclude<TransactionType, "transfer">;
 
 /** The user's transaction `id`. */
 export const ownedTransaction = (userId: string, id: string) => and(eq(transactions.id, id), eq(transactions.userId, userId));
-const owned = ownedTransaction;
 
 /** Newest first: date, then creation order (the id breaks ties within one transaction). */
 export const NEWEST_FIRST = [desc(transactions.date), desc(transactions.createdAt), desc(transactions.id)] as const;
@@ -43,13 +42,13 @@ export const DEBT_PAYMENT_MANAGED_MESSAGE = "Debt payment transactions must be c
 /* Lookups ------------------------------------------------------------------ */
 
 export async function getTransaction(tx: Tx, userId: string, id: string, what = "Transaction"): Promise<Transaction> {
-  const [row] = await tx.select().from(transactions).where(owned(userId, id)).limit(1);
+  const [row] = await tx.select().from(transactions).where(ownedTransaction(userId, id)).limit(1);
   if (!row) throw notFound(what);
   return row;
 }
 
 /** A leg of a transfer (goal-contribution transfers included). */
-export const isTransferLeg = (row: Transaction) =>
+const isTransferLeg = (row: Transaction) =>
   row.type === "transfer" || row.transferGroupId !== null || row.linkedTransactionId !== null;
 
 /** Transfer legs, and the source or liability rows of a debt payment. */
@@ -91,14 +90,14 @@ export async function getEditableTransaction(tx: Tx, userId: string, id: string)
 /* Rules -------------------------------------------------------------------- */
 
 /** Signed effect of a row on its account's balance. Transfers are handled by the transfer flow. */
-export function balanceDelta(type: TransactionType, amount: number): number {
+function balanceDelta(type: TransactionType, amount: number): number {
   return type === "expense" ? -amount : amount;
 }
 
 /** Income and expense amounts are positive integers; only adjustments are signed. */
 function assertAmount(type: TransactionType, amount: number) {
   if (!Number.isSafeInteger(amount)) throw invalid("amount", "Amount must be an integer");
-  if (type !== "adjustment" && amount <= 0) throw invalid("amount", "Amount must be positive");
+  if (type !== "adjustment" && amount <= 0) throw invalid("amount.amountMinor", "Amount must be positive");
 }
 
 function assertWritableType(type: TransactionType | undefined) {
@@ -221,7 +220,7 @@ export async function updateLoadedTransaction(
       note: changes.note ?? row.note,
       payee: changes.payee ?? row.payee,
     })
-    .where(owned(userId, id))
+    .where(ownedTransaction(userId, id))
     .returning();
   await addToBalances(tx, userId, [
     [row.accountId, -balanceDelta(row.type, row.amount)],
@@ -233,7 +232,7 @@ export async function updateLoadedTransaction(
 /** Delete the row and reverse its balance effect. */
 export async function deleteTransaction(tx: Tx, userId: string, id: string): Promise<void> {
   const row = await getEditableTransaction(tx, userId, id);
-  await tx.delete(transactions).where(owned(userId, id));
+  await tx.delete(transactions).where(ownedTransaction(userId, id));
   await addToBalances(tx, userId, [[row.accountId, -balanceDelta(row.type, row.amount)]]);
 }
 

@@ -33,6 +33,7 @@ import {
   transactions,
   userProfiles,
 } from "../src/db/schema";
+import { DomainError } from "../src/domain/errors";
 import { createTestUser, testApp, testTokens } from "./app";
 import { testDb } from "./db";
 
@@ -182,6 +183,18 @@ export async function seedContribution(userId: string, transactionId: string, li
 export async function getTransactionRow(id: string) {
   const [row] = await testDb().select().from(transactions).where(eq(transactions.id, id));
   return row;
+}
+
+export const balanceOf = async (accountId: string) => (await getAccountRow(accountId))?.balance;
+
+/** A domain call that must fail with a `DomainError`: its code and message. */
+export async function domainRejection(promise: Promise<unknown>): Promise<{ code: string; message: string }> {
+  const error = await promise.then(
+    () => null,
+    (e: unknown) => e,
+  );
+  expect(error).toBeInstanceOf(DomainError);
+  return { code: (error as DomainError).code, message: (error as DomainError).message };
 }
 
 export async function getAccountRow(id: string) {

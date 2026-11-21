@@ -112,7 +112,7 @@ describe("api/v1 reports", () => {
       await client.transactions.create({ type: "income", amount: { amountMinor: 5e15, currency: "USD" }, accountId, date: "2026-01-01" });
     }
     const error = await expectApiError(client.reports.transactionSummary({ month: "2026-01" }), "conflict", 409);
-    expect(error.message).toBe("Report total out of range");
+    expect(error.message).toBe("Amount out of range");
     await expectApiError(client.reports.netWorth(), "conflict", 409);
   });
 

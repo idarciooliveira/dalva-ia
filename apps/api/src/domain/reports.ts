@@ -20,7 +20,7 @@ import { invalid } from "./errors";
 import { NEWEST_FIRST, type Transaction, type TransactionType } from "./transactions";
 
 /** Account types whose balances are owed, not owned: not counted as assets. */
-export const LIABILITY_ACCOUNT_TYPES = ["credit_card", "loan"] as const;
+const LIABILITY_ACCOUNT_TYPES = ["credit_card", "loan"] as const;
 
 const RECENT_TRANSACTIONS = 10;
 const TOP_DEBTS = 5;
@@ -30,14 +30,14 @@ const TOP_DEBTS = 5;
 const pad = (n: number, width: number) => String(n).padStart(width, "0");
 
 /** Month `offset` months after `month` (negative: before). Before year 1 there are no dates: `validation_failed`. */
-export function addMonths(month: string, offset: number): string {
+function addMonths(month: string, offset: number): string {
   const total = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1 + offset;
   if (total < 12) throw invalid("month", "Month out of range");
   return `${pad(Math.floor(total / 12), 4)}-${pad((total % 12) + 1, 2)}`;
 }
 
 /** `count` consecutive months ending at `month`, oldest first. */
-export function monthsEndingAt(month: string, count: number): string[] {
+function monthsEndingAt(month: string, count: number): string[] {
   return Array.from({ length: count }, (_, i) => addMonths(month, i - (count - 1)));
 }
 
@@ -239,7 +239,11 @@ export async function debtSummary(
       creditor: d.lender ?? "Unknown lender",
       originalAmount: d.originalAmount,
       currentBalance: d.currentBalance,
-      percentPaid: d.originalAmount === 0 ? 0 : Math.round(((d.originalAmount - d.currentBalance) / d.originalAmount) * 100),
+      // Clamped: a balance can grow past the original amount (interest) or below zero.
+      percentPaid:
+        d.originalAmount === 0
+          ? 0
+          : Math.min(100, Math.max(0, Math.round(((d.originalAmount - d.currentBalance) / d.originalAmount) * 100))),
     })),
   };
 }

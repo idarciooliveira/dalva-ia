@@ -55,7 +55,7 @@ src/http/v1/index.ts         Registry: add the group here
 - GET runs in a read-only snapshot (`readTx`), writes in `withTx`, with the idempotency record in the same transaction.
 - Errors: throw `DomainError` (`notFound("Account")`, `conflict(...)`, `invalid(path, message)` in `src/domain/errors.ts`); the router sends its code, status and details. Anything else is a logged 500 with no detail.
 - Ids: contract ids are any URL-safe string, rows are lowercase UUIDs. `toId(input.id, "id")` turns anything else into `validation_failed` (as Convex's `normalizeId`); missing and other users' rows are both `not_found`.
-- Money: the database stores value × 100 for every currency (as Convex did); `src/http/v1/money.ts` converts to and from ISO minor units. Request amounts that don't fit exactly are `validation_failed` (`reason: "precision"`), never rounded.
+- Money: the database stores value × 100 for every currency (as Convex did); `src/domain/money.ts` converts to and from ISO minor units. Request amounts that don't fit exactly are `validation_failed` (`reason: "precision"`), never rounded.
 - DTOs (`src/http/v1/shared.ts`): optional fields are omitted, never null; `archived` only appears when true.
 
 Transactions, transfers and reports (`src/domain/{transactions,transfers,reports}.ts`):

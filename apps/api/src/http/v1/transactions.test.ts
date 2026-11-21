@@ -2,10 +2,10 @@ import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
 import {
+  balanceOf,
   clientFor,
   expectApiError,
   expectConforms,
-  getAccountRow,
   getTransactionRow,
   oneUser,
   raw,
@@ -25,7 +25,6 @@ import { testApp } from "../../../test/app";
 import { MISSING_ACCOUNT_ID } from "./shared";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
-const balanceOf = async (id: string) => (await getAccountRow(id))?.balance;
 
 describe("api/v1 transactions: writes", () => {
   it("creates income, expense and adjustment rows and returns the entity", async () => {

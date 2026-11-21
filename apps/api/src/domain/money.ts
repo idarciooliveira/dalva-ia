@@ -1,6 +1,6 @@
 import { currencyExponent, type Money } from "@mpf/finance-contract";
 
-import { DomainError, invalid } from "../../domain/errors";
+import { DomainError, invalid } from "./errors";
 
 /**
  * The database stores every currency as value × 100 (as Convex did), whatever

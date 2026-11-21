@@ -1,25 +1,15 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { getAccountRow, getTransactionRow, seedAccount, seedContribution, seedTransaction } from "../../test/api";
+import { balanceOf, domainRejection, getTransactionRow, seedAccount, seedContribution, seedTransaction } from "../../test/api";
 import { createTestUser } from "../../test/app";
 import { testDb } from "../../test/db";
 import { transactions } from "../db/schema";
 import { readTx, type Tx, withTx } from "../db/tx";
-import { DomainError } from "./errors";
 import * as transfers from "./transfers";
 
 const tx = <T>(fn: (tx: Tx) => Promise<T>) => withTx(testDb(), fn);
-const balanceOf = async (id: string) => (await getAccountRow(id))?.balance;
 
-async function rejection(promise: Promise<unknown>) {
-  const error = await promise.then(
-    () => null,
-    (e: unknown) => e,
-  );
-  expect(error).toBeInstanceOf(DomainError);
-  return { code: (error as DomainError).code, message: (error as DomainError).message };
-}
 
 async function seedTransfer(userId: string, from: string, to: string, amount = 1_000) {
   const outgoing = await tx((t) =>
@@ -62,10 +52,10 @@ describe("domain/transfers", () => {
     const create = (amount: number, fromAccountId: string, toAccountId: string) =>
       tx((t) => transfers.createTransfer(t, alice, { amount, fromAccountId, toAccountId, date: "2026-03-10" }));
     for (const amount of [0, -1, 1.5]) {
-      expect(await rejection(create(amount, from, to))).toEqual({ code: "validation_failed", message: "Amount must be positive" });
+      expect(await domainRejection(create(amount, from, to))).toEqual({ code: "validation_failed", message: "Amount must be positive" });
     }
-    expect(await rejection(create(1, from, from))).toEqual({ code: "validation_failed", message: "Cannot transfer to the same account" });
-    expect(await rejection(create(1, from, eur))).toMatchObject({ code: "validation_failed", message: expect.stringContaining("Cross-currency") });
+    expect(await domainRejection(create(1, from, from))).toEqual({ code: "validation_failed", message: "Cannot transfer to the same account" });
+    expect(await domainRejection(create(1, from, eur))).toMatchObject({ code: "validation_failed", message: expect.stringContaining("Cross-currency") });
     expect(await testDb().select().from(transactions)).toEqual([]);
   });
 
@@ -82,7 +72,7 @@ describe("domain/transfers", () => {
       expect(transfer.toAccount?.name).toBe("To");
     }
     const plain = await seedTransaction(alice, from);
-    expect(await rejection(readTx(testDb(), (t) => transfers.getTransfer(t, alice, plain)))).toEqual({
+    expect(await domainRejection(readTx(testDb(), (t) => transfers.getTransfer(t, alice, plain)))).toEqual({
       code: "not_found",
       message: "Transfer not found",
     });
@@ -102,7 +92,7 @@ describe("domain/transfers", () => {
     expect(await getTransactionRow(outgoing)).toMatchObject({ amount: 400, destinationAccountId: other, note: "n", date: "2026-03-12", description: "Move" });
     expect(await getTransactionRow(incoming)).toMatchObject({ amount: 400, accountId: other, note: "n", date: "2026-03-12" });
 
-    expect(await rejection(tx((t) => transfers.updateTransfer(t, alice, outgoing, { toAccountId: from })))).toMatchObject({
+    expect(await domainRejection(tx((t) => transfers.updateTransfer(t, alice, outgoing, { toAccountId: from })))).toMatchObject({
       message: "Cannot transfer to the same account",
     });
   });
@@ -161,15 +151,15 @@ describe("domain/transfers", () => {
       const alice = await createTestUser();
       const from = await seedAccount(alice, { balance: 10_000 });
       const lonely = await seedTransaction(alice, from, { type: "transfer", amount: 300 });
-      expect(await rejection(readTx(testDb(), (t) => transfers.getTransfer(t, alice, lonely)))).toMatchObject({ code: "not_found" });
-      expect(await rejection(tx((t) => transfers.updateTransfer(t, alice, lonely, { note: "x" })))).toMatchObject({ code: "not_found" });
+      expect(await domainRejection(readTx(testDb(), (t) => transfers.getTransfer(t, alice, lonely)))).toMatchObject({ code: "not_found" });
+      expect(await domainRejection(tx((t) => transfers.updateTransfer(t, alice, lonely, { note: "x" })))).toMatchObject({ code: "not_found" });
 
       const { outgoing, incoming } = await seedTransfer(alice, from, await seedAccount(alice), 1_000);
       await testDb().update(transactions).set({ accountId: null }).where(eq(transactions.id, incoming));
       const view = await readTx(testDb(), (t) => transfers.getTransfer(t, alice, outgoing));
       expect(view.toAccount).toBeNull();
       // The orphaned leg has no account: moving the transfer needs a destination.
-      expect(await rejection(tx((t) => transfers.updateTransfer(t, alice, outgoing, { amount: 10 })))).toEqual({
+      expect(await domainRejection(tx((t) => transfers.updateTransfer(t, alice, outgoing, { amount: 10 })))).toEqual({
         code: "not_found",
         message: "Account not found",
       });
@@ -211,11 +201,11 @@ describe("domain/transfers", () => {
     const { outgoing, incoming } = await seedTransfer(alice, from, goalAccount, 500);
     await seedContribution(alice, outgoing, goalAccount);
     for (const id of [outgoing, incoming]) {
-      expect(await rejection(tx((t) => transfers.updateTransfer(t, alice, id, { note: "x" })))).toEqual({
+      expect(await domainRejection(tx((t) => transfers.updateTransfer(t, alice, id, { note: "x" })))).toEqual({
         code: "conflict",
         message: transfers.CONTRIBUTION_MANAGED_MESSAGE,
       });
-      expect(await rejection(tx((t) => transfers.deleteTransfer(t, alice, id)))).toMatchObject({ code: "conflict" });
+      expect(await domainRejection(tx((t) => transfers.deleteTransfer(t, alice, id)))).toMatchObject({ code: "conflict" });
     }
     // Reading it is fine.
     expect((await readTx(testDb(), (t) => transfers.getTransfer(t, alice, incoming))).outgoing.id).toBe(outgoing);
@@ -229,7 +219,7 @@ describe("domain/transfers", () => {
       const mine = await seedAccount(alice, { balance: 10_000 });
       const theirs = await seedAccount(bob, { balance: 10_000 });
       for (const [fromAccountId, toAccountId] of [[theirs, mine], [mine, theirs]] as const) {
-        expect(await rejection(tx((t) => transfers.createTransfer(t, alice, { amount: 100, fromAccountId, toAccountId, date: "2026-03-10" })))).toEqual({
+        expect(await domainRejection(tx((t) => transfers.createTransfer(t, alice, { amount: 100, fromAccountId, toAccountId, date: "2026-03-10" })))).toEqual({
           code: "not_found",
           message: "Account not found",
         });
@@ -246,11 +236,11 @@ describe("domain/transfers", () => {
       const theirs = await seedAccount(bob);
       const { outgoing } = await seedTransfer(alice, from, to);
 
-      expect(await rejection(readTx(testDb(), (t) => transfers.getTransfer(t, bob, outgoing)))).toEqual({ code: "not_found", message: "Transfer not found" });
-      expect(await rejection(tx((t) => transfers.updateTransfer(t, bob, outgoing, { amount: 1 })))).toMatchObject({ code: "not_found" });
-      expect(await rejection(tx((t) => transfers.deleteTransfer(t, bob, outgoing)))).toMatchObject({ code: "not_found" });
+      expect(await domainRejection(readTx(testDb(), (t) => transfers.getTransfer(t, bob, outgoing)))).toEqual({ code: "not_found", message: "Transfer not found" });
+      expect(await domainRejection(tx((t) => transfers.updateTransfer(t, bob, outgoing, { amount: 1 })))).toMatchObject({ code: "not_found" });
+      expect(await domainRejection(tx((t) => transfers.deleteTransfer(t, bob, outgoing)))).toMatchObject({ code: "not_found" });
       for (const change of [{ toAccountId: theirs }, { fromAccountId: theirs }]) {
-        expect(await rejection(tx((t) => transfers.updateTransfer(t, alice, outgoing, change)))).toEqual({
+        expect(await domainRejection(tx((t) => transfers.updateTransfer(t, alice, outgoing, change)))).toEqual({
           code: "not_found",
           message: "Account not found",
         });
