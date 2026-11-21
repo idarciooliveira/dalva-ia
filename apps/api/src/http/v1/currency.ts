@@ -26,8 +26,9 @@ export async function requireBaseCurrency(tx: Tx, userId: string): Promise<strin
 
 /**
  * The user's account, in the base currency: goals and debts have no currency
- * of their own, so the accounts they move money on must share it. `label`
- * names the goal or debt in the message.
+ * of their own, so the accounts they move money on must share it. `labels`
+ * word the message as Convex did ("Linked account currency EUR differs from
+ * the debt currency USD").
  */
 export async function requireBaseCurrencyAccount(
   tx: Tx,
@@ -35,11 +36,12 @@ export async function requireBaseCurrencyAccount(
   accountId: string,
   field: string,
   baseCurrency: string,
-  label = "base",
+  labels: { account?: string; owner?: string } = {},
 ): Promise<Account> {
   const account = await getAccount(tx, userId, accountId);
   if (account.currency !== baseCurrency) {
-    throw invalid(field, `Account currency ${account.currency} differs from the ${label} currency ${baseCurrency}`);
+    const { account: noun = "Account", owner = "base" } = labels;
+    throw invalid(field, `${noun} currency ${account.currency} differs from the ${owner} currency ${baseCurrency}`);
   }
   return account;
 }

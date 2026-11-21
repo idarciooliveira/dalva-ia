@@ -103,8 +103,10 @@ export const debtPaymentOperations = {
   record: operation(routes.debtPayments.record, async (tx, user, input) => {
     const debt = await debts.getDebt(tx, user.userId, toId(input.debtId, "debtId"));
     const currency = await requireBaseCurrency(tx, user.userId);
-    const from = await requireBaseCurrencyAccount(tx, user.userId, toId(input.fromAccountId, "fromAccountId"), "fromAccountId", currency, "debt");
-    if (debt.linkedAccountId) await requireBaseCurrencyAccount(tx, user.userId, debt.linkedAccountId, "debtId", currency, "debt");
+    const from = await requireBaseCurrencyAccount(tx, user.userId, toId(input.fromAccountId, "fromAccountId"), "fromAccountId", currency, { owner: "debt" });
+    if (debt.linkedAccountId) {
+      await requireBaseCurrencyAccount(tx, user.userId, debt.linkedAccountId, "debtId", currency, { account: "Linked account", owner: "debt" });
+    }
 
     // Convert amount and principal, derive interest, so rounding can never break principal + interest = amount.
     const amount = appAmount(input.amount, currency, "amount");

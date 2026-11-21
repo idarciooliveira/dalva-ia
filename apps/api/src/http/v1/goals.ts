@@ -83,8 +83,8 @@ export const goalContributionOperations = {
     const amount = appAmount(input.amount, currency, "amount");
     const fromAccountId = optionalId(input.fromAccountId, "fromAccountId");
     if (goals.isAccountLinked(goal) && fromAccountId) {
-      await requireBaseCurrencyAccount(tx, user.userId, fromAccountId, "fromAccountId", currency, "goal");
-      await requireBaseCurrencyAccount(tx, user.userId, goal.linkedAccountId, "linkedAccountId", currency, "goal");
+      await requireBaseCurrencyAccount(tx, user.userId, fromAccountId, "fromAccountId", currency, { owner: "goal" });
+      await requireBaseCurrencyAccount(tx, user.userId, goal.linkedAccountId, "linkedAccountId", currency, { owner: "goal" });
     }
     const contribution = await goals.addContribution(tx, user.userId, {
       goalId: goal.id,
