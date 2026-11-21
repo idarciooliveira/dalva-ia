@@ -9,6 +9,7 @@ import {
   AUTHORIZATION_HEADER,
   bearerAuthorization,
   createFinanceClient,
+  createFinanceServiceClient,
   errorEnvelopeSchema,
   IDEMPOTENCY_KEY_HEADER,
   FinanceApiError,
@@ -21,8 +22,8 @@ import { eq } from "drizzle-orm";
 import { expect } from "vitest";
 
 import { TOKEN_SCOPES } from "../src/auth/tokens";
-import { accounts, channelIdentities, transactions, userProfiles } from "../src/db/schema";
-import { createTestUser, testApp, testTokens } from "./app";
+import { accounts, channelIdentities, transactions, userProfiles, users } from "../src/db/schema";
+import { createTestUser, TEST_SERVICE_KEY, testApp, testTokens } from "./app";
 import { testDb } from "./db";
 
 export type TestApp = ReturnType<typeof testApp>["app"];
@@ -97,6 +98,18 @@ export function clientFor(app: TestApp, token: string) {
   return createFinanceClient({
     baseUrl: "https://finance.test",
     getToken: () => token,
+    fetch: async (input, init) => {
+      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+      return await app.request(`${url.pathname}${url.search}`, init);
+    },
+  });
+}
+
+/** The contract's service client (the agent's service key), calling `app` in-process. */
+export function serviceClientFor(app: TestApp, serviceKey = TEST_SERVICE_KEY) {
+  return createFinanceServiceClient({
+    baseUrl: "https://finance.test",
+    getServiceKey: () => serviceKey,
     fetch: async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
       return await app.request(`${url.pathname}${url.search}`, init);
@@ -194,3 +207,51 @@ export async function twoUsers(app: TestApp = testApp().app) {
     asBob: clientFor(app, await tokenFor(bob)),
   };
 }
+
+const TG = "telegram" as const;
+
+/**
+ * A user linked to a Telegram chat the way the bot does it (web code, service
+ * redeem), plus the token `resolve` hands out: the one the agent uses on the
+ * agent-store and finance routes. `web` is the user's own client (no chat
+ * identity), for the web-only routes.
+ */
+export async function linkedChat(
+  app: TestApp,
+  options: { externalUserId?: string; readOnly?: boolean; withAccount?: boolean; name?: string; baseCurrency?: string } = {},
+) {
+  const externalUserId = options.externalUserId ?? "1001";
+  const userId = await seedUser({ baseCurrency: options.baseCurrency });
+  if (options.name) await testDb().update(users).set({ name: options.name }).where(eq(users.id, userId));
+  const web = clientFor(app, await tokenFor(userId));
+  const service = serviceClientFor(app);
+  const chat = { channel: TG, externalUserId, chatId: externalUserId };
+  const { code } = await web.chatLinks.createCode({ channel: TG, consent: true });
+  const { identity } = await service.channelLinks.redeem({ ...chat, code });
+  if (options.readOnly) await web.chatLinks.setReadOnly({ id: identity.id, readOnly: true });
+  const resolved = await service.channelIdentities.resolve(chat);
+  const client = clientFor(app, resolved.token);
+  return {
+    userId,
+    web,
+    service,
+    chat,
+    chatId: externalUserId,
+    identityId: identity.id as string,
+    token: resolved.token,
+    resolved,
+    agent: client,
+    finance: client,
+    accountId: options.withAccount ? await seedAccount(userId, { balance: 100_000 }) : undefined,
+  };
+}
+
+export type LinkedChat = Awaited<ReturnType<typeof linkedChat>>;
+
+/** Flat, valid input for `transactions.create`, for pending actions. */
+export const expenseInput = (accountId: string, amountMinor = 1250) => ({
+  type: "expense",
+  amount: { amountMinor, currency: "USD" },
+  accountId,
+  date: "2026-04-05",
+});

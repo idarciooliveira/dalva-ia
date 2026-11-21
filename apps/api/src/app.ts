@@ -4,13 +4,14 @@ import { Hono } from "hono";
 
 import { AUTH_BASE_PATH, type Auth } from "./auth/auth";
 import { createSignInLimiter, type SignInLimiter } from "./auth/sign-in-limit";
+import { createServiceKey } from "./auth/service-key";
 import type { UserTokens } from "./auth/tokens";
 import type { Database } from "./db/client";
-import type { Operations } from "./http/operation";
-import { type AppEnv, resolvePrincipal, sessionSource, userTokenSource } from "./http/principal";
+import type { Operations, ServiceOperations } from "./http/operation";
+import { type AppEnv, resolvePrincipal, serviceKeySource, sessionSource, userTokenSource } from "./http/principal";
 import { errorResponse } from "./http/errors";
 import { contractRouter } from "./http/router";
-import { operations as v1Operations } from "./http/v1";
+import { operations as v1Operations, serviceOperations as v1ServiceOperations } from "./http/v1";
 import { errorFields, type Logger } from "./log";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -21,8 +22,12 @@ export interface AppOptions {
   auth: Auth;
   /** Verifies the agent's bearer user tokens (config `FINANCE_API_TOKEN_SECRET`). */
   tokens: UserTokens;
+  /** The chat agent's key for the service routes (config `FINANCE_API_SERVICE_KEY`). Unset: they answer 401. */
+  serviceKey?: string;
   /** Contract route implementations. Default: every ported `/api/v1` group (tests swap in their own). */
   operations?: Operations;
+  /** Service route implementations. Default: every ported service group. */
+  serviceOperations?: ServiceOperations;
   /** Public origin (config `PUBLIC_URL`): the only origin allowed to post to the auth routes. */
   publicUrl: string;
   /** How long `/health` waits for `select 1`. Default 2000 ms. */
@@ -96,14 +101,21 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   app.use(
     `${API_BASE_PATH}/*`,
     resolvePrincipal([
-      // The service-key source goes first here (PR 8): see principal.ts.
+      // First: the service key is a bearer credential too (see principal.ts).
+      serviceKeySource(options.serviceKey ? createServiceKey(options.serviceKey) : undefined),
       userTokenSource(options.tokens),
       sessionSource(options.auth, { publicUrl: options.publicUrl }),
     ]),
   );
   app.use(
     `${API_BASE_PATH}/*`,
-    contractRouter({ db: options.db, logger: options.logger, operations: options.operations ?? v1Operations }),
+    contractRouter({
+      db: options.db,
+      logger: options.logger,
+      operations: options.operations ?? v1Operations,
+      serviceOperations: options.serviceOperations ?? v1ServiceOperations,
+      tokens: options.tokens,
+    }),
   );
 
   app.notFound((c) => errorResponse(c, "not_found", "Not found"));
