@@ -20,18 +20,19 @@ my-personal-finance/
 ### Commands
 
 ```bash
-bun run setup        # One-time local setup: local Convex deployment, env vars, agent .env.local
-bun run dev          # Start Convex, web and agent together
-bun run dev:web      # Start the web app only
-bun run dev:backend  # Start Convex dev only
-bun run dev:agent    # Start the Telegram agent only (waits for the Finance API)
+bun run setup        # One-time local setup: apps/api/.env.local secrets, Postgres (compose.dev.yml), migrations
+bun run dev          # Start API (Postgres + migrations), web and agent together
+bun run dev:api      # Start the API only (Postgres + migrations first)
+bun run dev:web      # Start the web app only (proxies /api to localhost:4000)
+bun run dev:backend  # Start Convex dev only (legacy)
+bun run dev:agent    # Start the Telegram agent only (against apps/api; waits for it)
 bun run build        # Build apps/* (currently the web app)
 bun run build:web    # Build the web app
 bun run typecheck    # Typecheck all packages
 bun run lint         # Lint all packages
-bun run test         # Run backend tests in watch mode
-bun run test:once    # Run backend tests once
-bun run test:e2e     # Run Playwright E2E tests
+bun run test         # Run unit tests in watch mode
+bun run test:once    # Run unit tests once (contract, Convex backend, agent, API, web)
+bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh dalva_e2e database)
 ```
 
 ## apps/web -- Frontend
@@ -53,9 +54,13 @@ bun run test:e2e     # Run Playwright E2E tests
   - floating quick actions
   - shared create transaction / create transfer dialogs
 - Onboarding lives at `/onboarding` and must complete before authenticated users can access the main app.
-- Prefer `useQuery(convexQuery(...))` for reads and `useMutation({ mutationFn: useConvexMutation(...) })` for writes.
-- The app uses React Query as the main frontend data layer and Convex as the backing source of truth.
-- Root router setup in `src/router.tsx` configures `ConvexQueryClient`, `ConvexAuthProvider`, and a 30 second `staleTime` because Convex subscriptions keep data fresh.
+- Auth is Better Auth (`src/lib/auth-client.ts`): same-origin cookie session at `/api/auth/*`. `useSession()` reads it, `useSignOut()` signs out; sign in/up/out call `resetUserCache()` so no data of the previous user stays cached.
+- Data comes from `apps/api` through the contract client (`src/lib/api/`): reads with `useQuery(accountsQuery(...))` (options factories in `queries.ts`, keys in `keys.ts`), writes with `useApiMutation("accounts", "create")`.
+- `useApiMutation` sends one `Idempotency-Key` per submit (reused on retries of the same input) and invalidates what `INVALIDATES` in `mutations.ts` lists for that write. Add an entry for every new write.
+- Show failures with `apiErrorMessage()`: `ErrorState` for a page's data, `FormError` inside dialogs (`src/components/error-state.tsx`).
+- Money from the API is `{ amountMinor, currency }` in ISO minor units: format with `formatMoney`/`formatMinor` and parse with `parseDecimalInput` (`src/lib/money.ts`), or `CurrencyInput` with `fractionDigits` + `parseCurrencyInput`. `formatCurrency(cents)` is for the Convex pages only.
+- Transactions, transfers, dashboard data, goals, debts and settings still use Convex hooks. `src/lib/legacy-convex.tsx` makes those calls fail at once (no Convex client), so the pages show empty or error states until PRs 10-11 move them.
+- `src/router.tsx` sets a 30 second `staleTime`, retries transient errors only, and turns any API 401 into a session re-check (the guard then redirects to /login).
 
 ### Frontend UI Rule
 
@@ -99,7 +104,9 @@ bun run test:e2e     # Run Playwright E2E tests
 | `apps/web/src/components/transactions/transaction-form-dialog.tsx` | Income/expense dialog |
 | `apps/web/src/components/transactions/transfer-form-dialog.tsx` | Transfer dialog |
 | `apps/web/e2e/*.spec.ts` | Playwright E2E coverage |
-| `packages/backend/.env.local` | Written by `convex dev`: deployment, `VITE_CONVEX_URL`, `VITE_CONVEX_SITE_URL` (also read by the web app) |
+| `apps/web/src/lib/api/` | Contract client, query keys, query options, `useApiMutation`, error messages |
+| `apps/web/src/lib/auth-client.ts` | Better Auth client and session query |
+| `apps/api/.env.local` | API env written by `bun run setup` (see `apps/api/.env.example`) |
 
 ### Routing
 
@@ -123,14 +130,10 @@ apps/web/src/routes/
    `- settings.tsx
 ```
 
-### Convex Integration
+### Backend Integration
 
-The frontend connects to Convex via `@convex-dev/react-query`.
-
-- `ConvexQueryClient` is integrated with React Query in `apps/web/src/router.tsx`
-- `ConvexAuthProvider` wraps the app so authenticated requests include auth state
-- `VITE_CONVEX_URL` comes from `packages/backend/.env.local` (see `apps/web/vite.config.ts`); `apps/web/.env.local` can override it
-- Backend types are imported from `@mpf/backend`
+- The web app talks to `apps/api` on the same origin: the Vite proxy in dev (`/api` → `DALVA_API_URL`, default `http://localhost:4000`), the reverse proxy in production
+- The web app no longer connects to Convex (see `src/lib/legacy-convex.tsx`); Convex types still come from `@mpf/backend` for the pages not moved yet
 
 ### E2E Testing (Playwright)
 
@@ -145,7 +148,11 @@ Tests currently live in `apps/web/e2e/` and cover:
 - `transactions.spec.ts`
 - `transfers.spec.ts`
 - `goals.spec.ts`
-- `settings.spec.ts` (the link/unlink test needs `E2E_CONVEX_SITE_URL` and `E2E_FINANCE_API_SERVICE_KEY`)
+- `categories.spec.ts`
+- `settings.spec.ts`, `debts.spec.ts`, the transaction edit flow: `test.fixme` until PRs 10-11 move those pages
+- `legacy-pages.spec.ts`: the pages still on Convex render without crashing
+
+Playwright starts `apps/api` on a fresh `dalva_e2e` database (`apps/api/scripts/e2e-server.ts`) and the web dev server. `E2E_DATABASE_URL`, `E2E_WEB_PORT` and `E2E_API_PORT` override the defaults.
 
 #### Commands
 

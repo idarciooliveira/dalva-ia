@@ -96,7 +96,7 @@ Still not fully wired:
 ### Prerequisites
 
 - Bun
-- A Convex account (or the CLI's no-account local mode)
+- Docker (Postgres from `compose.dev.yml`), or any Postgres 18 server on `127.0.0.1:5432`
 
 ### Setup
 
@@ -107,11 +107,15 @@ bun run setup
 
 `setup` is safe to re-run. It:
 
-- creates a local Convex deployment (`convex dev --local`), which writes `packages/backend/.env.local`
-- sets the missing backend env vars: auth keys, `SITE_URL`, `FINANCE_API_TOKEN_SECRET`, `FINANCE_API_SERVICE_KEY`
-- writes `apps/agent/.env.local` so the bot talks to the local backend, and creates `apps/agent/.env` from the example if missing
+- creates `apps/api/.env.local` from `apps/api/.env.example` and generates the secrets that are missing or still placeholders:
+  - `BETTER_AUTH_SECRET`: signs session cookies
+  - `FINANCE_API_TOKEN_SECRET`: signs the user tokens the chat agent sends
+  - `FINANCE_API_SERVICE_KEY`: the chat agent's own key for the service routes
+- starts Postgres with `docker compose -f compose.dev.yml up -d` (skipped when a server already answers on `DATABASE_URL`)
+- applies the migrations
+- creates `apps/agent/.env` from the example if missing
 
-It refuses to configure a cloud deployment. The web app reads `VITE_CONVEX_URL` from `packages/backend/.env.local`, so `apps/web/.env.local` is optional (`VITE_TELEGRAM_BOT_USERNAME` only).
+Other API variables (`DATABASE_URL`, `PORT`, `PUBLIC_URL`, `CLIENT_IP_HEADER`, `LOG_LEVEL`) are documented in `apps/api/.env.example`. Convex is not part of local dev any more: production runs it from the `legacy-convex` branch until the cutover.
 
 ### Development
 
@@ -119,20 +123,23 @@ It refuses to configure a cloud deployment. The web app reads `VITE_CONVEX_URL` 
 bun run dev
 ```
 
-Starts Convex, the web app (http://localhost:3000) and the Telegram agent together. The agent waits for the backend, and exits on its own without breaking the others if `apps/agent/.env` has no bot token or LLM key yet.
+Starts Postgres (if needed), the API on http://localhost:4000 with migrations applied, the web app on http://localhost:3000 and the Telegram agent. The web dev server proxies `/api` to the API (`DALVA_API_URL` overrides the target), so cookies stay first-party. The agent waits for the API, and exits on its own without breaking the others if `apps/agent/.env` has no bot token or LLM key yet.
+
+Transactions, transfers, the dashboard data, goals, debts and settings still use Convex hooks and show empty or error states until they move to the API.
 
 Other useful commands:
 
 ```bash
+bun run dev:api      # Postgres + migrations + API
 bun run dev:web
-bun run dev:backend
 bun run dev:agent
+bun run dev:backend  # Convex dev (legacy)
 bun run build
 bun run build:web
 bun run typecheck
 bun run lint
 bun run test:once
-bun run test:e2e
+bun run test:e2e     # starts its own API on a fresh dalva_e2e database
 ```
 
 ---

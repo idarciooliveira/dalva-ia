@@ -7,11 +7,11 @@ DALVA's own backend, replacing Convex: Bun + Hono + Postgres + Drizzle. Not depl
 From the repo root:
 
 ```bash
-docker compose -f compose.dev.yml up -d        # Postgres 18 on 127.0.0.1:5432
-cp apps/api/.env.example apps/api/.env.local   # DATABASE_URL for that server
-bun run db:migrate                             # apply apps/api/drizzle/*.sql
-bun run dev:api                                # http://localhost:4000/health
+bun run setup     # apps/api/.env.local with generated secrets, Postgres (compose.dev.yml), migrations
+bun run dev:api   # Postgres up, migrations, then http://localhost:4000/health in watch mode
 ```
+
+`bun run dev` starts the API with the web app (which proxies `/api` here) and the agent. Every variable is described in `.env.example`.
 
 Config is validated at boot (`src/config.ts`); a bad variable is named in the error, its value never is.
 
