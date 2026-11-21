@@ -35,6 +35,10 @@ Password hashes from Convex Auth (Lucia `Scrypt`) use the same format as Better 
 - Hand-written SQL (anything Drizzle can't express): `bunx drizzle-kit generate --custom --name <what>` in `apps/api`, then fill the empty file.
 - Conventions are in the header of `schema.ts`: UUIDv7 ids from Postgres, `user_id` on every user-owned row, money as `bigint` minor units, `date` for calendar dates, enums for closed sets, deferred foreign keys.
 
+## Convex import
+
+`bun run migrate:convex <export.zip> [--dry-run] [--drop-invalid]` (`scripts/migrate-from-convex.ts`, logic in `src/import/`) loads a `npx convex export` into an empty, migrated database in one transaction and verifies it. Rules, report and the cutover runbook: `docs/deploy.md`, "Cutover".
+
 ## Contract routes (`/api/v1`)
 
 `src/http/router.ts` serves every route of `@mpf/finance-contract` with the Convex router's semantics: credential of the route's kind (401) → implemented (404) → scope (403) → `Idempotency-Key` on finance writes (400) → body (JSON object, 64 KiB cap, read as a stream) and the route's request schema (400) → handler → `{ ok: true, data }`. A credential that is present but invalid is refused by the principal middleware first, on any `/api/v1` path; paths that match no contract route fall through to the app's 404. Responses carry `Cache-Control: no-store`.
