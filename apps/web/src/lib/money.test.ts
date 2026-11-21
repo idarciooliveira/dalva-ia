@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatMinor, formatMoney, parseDecimalInput } from "./money";
+import { decimalPlaceholder, formatMinor, formatMoney, maskPlaceholder, parseDecimalInput } from "./money";
 
 describe("formatMinor", () => {
   it("uses the currency's minor unit", () => {
@@ -34,5 +34,13 @@ describe("parseDecimalInput", () => {
     expect(parseDecimalInput("-", "USD")).toBeNull();
     expect(parseDecimalInput("1,50", "USD")).toBeNull();
     expect(parseDecimalInput("90071992547409.92", "USD")).toBeNull();
+  });
+});
+
+describe("placeholders", () => {
+  it("follow the currency's precision", () => {
+    expect(decimalPlaceholder(2)).toBe("0.00");
+    expect(decimalPlaceholder(0)).toBe("0");
+    expect(maskPlaceholder(3)).toBe("0,000");
   });
 });

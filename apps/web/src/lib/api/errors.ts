@@ -23,6 +23,9 @@ function firstIssue(details: unknown): string | undefined {
 /** A message for the user. Server messages are shown only for codes that carry user-facing text. */
 export function apiErrorMessage(error: unknown, fallback: string = GENERIC_ERROR): string {
   if (error instanceof LegacyBackendError) return error.message;
+  // The session check: no answer, or the proxy without the API behind it.
+  if (error instanceof TypeError) return OFFLINE_ERROR;
+  if (isSessionError(error)) return error.status >= 500 ? OFFLINE_ERROR : fallback;
   if (!(error instanceof FinanceApiError)) return fallback;
   switch (error.code) {
     case "network_error":
@@ -43,6 +46,11 @@ export function apiErrorMessage(error: unknown, fallback: string = GENERIC_ERROR
   }
 }
 
+/** `SessionError` from auth-client, matched by name so this module doesn't load Better Auth. */
+function isSessionError(error: unknown): error is Error & { status: number } {
+  return error instanceof Error && error.name === "SessionError";
+}
+
 export function isApiError(error: unknown, code: FinanceApiError["code"]): boolean {
   return error instanceof FinanceApiError && error.code === code;
 }
@@ -51,7 +59,7 @@ export function isApiError(error: unknown, code: FinanceApiError["code"]): boole
 export function isTransientError(error: unknown): boolean {
   // The session check: better-fetch throws a TypeError when there is no answer.
   if (error instanceof TypeError) return true;
-  if (error instanceof Error && error.name === "SessionError") return (error as Error & { status: number }).status >= 500;
+  if (isSessionError(error)) return error.status >= 500;
   if (!(error instanceof FinanceApiError)) return false;
   if (error.code === "network_error" || error.code === "timeout" || error.code === "internal") return true;
   return error.code === "invalid_response" && error.status !== null && error.status >= 500;

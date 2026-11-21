@@ -27,7 +27,7 @@ import { FormError } from "@/components/error-state";
 import { useAuthProfile } from "@/hooks/use-auth-profile";
 import { useApiMutation } from "@/lib/api/mutations";
 import { apiErrorMessage } from "@/lib/api/errors";
-import { fractionDigits } from "@/lib/money";
+import { fractionDigits, maskPlaceholder } from "@/lib/money";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES, type AccountType } from "@/lib/accounts";
 import { CURRENCIES, getCurrencySymbol } from "@/lib/currencies";
 import { cn } from "@/lib/utils";
@@ -153,7 +153,7 @@ export function AccountFormDialog({
                   onValueChange={setBalance}
                   fractionDigits={fractionDigits(currency)}
                   allowNegative
-                  placeholder="0,00"
+                  placeholder={maskPlaceholder(fractionDigits(currency))}
                   autoFocus
                   className="min-w-0 flex-1 bg-transparent text-2xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/50"
                   aria-label="Opening balance"

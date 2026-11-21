@@ -57,3 +57,13 @@ export function parseDecimalInput(input: string, currency: string): number | nul
   const value = Number(minor);
   return sign === "-" && value !== 0 ? -value : value;
 }
+
+/** "0.00" / "0" / "0.000": what an empty decimal field shows for the currency. */
+export function decimalPlaceholder(digits: number): string {
+  return digits > 0 ? `0.${"0".repeat(digits)}` : "0";
+}
+
+/** The same in the masked `CurrencyInput` (pt-BR): "0,00" / "0" / "0,000". */
+export function maskPlaceholder(digits: number): string {
+  return decimalPlaceholder(digits).replace(".", ",");
+}

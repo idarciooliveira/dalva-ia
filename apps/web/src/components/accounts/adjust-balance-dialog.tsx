@@ -14,7 +14,7 @@ import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-inpu
 import { FormError } from "@/components/error-state";
 import { useApiMutation } from "@/lib/api/mutations";
 import { apiErrorMessage } from "@/lib/api/errors";
-import { formatMinor, fractionDigits } from "@/lib/money";
+import { formatMinor, fractionDigits, maskPlaceholder } from "@/lib/money";
 import { getCurrencySymbol } from "@/lib/currencies";
 
 interface AdjustBalanceDialogProps {
@@ -108,7 +108,7 @@ export function AdjustBalanceDialog({
                   onValueChange={setNewBalance}
                   fractionDigits={fractionDigits(currency)}
                   allowNegative
-                  placeholder="0,00"
+                  placeholder={maskPlaceholder(fractionDigits(currency))}
                   autoFocus
                   className="flex-1 bg-transparent text-2xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/50"
                   aria-label="New balance"

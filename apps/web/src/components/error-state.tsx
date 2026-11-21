@@ -9,11 +9,13 @@ interface ErrorStateProps {
   /** Shown when the error carries no user-facing message. */
   fallback?: string;
   onRetry?: () => void;
+  /** A way out when retrying can't help (e.g. the profile keeps failing). */
+  onSignOut?: () => void;
   className?: string;
 }
 
 /** Inline failure of a page's data, with a retry. Same footprint as the list empty states. */
-export function ErrorState({ error, fallback, onRetry, className }: ErrorStateProps) {
+export function ErrorState({ error, fallback, onRetry, onSignOut, className }: ErrorStateProps) {
   return (
     <div
       role="alert"
@@ -24,11 +26,20 @@ export function ErrorState({ error, fallback, onRetry, className }: ErrorStatePr
     >
       <AlertCircle className="mb-3 size-10 text-destructive/70" aria-hidden="true" />
       <p className="text-sm font-medium text-foreground">{apiErrorMessage(error, fallback)}</p>
-      {onRetry && (
-        <Button variant="outline" size="sm" className="mt-4 gap-1.5" onClick={onRetry}>
-          <RotateCw className="size-3.5" aria-hidden="true" />
-          Try again
-        </Button>
+      {(onRetry || onSignOut) && (
+        <div className="mt-4 flex gap-2">
+          {onRetry && (
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={onRetry}>
+              <RotateCw className="size-3.5" aria-hidden="true" />
+              Try again
+            </Button>
+          )}
+          {onSignOut && (
+            <Button variant="ghost" size="sm" onClick={onSignOut}>
+              Sign out
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );

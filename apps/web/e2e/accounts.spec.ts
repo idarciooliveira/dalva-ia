@@ -123,3 +123,34 @@ test.describe("Accounts page — CRUD (apps/api)", () => {
     await expect(page.getByText("Spare")).toHaveCount(0);
   });
 });
+
+test.describe("Accounts page — failures (apps/api)", () => {
+  test("a failed create keeps the dialog open with the error inside it", async ({ page }) => {
+    await registerAndCompleteOnboarding(page);
+    await page.getByRole("link", { name: "Accounts" }).click();
+    await expect(page.getByText("Main Checking")).toBeVisible();
+
+    await page.route("**/api/v1/accounts", (route) =>
+      route.request().method() === "POST"
+        ? route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ ok: false, error: { code: "internal", message: "Internal error" } }),
+          })
+        : route.fallback(),
+    );
+    await page.getByRole("button", { name: /add account/i }).click();
+    await page.getByLabel("Account name").fill("Doomed");
+    await page.getByRole("button", { name: "Create account" }).click();
+
+    const dialog = page.getByRole("dialog", { name: "New account" });
+    await expect(dialog.getByRole("alert")).toHaveText("Couldn't create the account. Try again.");
+    await expect(page.getByLabel("Account name")).toHaveAttribute("aria-invalid", "true");
+
+    // The API is back: the same dialog saves.
+    await page.unroute("**/api/v1/accounts");
+    await dialog.getByRole("button", { name: "Create account" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByRole("listitem", { name: "Doomed", exact: true })).toBeVisible();
+  });
+});

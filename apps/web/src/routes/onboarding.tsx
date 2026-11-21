@@ -5,6 +5,7 @@ import { formatMinorAmount } from "@mpf/finance-contract";
 import type { Account, RouteInput, UserRoutes } from "@mpf/finance-contract";
 
 import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useSignOut } from "@/hooks/use-session";
 import { createAccountDraft, type AccountDraft } from "@/lib/accounts";
 import { useApiMutation } from "@/lib/api/mutations";
 import { accountsQuery, defaultCategoriesQuery } from "@/lib/api/queries";
@@ -31,9 +32,10 @@ const TOTAL_STEPS = 3;
 
 function OnboardingPage() {
   const auth = useAuthGuard({ redirectIfOnboarded: true });
+  const signOut = useSignOut();
 
   if (auth.status === "error") {
-    return <FullPageError error={auth.error} onRetry={auth.retry} />;
+    return <FullPageError error={auth.error} onRetry={auth.retry} onSignOut={() => void signOut()} />;
   }
   if (auth.status !== "ready") {
     return <OnboardingSkeleton />;

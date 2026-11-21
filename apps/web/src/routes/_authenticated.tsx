@@ -43,7 +43,7 @@ function AuthenticatedLayout() {
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
 
   if (auth.status === "error") {
-    return <FullPageError error={auth.error} onRetry={auth.retry} />;
+    return <FullPageError error={auth.error} onRetry={auth.retry} onSignOut={() => void signOut()} />;
   }
   if (auth.status !== "ready") {
     return <DashboardSkeleton />;

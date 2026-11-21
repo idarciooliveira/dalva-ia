@@ -29,6 +29,16 @@ describe("createIdempotencyKeys", () => {
     expect(k.keyFor({ name: "Other" })).not.toBe(first);
   });
 
+  it("starts a new key for the same input once the reuse window has passed", () => {
+    let clock = 0;
+    const k = createIdempotencyKeys(() => `key-${++n}`, () => clock);
+    const first = k.keyFor({ id: "a1" });
+    clock = 59_000;
+    expect(k.keyFor({ id: "a1" })).toBe(first);
+    clock = 121_000;
+    expect(k.keyFor({ id: "a1" })).not.toBe(first);
+  });
+
   it("ignores the success of a superseded key", () => {
     const k = keys();
     const first = k.keyFor({ name: "A" });

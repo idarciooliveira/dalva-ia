@@ -1,6 +1,7 @@
 import { Landmark, Plus, Trash2, ArrowRight, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getCurrencySymbol } from "@/lib/currencies";
+import { decimalPlaceholder, fractionDigits } from "@/lib/money";
 import {
   ACCOUNT_TYPES,
   ACCOUNT_THEMES,
@@ -69,6 +70,7 @@ export function AccountsStep({
             account={account}
             index={index}
             currencySymbol={currencySymbol}
+            currency={currency}
             canRemove={accounts.length > 1}
             onUpdate={(updates) => updateAccount(account.id, updates)}
             onRemove={() => removeAccount(account.id)}
@@ -110,6 +112,7 @@ export function AccountsStep({
 
 function AccountRow({
   account,
+  currency,
   index,
   currencySymbol,
   canRemove,
@@ -119,6 +122,7 @@ function AccountRow({
   account: AccountDraft;
   index: number;
   currencySymbol: string;
+  currency: string;
   canRemove: boolean;
   onUpdate: (updates: Partial<AccountDraft>) => void;
   onRemove: () => void;
@@ -218,11 +222,13 @@ function AccountRow({
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
             {currencySymbol}
           </span>
+          {/* Text, not type=number: a value the browser can't parse would read as "" (0). */}
           <Input
             id={`account-balance-${account.id}`}
-            type="number"
-            step="0.01"
-            placeholder="0.00"
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            placeholder={decimalPlaceholder(fractionDigits(currency))}
             value={account.balance}
             onChange={(e) => onUpdate({ balance: e.target.value })}
             className="h-10 rounded-lg pl-10 pr-3"

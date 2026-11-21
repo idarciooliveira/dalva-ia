@@ -9,6 +9,9 @@ describe("CurrencyInput mask", () => {
     expect(formatCurrencyInput("-200000", "pt-BR", 2, true)).toBe("-2.000,00");
     expect(formatCurrencyInput("-200000", "pt-BR", 2, false)).toBe("2.000,00");
     expect(formatCurrencyInput("-", "pt-BR", 2, true)).toBe("-");
+    // "-" typed at the end toggles the sign.
+    expect(formatCurrencyInput("1.234,56-", "pt-BR", 2, true)).toBe("-1.234,56");
+    expect(formatCurrencyInput("-1.234,56-", "pt-BR", 2, true)).toBe("1.234,56");
   });
 
   it("parses to signed minor units; a lone sign is not an amount", () => {

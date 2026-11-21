@@ -67,8 +67,9 @@ function LoginPage() {
         setAuthError(authErrorMessage(error, "signIn"));
         return;
       }
-      // The effect above navigates once the new session is read.
-      await resetUserCache(queryClient);
+      // The effect above navigates once the new session is read. If that read fails, the
+      // user is still signed in: go on, and the guard there shows the error with a retry.
+      await resetUserCache(queryClient).catch(() => router.navigate({ to: "/dashboard" }));
     } catch (error) {
       setAuthError(authErrorMessage(error, "signIn"));
     }

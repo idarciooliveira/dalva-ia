@@ -18,6 +18,8 @@ describe("apiErrorMessage", () => {
     expect(apiErrorMessage(err("invalid_response", "HTTP 502", 502))).toBe(OFFLINE_ERROR);
     expect(apiErrorMessage(new Error("x"))).toBe(GENERIC_ERROR);
     expect(apiErrorMessage(new LegacyBackendError())).toMatch(/moving to the new backend/);
+    expect(apiErrorMessage(new TypeError("Failed to fetch"))).toBe(OFFLINE_ERROR);
+    expect(apiErrorMessage(new SessionError(502))).toBe(OFFLINE_ERROR);
   });
 });
 

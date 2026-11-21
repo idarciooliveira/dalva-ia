@@ -42,8 +42,9 @@ export const sessionQuery = () =>
       if (!data) return null;
       return { id: data.user.id, name: data.user.name, email: data.user.email };
     },
-    // Same as the data queries: a sign-in as someone else in another tab shows up on focus.
     staleTime: 30_000,
+    // Another tab may have signed in as someone else (shared cookie): check on every focus.
+    refetchOnWindowFocus: "always",
   });
 
 const isSessionKey = (queryKey: readonly unknown[]) => queryKey[0] === queryKeys.session()[0];

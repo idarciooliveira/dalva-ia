@@ -3,12 +3,13 @@
  * Started by apps/web/playwright.config.ts; not for development (use `bun run dev:api`).
  *
  * PORT, PUBLIC_URL   where the API listens and the web origin in front of it
- * E2E_DATABASE_URL   database to recreate (name must start with dalva_e2e), default
- *                    postgres://dalva:dalva@127.0.0.1:5432/dalva_e2e_<PORT>, so runs on
- *                    different ports never drop each other's database
+ * E2E_DATABASE_URL   database to recreate (name must start with dalva_e2e). Default: the
+ *                    server of DATABASE_URL (apps/api/.env.local, which Bun loads here, or
+ *                    the compose server) with the database dalva_e2e_<PORT>, so runs on
+ *                    different ports never drop each other's database.
  *
- * Secrets are random per run. Bun also loads apps/api/.env.local here; nothing in it
- * but DATABASE_POOL_MAX and LOG_LEVEL survives.
+ * Secrets are random per run; of apps/api/.env.local only the server address,
+ * DATABASE_POOL_MAX and LOG_LEVEL are used.
  */
 import { randomBytes } from "node:crypto";
 
@@ -17,7 +18,12 @@ import postgres from "postgres";
 import { runMigrations } from "../src/db/migrate";
 
 const port = process.env.PORT || "4000";
-const url = new URL(process.env.E2E_DATABASE_URL || `postgres://dalva:dalva@127.0.0.1:5432/dalva_e2e_${port}`);
+function defaultUrl(): string {
+  const server = new URL(process.env.DATABASE_URL || "postgres://dalva:dalva@127.0.0.1:5432/dalva");
+  server.pathname = `/dalva_e2e_${port}`;
+  return server.toString();
+}
+const url = new URL(process.env.E2E_DATABASE_URL || defaultUrl());
 const name = decodeURIComponent(url.pathname.slice(1));
 // It gets dropped: never let this point at a database that matters.
 if (!/^dalva_e2e\w*$/.test(name)) {

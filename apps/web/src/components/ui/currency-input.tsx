@@ -8,14 +8,15 @@ function normalizeDigits(value: string): string {
   return value.replace(/\D/g, "");
 }
 
+/** Each "-" typed toggles the sign, wherever the caret is: "1,00-" is negative, "-1,00-" positive. */
 function isNegative(value: string): boolean {
-  return value.trimStart().startsWith("-");
+  return (value.match(/-/g)?.length ?? 0) % 2 === 1;
 }
 
 /**
  * Digit mask: every typed digit shifts in from the right ("1", "0,01", "0,12",
  * "1,23"). `fractionDigits` is the currency's minor-unit exponent, so the digits
- * are the amount in minor units. With `allowNegative`, a leading "-" is kept.
+ * are the amount in minor units. With `allowNegative`, typing "-" anywhere toggles the sign.
  */
 export function formatCurrencyInput(
   value: string,
@@ -65,7 +66,7 @@ interface CurrencyInputProps extends Omit<React.InputHTMLAttributes<HTMLInputEle
   locale?: string;
   /** The currency's minor-unit exponent (2 for USD, 0 for JPY). Default 2. */
   fractionDigits?: number;
-  /** Keep a leading "-" (balances can be negative). */
+  /** Allow a sign: typing "-" anywhere toggles it (balances can be negative). */
   allowNegative?: boolean;
 }
 
