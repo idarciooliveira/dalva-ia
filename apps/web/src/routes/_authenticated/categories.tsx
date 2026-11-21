@@ -57,7 +57,9 @@ function CategoriesContent() {
 
   const categories = categoriesResult.data?.items;
   const allSubcategories = subcategoriesResult.data?.items;
-  const loadError = categoriesResult.error ?? subcategoriesResult.error;
+  // A failed background refetch keeps showing the cached lists.
+  const loadError =
+    (!categoriesResult.data && categoriesResult.error) || (!subcategoriesResult.data && subcategoriesResult.error);
 
   const incomeCategories = (categories ?? [])
     .filter((c) => c.type === "income")
@@ -118,7 +120,7 @@ function CategoriesContent() {
           <Archive className="mr-1.5 size-4" />
           Archived
           {showArchived && (
-            <span className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
+            <span aria-hidden="true" className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
               1
             </span>
           )}

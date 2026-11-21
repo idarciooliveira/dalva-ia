@@ -42,10 +42,11 @@ test.describe("Categories page - category CRUD (apps/api)", () => {
 
     await action(page, "Pets & Vet", "Archive");
     await expect(page.getByText("Pets & Vet", { exact: true })).toHaveCount(0);
-    await page.getByRole("button", { name: /^archived/i }).click();
+    await page.getByRole("button", { name: "Archived", exact: true }).click();
     await expect(page.getByText("Pets & Vet", { exact: true })).toBeVisible();
     await action(page, "Pets & Vet", "Restore");
-    await page.getByRole("button", { name: /^archived/i }).click();
+    await expect(page.getByText("Archived", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "Archived", exact: true }).click();
     await expect(page.getByText("Pets & Vet", { exact: true })).toBeVisible();
 
     await action(page, "Pets & Vet", "Delete");
@@ -90,7 +91,7 @@ test.describe("Categories page - subcategories (apps/api)", () => {
     await action(page, "Weekly groceries", "Archive");
     await expect(page.getByText("Weekly groceries", { exact: true })).toHaveCount(0);
     // The row stays expanded while the list refetches with archived items.
-    await page.getByRole("button", { name: /^archived/i }).click();
+    await page.getByRole("button", { name: "Archived", exact: true }).click();
     await expect(page.getByText("Weekly groceries", { exact: true })).toBeVisible();
 
     await action(page, "Weekly groceries", "Delete");

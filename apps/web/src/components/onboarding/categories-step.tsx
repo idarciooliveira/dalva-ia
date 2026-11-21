@@ -68,6 +68,7 @@ export function CategoriesStep({
       )}
 
       {/* Select all / deselect all */}
+      {defaultCategories.length > 0 && (
       <div className="flex justify-end">
         <button
           type="button"
@@ -77,6 +78,7 @@ export function CategoriesStep({
           {allSelected ? "Deselect all" : "Select all"}
         </button>
       </div>
+      )}
 
       {/* Income */}
       <div className="space-y-3">
@@ -117,7 +119,7 @@ export function CategoriesStep({
       </div>
 
       <div className="flex gap-3">
-        <Button variant="outline" className="flex-1" onClick={onBack}>
+        <Button variant="outline" className="flex-1" onClick={onBack} disabled={isSubmitting}>
           <ArrowLeft className="size-4" />
           Back
         </Button>

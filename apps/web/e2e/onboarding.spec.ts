@@ -156,4 +156,39 @@ test.describe("Onboarding page — full flow (apps/api)", () => {
     await expect(page.getByRole("alert")).toContainText("Enter a valid opening balance for Cash");
     await expect(page.getByRole("heading", { name: "Add your accounts" })).toBeVisible();
   });
+
+  test("editing, removing and re-saving drafts never duplicates accounts", async ({ page }) => {
+    await register(page);
+    await page.getByRole("button", { name: /^continue$/i }).click();
+
+    await page.getByLabel(/account name/i).fill("Main");
+    await page.getByLabel(/opening balance/i).fill("100");
+    await page.getByRole("button", { name: "Add another account" }).click();
+    await page.getByLabel(/account name/i).nth(1).fill("Temp");
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByRole("heading", { name: "Choose your categories" })).toBeVisible();
+
+    // Back to step 1, switch currency; then rename one account and remove the other.
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.getByLabel("Base currency").click();
+    await page.getByRole("option", { name: /Euro \(EUR\)/ }).click();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await page.getByLabel(/account name/i).first().fill("Main Account");
+    await page.getByRole("button", { name: "Remove account" }).nth(1).click();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByRole("heading", { name: "Choose your categories" })).toBeVisible();
+
+    // A reload resumes with the saved account as the draft.
+    await page.reload();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByLabel(/account name/i)).toHaveValue("Main Account");
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await page.getByRole("button", { name: /get started/i }).click();
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+
+    await page.goto("/accounts");
+    await expect(page.getByRole("list", { name: "Accounts" }).getByRole("listitem")).toHaveCount(1);
+    await expect(page.getByRole("listitem", { name: "Main Account" })).toContainText("€100.00");
+  });
 });

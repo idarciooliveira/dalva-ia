@@ -75,7 +75,9 @@ export function useAuthGuard(options: AuthGuardOptions = {}): AuthGuardResult {
     }
   }, [redirectIfOnboarded, profileReady, profile, router]);
 
-  if (session.isError) {
+  // Only a first load that failed is an error: a failed background refetch keeps the
+  // cached session and profile (React Query keeps `data`), so the shell stays mounted.
+  if (session.isError && session.data === undefined) {
     return { status: "error", error: session.error, retry: () => void session.refetch() };
   }
   if (session.isPending) return { status: "loading" };
@@ -83,7 +85,7 @@ export function useAuthGuard(options: AuthGuardOptions = {}): AuthGuardResult {
   // Not authenticated -- redirect in progress
   if (!isAuthenticated) return { status: "redirecting" };
 
-  if (profileResult.isError) {
+  if (profileResult.isError && profileResult.data === undefined) {
     return { status: "error", error: profileResult.error, retry: () => void profileResult.refetch() };
   }
   if (profileResult.isPending) return { status: "loading" };

@@ -144,7 +144,6 @@ export function CategoryRow({
               size="icon-sm"
               className="mt-0.5 shrink-0 text-muted-foreground sm:mt-0"
               aria-label={`Open ${category.name} actions`}
-              disabled={isBusy}
             >
               <MoreVertical className="size-4" />
             </Button>
@@ -161,6 +160,7 @@ export function CategoryRow({
             <DropdownMenuSeparator />
             {category.archived ? (
               <DropdownMenuItem
+                disabled={isBusy}
                 onClick={() => restoreCategory({ id: category.id })}
               >
                 <ArchiveRestore className="mr-2 size-4" />
@@ -168,6 +168,7 @@ export function CategoryRow({
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem
+                disabled={isBusy}
                 onClick={() => archiveCategory({ id: category.id })}
               >
                 <Archive className="mr-2 size-4" />
@@ -175,6 +176,7 @@ export function CategoryRow({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
+              disabled={isBusy}
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteDialogOpen(true)}
             >

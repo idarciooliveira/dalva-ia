@@ -71,7 +71,7 @@ test.describe("Accounts page — CRUD (apps/api)", () => {
     await page.getByRole("option", { name: /credit card/i }).click();
     await page.getByRole("button", { name: "Create account" }).click();
     await expect(page.getByRole("heading", { name: "New account" })).toBeHidden();
-    const visa = page.locator("div.rounded-2xl", { hasText: "Visa" });
+    const visa = page.getByRole("listitem", { name: "Visa", exact: true });
     await expect(visa).toContainText("$2,000.00");
     await expect(visa).toContainText("owing");
     await expect(visa).toContainText("Credit Card · USD");
@@ -89,27 +89,27 @@ test.describe("Accounts page — CRUD (apps/api)", () => {
     await expect(page.getByLabel("New balance")).toHaveValue("-2.000,00");
     await page.getByLabel("New balance").fill("-150000");
     await page.getByRole("button", { name: "Adjust balance" }).click();
-    const gold = page.locator("div.rounded-2xl", { hasText: "Visa Gold" });
+    const gold = page.getByRole("listitem", { name: "Visa Gold", exact: true });
     await expect(gold).toContainText("$1,500.00");
 
     // Archive hides it; the Archived toggle shows it again; restore.
     await page.getByRole("button", { name: "Open Visa Gold actions" }).click();
     await page.getByRole("menuitem", { name: "Archive" }).click();
     await expect(page.getByText("Visa Gold")).toHaveCount(0);
-    await page.getByRole("button", { name: /^archived/i }).click();
+    await page.getByRole("button", { name: "Archived", exact: true }).click();
     await expect(gold).toContainText("Archived");
     await page.getByRole("button", { name: "Open Visa Gold actions" }).click();
     await page.getByRole("menuitem", { name: "Restore" }).click();
     await expect(gold).not.toContainText("Archived");
-    await page.getByRole("button", { name: /^archived/i }).click();
+    await page.getByRole("button", { name: "Archived", exact: true }).click();
     await expect(page.getByText("Visa Gold")).toBeVisible();
 
     // The adjustment is a transaction: delete is refused, archive is offered.
     await page.getByRole("button", { name: "Open Visa Gold actions" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();
     await page.getByRole("button", { name: "Yes, delete" }).click();
-    await expect(page.getByRole("alert")).toContainText("can't be deleted");
-    await page.getByRole("button", { name: "Archive instead" }).click();
+    await expect(gold.getByRole("alert")).toContainText("can't be deleted");
+    await gold.getByRole("button", { name: "Archive instead" }).click();
     await expect(page.getByText("Visa Gold")).toHaveCount(0);
 
     // An unused account deletes.

@@ -170,4 +170,45 @@ test.describe("Auth flows (apps/api)", () => {
     await expect(other).toHaveURL(/\/onboarding/, { timeout: 20_000 });
     await other.close();
   });
+
+  test("signing in as someone else in the same tab never shows the previous user's data", async ({ page }) => {
+    await registerAndCompleteOnboarding(page, newUser("First User"));
+    await page.goto("/accounts");
+    await page.getByRole("button", { name: /add account/i }).click();
+    await page.getByLabel("Account name").fill("First-only account");
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect(page.getByText("First-only account")).toBeVisible();
+
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    // Client-side navigation keeps the React Query cache: it must hold nothing of the first user.
+    await page.getByRole("link", { name: "Get Started", exact: true }).click();
+    await page.getByLabel("Name").fill("Second User");
+    await page.getByLabel("Email").fill(newUser().email);
+    await page.locator("#password").fill("password123");
+    await page.getByRole("button", { name: /create account/i }).click();
+    await expect(page).toHaveURL(/\/onboarding/, { timeout: 20_000 });
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await page.getByLabel(/account name/i).fill("Second Checking");
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await page.getByRole("button", { name: /get started/i }).click();
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+
+    await page.getByRole("link", { name: "Accounts" }).click();
+    await expect(page.getByText("Second Checking")).toBeVisible();
+    await expect(page.getByText("First-only account")).toHaveCount(0);
+  });
+
+  test("an expired session sends the next write to /login", async ({ page }) => {
+    await registerAndCompleteOnboarding(page);
+    await page.getByRole("link", { name: "Accounts" }).click();
+    await expect(page.getByText("Main Checking")).toBeVisible();
+
+    await page.context().clearCookies();
+    await page.getByRole("button", { name: /add account/i }).click();
+    await page.getByLabel("Account name").fill("Too late");
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
+  });
 });

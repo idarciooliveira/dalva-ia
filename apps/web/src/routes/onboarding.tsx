@@ -1,11 +1,13 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { formatMinorAmount } from "@mpf/finance-contract";
+import type { Account, RouteInput, UserRoutes } from "@mpf/finance-contract";
 
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { createAccountDraft, type AccountDraft } from "@/lib/accounts";
 import { useApiMutation } from "@/lib/api/mutations";
-import { defaultCategoriesQuery } from "@/lib/api/queries";
+import { accountsQuery, defaultCategoriesQuery } from "@/lib/api/queries";
 import { queryKeys } from "@/lib/api/keys";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fingerprint } from "@/lib/api/idempotency";
@@ -37,15 +39,48 @@ function OnboardingPage() {
     return <OnboardingSkeleton />;
   }
 
-  // A profile exists when the user reloads after the first step.
-  return <OnboardingWizard initialCurrency={auth.profile.baseCurrency ?? "USD"} />;
+  // A profile exists when the user comes back after the first step (reload, new tab).
+  const baseCurrency = auth.profile.baseCurrency;
+  return <OnboardingWizard initialCurrency={baseCurrency ?? "USD"} resumed={baseCurrency !== undefined} />;
+}
+
+type AccountInput = RouteInput<UserRoutes["accounts"]["create"]>;
+/** What onboarding last saved for a draft, so a later Continue only sends the difference. */
+type SavedAccount = { accountId: string; input: AccountInput };
+
+function accountInput(name: string, type: AccountInput["type"], amountMinor: number, currency: string, theme?: string) {
+  return {
+    name,
+    type,
+    balance: { amountMinor, currency },
+    ...(theme && theme !== "default" ? { theme } : {}),
+  } satisfies AccountInput;
+}
+
+/** Drafts for accounts a resumed onboarding already created. */
+function draftsFrom(accounts: Account[]): Array<{ draft: AccountDraft; saved: SavedAccount }> {
+  return accounts.map((account) => {
+    const { amountMinor, currency } = account.balance;
+    return {
+      draft: createAccountDraft({
+        name: account.name,
+        type: account.type,
+        balance: formatMinorAmount(amountMinor, currency),
+        theme: account.theme ?? "default",
+      }),
+      saved: {
+        accountId: account.id,
+        input: accountInput(account.name, account.type, amountMinor, currency, account.theme),
+      },
+    };
+  });
 }
 
 /* -------------------------------------------------------------------------- */
 /*  Wizard                                                                    */
 /* -------------------------------------------------------------------------- */
 
-function OnboardingWizard({ initialCurrency }: { initialCurrency: string }) {
+function OnboardingWizard({ initialCurrency, resumed }: { initialCurrency: string; resumed: boolean }) {
   const [step, setStep] = useState(1);
   const [currency, setCurrency] = useState(initialCurrency);
   const [accounts, setAccounts] = useState<AccountDraft[]>([
@@ -54,9 +89,10 @@ function OnboardingWizard({ initialCurrency }: { initialCurrency: string }) {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [categoriesInitialized, setCategoriesInitialized] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Drafts already saved, with what was sent: a retry after a partial failure, or
-  // Back then Continue, doesn't create them again unless they were edited.
-  const createdDrafts = useRef(new Map<string, string>());
+  // Accounts already saved, per draft: Continue again (after Back, a partial failure
+  // or a reload) updates, recreates or deletes them instead of creating duplicates.
+  const savedAccounts = useRef(new Map<string, SavedAccount>());
+  const [resumeSeeded, setResumeSeeded] = useState(!resumed);
 
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -66,6 +102,22 @@ function OnboardingWizard({ initialCurrency }: { initialCurrency: string }) {
     useApiMutation("profile", "create");
   const { mutateAsync: createAccount, isPending: isCreatingAccount } =
     useApiMutation("accounts", "create");
+  const { mutateAsync: updateAccount, isPending: isUpdatingAccount } =
+    useApiMutation("accounts", "update");
+  const { mutateAsync: deleteAccount, isPending: isDeletingAccount } =
+    useApiMutation("accounts", "delete");
+
+  // Resumed onboarding: show the accounts created last time as the drafts.
+  const existingAccounts = useQuery({ ...accountsQuery(), enabled: resumed });
+  useEffect(() => {
+    if (resumeSeeded || !existingAccounts.data) return;
+    const resumedDrafts = draftsFrom(existingAccounts.data.items);
+    if (resumedDrafts.length > 0) {
+      setAccounts(resumedDrafts.map((d) => d.draft));
+      for (const { draft, saved } of resumedDrafts) savedAccounts.current.set(draft.id, saved);
+    }
+    setResumeSeeded(true);
+  }, [resumeSeeded, existingAccounts.data]);
   const { mutateAsync: seedCategories, isPending: isSeedingCategories } =
     useApiMutation("categories", "seedDefaults");
   const { mutateAsync: completeOnboarding, isPending: isCompleting } =
@@ -104,28 +156,44 @@ function OnboardingWizard({ initialCurrency }: { initialCurrency: string }) {
   function handleAccountsNext() {
     return run(async () => {
       const validAccounts = accounts.filter((a) => a.name.trim().length > 0);
-      const inputs = [];
+      const inputs: Array<{ draftId: string; input: AccountInput }> = [];
       for (const acct of validAccounts) {
         const amountMinor = parseDecimalInput(acct.balance, currency);
         if (amountMinor === null) {
           setError(`Enter a valid opening balance for ${acct.name.trim()}.`);
           return;
         }
-        inputs.push({
-          draftId: acct.id,
-          input: {
-            name: acct.name.trim(),
-            type: acct.type,
-            balance: { amountMinor, currency },
-            ...(acct.theme !== "default" ? { theme: acct.theme } : {}),
-          },
-        });
+        inputs.push({ draftId: acct.id, input: accountInput(acct.name.trim(), acct.type, amountMinor, currency, acct.theme) });
+      }
+
+      const saved = savedAccounts.current;
+      // Drafts removed (or emptied) since they were saved: their accounts go too.
+      const kept = new Set(inputs.map((i) => i.draftId));
+      for (const [draftId, { accountId }] of [...saved]) {
+        if (kept.has(draftId)) continue;
+        await deleteAccount({ id: accountId });
+        saved.delete(draftId);
       }
       for (const { draftId, input } of inputs) {
-        const sent = fingerprint(input);
-        if (createdDrafts.current.get(draftId) === sent) continue;
-        await createAccount(input);
-        createdDrafts.current.set(draftId, sent);
+        const previous = saved.get(draftId);
+        if (previous && fingerprint(previous.input) === fingerprint(input)) continue;
+        const balanceChanged =
+          previous !== undefined &&
+          (previous.input.balance.amountMinor !== input.balance.amountMinor ||
+            previous.input.balance.currency !== input.balance.currency);
+        if (previous && !balanceChanged) {
+          await updateAccount({ id: previous.accountId, name: input.name, type: input.type, theme: input.theme ?? "default" });
+          saved.set(draftId, { accountId: previous.accountId, input });
+          continue;
+        }
+        // New, or a balance/currency change: an opening balance can't be edited, and the
+        // account has no transactions yet, so it is recreated.
+        if (previous) {
+          await deleteAccount({ id: previous.accountId });
+          saved.delete(draftId);
+        }
+        const { account } = await createAccount(input);
+        saved.set(draftId, { accountId: account.id, input });
       }
       setStep(3);
     }, "Couldn't create your accounts. Try again.");
@@ -147,9 +215,18 @@ function OnboardingWizard({ initialCurrency }: { initialCurrency: string }) {
     setStep(next);
   }
 
+  if (!resumeSeeded) {
+    if (existingAccounts.isError) {
+      return <FullPageError error={existingAccounts.error} onRetry={() => void existingAccounts.refetch()} />;
+    }
+    return <OnboardingSkeleton />;
+  }
+
   const isSubmitting =
     isCreatingProfile ||
     isCreatingAccount ||
+    isUpdatingAccount ||
+    isDeletingAccount ||
     isSeedingCategories ||
     isCompleting;
 

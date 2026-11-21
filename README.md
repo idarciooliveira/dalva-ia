@@ -139,7 +139,7 @@ bun run build:web
 bun run typecheck
 bun run lint
 bun run test:once
-bun run test:e2e     # starts its own API on a fresh dalva_e2e database
+bun run test:e2e     # starts its own API on a fresh dalva_e2e_<port> database
 ```
 
 ---

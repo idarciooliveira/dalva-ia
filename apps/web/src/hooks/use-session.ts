@@ -9,17 +9,27 @@ export function useSession() {
   return useQuery(sessionQuery());
 }
 
-/** Signs out, leaves for the landing page and drops the previous user's cached data. */
+/**
+ * Signs out, leaves for the landing page and drops the previous user's cached data.
+ * Resolves false (still signed in, nothing changed) when the server couldn't be reached.
+ */
 export function useSignOut() {
   const queryClient = useQueryClient();
   const router = useRouter();
-  return useCallback(async () => {
+  return useCallback(async (): Promise<boolean> => {
     try {
-      await authClient.signOut();
-    } finally {
-      // Leave the protected layout first, so its queries don't refetch against a dead session.
-      await router.navigate({ to: "/" });
-      await resetUserCache(queryClient);
+      const { error } = await authClient.signOut();
+      if (error) return false;
+    } catch {
+      return false;
     }
+    // Leave the protected layout first, so its queries don't refetch against a dead session.
+    await router.navigate({ to: "/" });
+    try {
+      await resetUserCache(queryClient);
+    } catch {
+      // The session re-read failed (API went away): the landing page shows its signed-out actions.
+    }
+    return true;
   }, [queryClient, router]);
 }

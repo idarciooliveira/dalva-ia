@@ -76,7 +76,7 @@ function AccountsContent() {
             <Archive className="mr-1.5 size-4" />
             Archived
             {showArchived && (
-              <span className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
+              <span aria-hidden="true" className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
                 1
               </span>
             )}
@@ -94,7 +94,7 @@ function AccountsContent() {
       </div>
 
       {/* List */}
-      {accountsResult.isError ? (
+      {accountsResult.isError && !accountsResult.data ? (
         <ErrorState
           error={accountsResult.error}
           fallback="Couldn't load your accounts."
@@ -111,7 +111,7 @@ function AccountsContent() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div role="list" aria-label="Accounts" className="space-y-3">
           {sortedAccounts.map((account) => (
             <AccountRow
               key={account.id}
@@ -139,13 +139,13 @@ function AccountsContent() {
         account={editAccount}
       />
 
-      {/* Adjust Balance Dialog */}
+      {/* Adjust Balance Dialog: the live row, so the delta is taken from the current balance */}
       <AdjustBalanceDialog
         open={adjustAccount !== null}
         onOpenChange={(open) => {
           if (!open) setAdjustAccount(null);
         }}
-        account={adjustAccount}
+        account={sortedAccounts.find((a) => a.id === adjustAccount?.id) ?? adjustAccount}
       />
     </>
   );

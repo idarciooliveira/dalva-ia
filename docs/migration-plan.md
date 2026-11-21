@@ -144,7 +144,7 @@ Cut `legacy-convex` first (see Production freeze).
 - Vite dev proxy `/api` → `localhost:4000`.
 - Contract client + React Query layer: query-key factory, invalidation map per mutation, generated `Idempotency-Key` per write.
 - Better Auth client replaces `useConvexAuth` and `useAuthActions`: login, register, guard, sign out.
-- Money: the contract speaks decimal strings; adapt the format helpers.
+- Money: the contract speaks ISO minor units (`{ amountMinor, currency }`); adapt the format helpers.
 - Swap onboarding, accounts, categories.
 - `bun run setup` and `bun run dev` start Postgres, API, web, agent.
 

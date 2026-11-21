@@ -48,11 +48,12 @@ export function parseCurrencyInputToCents(value: string): number {
 
 /**
  * The masked value as signed integer minor units, at the `fractionDigits` it was
- * typed with. Empty is 0; NaN when it doesn't fit a safe integer.
+ * typed with. Empty is 0; NaN for a lone "-" or when it doesn't fit a safe integer.
  */
 export function parseCurrencyInput(value: string): number {
   const digits = normalizeDigits(value);
-  if (!digits) return 0;
+  // A sign alone is not an amount.
+  if (!digits) return isNegative(value) ? Number.NaN : 0;
   const minor = Number(digits);
   if (!Number.isSafeInteger(minor)) return Number.NaN;
   return isNegative(value) ? -minor : minor;

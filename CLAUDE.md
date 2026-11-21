@@ -32,7 +32,7 @@ bun run typecheck    # Typecheck all packages
 bun run lint         # Lint all packages
 bun run test         # Run unit tests in watch mode
 bun run test:once    # Run unit tests once (contract, Convex backend, agent, API, web)
-bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh dalva_e2e database)
+bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh dalva_e2e_<port> database)
 ```
 
 ## apps/web -- Frontend
@@ -152,7 +152,7 @@ Tests currently live in `apps/web/e2e/` and cover:
 - `settings.spec.ts`, `debts.spec.ts`, the transaction edit flow: `test.fixme` until PRs 10-11 move those pages
 - `legacy-pages.spec.ts`: the pages still on Convex render without crashing
 
-Playwright starts `apps/api` on a fresh `dalva_e2e` database (`apps/api/scripts/e2e-server.ts`) and the web dev server. `E2E_DATABASE_URL`, `E2E_WEB_PORT` and `E2E_API_PORT` override the defaults.
+Playwright starts `apps/api` on a fresh `dalva_e2e_<port>` database (`apps/api/scripts/e2e-server.ts`) and the web dev server. `E2E_DATABASE_URL`, `E2E_WEB_PORT` and `E2E_API_PORT` override the defaults.
 
 #### Commands
 

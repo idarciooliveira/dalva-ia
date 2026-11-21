@@ -8,8 +8,9 @@ import { defineConfig, devices } from "@playwright/test";
  * web dev server, which proxies /api to it. Needs a Postgres server:
  * `docker compose -f compose.dev.yml up -d`, or E2E_DATABASE_URL.
  *
- * E2E_WEB_PORT / E2E_API_PORT (3000 / 4000) move both servers off ports in use.
- * Outside CI, servers already listening there are reused as they are.
+ * E2E_WEB_PORT / E2E_API_PORT (3000 / 4000) move both servers off ports in use
+ * (`bun run dev` holds the defaults). Servers already listening are never reused:
+ * the run would hit the dev database, or a proxy pointing at another API.
  *
  * @see https://playwright.dev/docs/test-configuration
  */
@@ -63,7 +64,7 @@ export default defineConfig({
         PUBLIC_URL: webOrigin,
         ...(process.env.E2E_DATABASE_URL ? { E2E_DATABASE_URL: process.env.E2E_DATABASE_URL } : {}),
       },
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 60_000,
       stdout: "pipe",
       stderr: "pipe",
@@ -72,7 +73,7 @@ export default defineConfig({
       command: `bunx vite dev --port ${webPort} --strictPort`,
       url: webOrigin,
       env: { DALVA_API_URL: `http://127.0.0.1:${apiPort}` },
-      reuseExistingServer: !process.env.CI,
+      reuseExistingServer: false,
       timeout: 120_000,
       stdout: "ignore",
       stderr: "pipe",

@@ -6,6 +6,7 @@ import { routeTree } from "./routeTree.gen";
 import { queryKeys } from "@/lib/api/keys";
 import { isApiError, isTransientError, LegacyBackendError } from "@/lib/api/errors";
 import { isLegacyConvexKey, LegacyConvexProvider } from "@/lib/legacy-convex";
+import { resetDataOnUserChange } from "@/lib/auth-client";
 
 export function getRouter() {
   // A 401 from the API means the session ended (expired, signed out elsewhere):
@@ -36,6 +37,9 @@ export function getRouter() {
       },
     },
   });
+
+  // No query of one user may serve another (sign out, or a sign-in in another tab).
+  if (typeof window !== "undefined") resetDataOnUserChange(queryClient);
 
   const router = createTanStackRouter({
     routeTree,

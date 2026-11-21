@@ -86,7 +86,7 @@ export function AccountsStep({
       </button>
 
       <div className="flex gap-3">
-        <Button variant="outline" className="flex-1" onClick={onBack}>
+        <Button variant="outline" className="flex-1" onClick={onBack} disabled={isSubmitting}>
           <ArrowLeft className="size-4" />
           Back
         </Button>

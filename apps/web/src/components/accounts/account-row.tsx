@@ -72,7 +72,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
   const isNegative = balance < 0;
 
   return (
-    <div>
+    <div role="listitem" aria-label={account.name}>
     <div
       className={cn(
         "flex min-h-20 items-center gap-3 rounded-2xl border border-border/60 bg-card px-3 py-3.5 transition-colors sm:min-h-22 sm:gap-5 sm:px-5 sm:py-4",
@@ -129,7 +129,6 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
             size="icon-sm"
             className="text-muted-foreground"
             aria-label={`Open ${account.name} actions`}
-            disabled={isBusy}
           >
             <MoreVertical className="size-4" />
           </Button>
@@ -146,6 +145,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
           <DropdownMenuSeparator />
           {account.archived ? (
             <DropdownMenuItem
+              disabled={isBusy}
               onClick={() => restoreAccount({ id: account.id })}
             >
               <ArchiveRestore className="mr-2 size-4" />
@@ -153,6 +153,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem
+              disabled={isBusy}
               onClick={() => archiveAccount({ id: account.id })}
             >
               <Archive className="mr-2 size-4" />
@@ -160,6 +161,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
+            disabled={isBusy}
             className="text-destructive focus:text-destructive"
             onClick={() => setDeleteDialogOpen(true)}
           >

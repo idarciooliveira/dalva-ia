@@ -35,14 +35,17 @@ export function AdjustBalanceDialog({
 
   const { mutateAsync: adjustBalance, isPending } = useApiMutation("accounts", "adjust");
 
-  // Reset each time the dialog opens (the parent opens it through `open`).
+  // Reset each time the dialog opens for an account (the parent opens it through `open`).
+  // Keyed on the id: a refetch of the same account while open keeps what was typed.
+  const accountId = account?.id;
+  const openingBalance = account?.balance.amountMinor;
   useEffect(() => {
     if (!open) return;
-    setNewBalance(account ? String(account.balance.amountMinor) : "");
+    setNewBalance(openingBalance === undefined ? "" : String(openingBalance));
     setAdjustmentDate(localToday());
     setNote("");
     setError("");
-  }, [open, account]);
+  }, [open, accountId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -55,6 +58,7 @@ export function AdjustBalanceDialog({
       return;
     }
 
+    // The API takes a delta: from the balance as it is now, so the result is what was typed.
     const delta = newMinor - account.balance.amountMinor;
     if (delta === 0) {
       onOpenChange(false);
@@ -108,6 +112,8 @@ export function AdjustBalanceDialog({
                   autoFocus
                   className="flex-1 bg-transparent text-2xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/50"
                   aria-label="New balance"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? "adjust-balance-error" : undefined}
                 />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
@@ -157,7 +163,7 @@ export function AdjustBalanceDialog({
               />
             </div>
 
-            <FormError message={error} />
+            <FormError id="adjust-balance-error" message={error} />
           </div>
 
           <div className="mt-2 flex items-center justify-end gap-3 px-5 py-4">

@@ -49,6 +49,9 @@ export function isApiError(error: unknown, code: FinanceApiError["code"]): boole
 
 /** Worth retrying: no answer, or the server (or the proxy in front) failed. Never a 4xx. */
 export function isTransientError(error: unknown): boolean {
+  // The session check: better-fetch throws a TypeError when there is no answer.
+  if (error instanceof TypeError) return true;
+  if (error instanceof Error && error.name === "SessionError") return (error as Error & { status: number }).status >= 500;
   if (!(error instanceof FinanceApiError)) return false;
   if (error.code === "network_error" || error.code === "timeout" || error.code === "internal") return true;
   return error.code === "invalid_response" && error.status !== null && error.status >= 500;

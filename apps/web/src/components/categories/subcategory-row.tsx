@@ -85,7 +85,6 @@ export function SubcategoryRow({
             size="icon-xs"
             className="text-muted-foreground"
             aria-label={`Open ${subcategory.name} actions`}
-            disabled={isBusy}
           >
             <MoreVertical className="size-3.5" />
           </Button>
@@ -96,17 +95,18 @@ export function SubcategoryRow({
             Edit
           </DropdownMenuItem>
           {subcategory.archived ? (
-            <DropdownMenuItem onClick={() => restoreSub({ id: subcategory.id })}>
+            <DropdownMenuItem disabled={isBusy} onClick={() => restoreSub({ id: subcategory.id })}>
               <ArchiveRestore className="mr-2 size-4" />
               Restore
             </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem onClick={() => archiveSub({ id: subcategory.id })}>
+            <DropdownMenuItem disabled={isBusy} onClick={() => archiveSub({ id: subcategory.id })}>
               <Archive className="mr-2 size-4" />
               Archive
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
+            disabled={isBusy}
             className="text-destructive focus:text-destructive"
             onClick={() => setDeleteDialogOpen(true)}
           >

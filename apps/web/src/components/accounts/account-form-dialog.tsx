@@ -157,6 +157,8 @@ export function AccountFormDialog({
                   autoFocus
                   className="min-w-0 flex-1 bg-transparent text-2xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/50"
                   aria-label="Opening balance"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? "account-form-error" : undefined}
                 />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">Opening balance</p>
@@ -174,6 +176,8 @@ export function AccountFormDialog({
               autoFocus={isEdit}
               className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               aria-label="Account name"
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? "account-form-error" : undefined}
             />
           </div>
 
@@ -265,7 +269,7 @@ export function AccountFormDialog({
           </div>
 
           {/* ── Error ── */}
-          <FormError message={error} />
+          <FormError id="account-form-error" message={error} />
         </div>
 
         {/* ── Footer with actions ── */}

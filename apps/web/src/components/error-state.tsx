@@ -44,10 +44,19 @@ export function FullPageError(props: ErrorStateProps) {
 }
 
 /** A write's failure inside a dialog or below a row. */
-export function FormError({ message, className }: { message: string | null | undefined; className?: string }) {
+export function FormError({
+  message,
+  className,
+  id,
+}: {
+  message: string | null | undefined;
+  className?: string;
+  /** For `aria-describedby` on the field it is about. */
+  id?: string;
+}) {
   if (!message) return null;
   return (
-    <p role="alert" className={cn("mt-3 text-sm text-destructive", className)}>
+    <p id={id} role="alert" className={cn("mt-3 text-sm text-destructive", className)}>
       {message}
     </p>
   );

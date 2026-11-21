@@ -32,6 +32,7 @@ export const Route = createFileRoute("/_authenticated")({
 function AuthenticatedLayout() {
   const auth = useAuthGuard({ requireOnboarding: true });
   const signOut = useSignOut();
+  const [signOutFailed, setSignOutFailed] = useState(false);
   const { isDark, toggle: toggleDark } = useDarkMode();
 
   // FAB quick-action dialog state
@@ -62,7 +63,10 @@ function AuthenticatedLayout() {
       <TooltipProvider>
         <SidebarProvider>
           <AppSidebar
-            onSignOut={() => void signOut()}
+            onSignOut={() => {
+              setSignOutFailed(false);
+              void signOut().then((ok) => setSignOutFailed(!ok));
+            }}
             onToggleDark={toggleDark}
             isDark={isDark}
             userName={auth.profile.name}
@@ -71,6 +75,11 @@ function AuthenticatedLayout() {
             {/* Top bar */}
             <header className="sticky top-0 z-30 flex h-12 items-center gap-2.5 border-b border-border bg-background/80 px-3 backdrop-blur-md sm:h-14 sm:gap-3 sm:px-4 lg:px-8">
               <SidebarTrigger />
+              {signOutFailed && (
+                <p role="alert" className="text-sm text-destructive">
+                  Couldn&apos;t sign out. Check your connection and try again.
+                </p>
+              )}
             </header>
 
             <Outlet />
