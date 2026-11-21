@@ -10,11 +10,13 @@ import { describe, expect, it } from "vitest";
 import {
   expectApiError,
   expectConforms,
+  expectError,
   expenseInput,
   getAccountRow,
   linkedChat,
   type LinkedChat,
   raw,
+  type RawResponse,
   serviceClientFor,
   tokenFor,
   type TestApp,
@@ -141,6 +143,15 @@ describe("agentEvents (service key)", () => {
     expect((await eventRow("9001"))!.payload).toBe("");
   });
 
+  it("fails an event whose error text holds a NUL: the NUL goes, the status and the payload clear stay", async () => {
+    const { app } = testApp();
+    const service = serviceClientFor(app);
+    await claim(app, "9001");
+    const failed = await service.agentEvents.updateStatus({ channel: TG, eventId: "9001", status: "failed", error: "bad\u0000byte" });
+    expect(failed.event).toMatchObject({ status: "failed", error: "badbyte" });
+    expect((await eventRow("9001"))!.payload).toBe("");
+  });
+
   it("done and failed are final", async () => {
     const { app } = testApp();
     const service = serviceClientFor(app);
@@ -239,9 +250,14 @@ describe("agent routes auth", () => {
       ["agentSessions.current", () => request("POST", "/agent/sessions/current", sessionInput(chat))],
       ["agentMessages.list", () => request("GET", `/agent/sessions/${missing}/messages`)],
       ["agentMessages.append", () => request("POST", `/agent/sessions/${missing}/messages`, { messages: [{ role: "user", content: "{}" }] })],
+      [
+        "agentPendingActions.create",
+        () => request("POST", "/agent/pending-actions", { sessionId: missing, operation: "transactions.create", input: expenseInput(missing), summary: "x" }),
+      ],
       ["agentPendingActions.get", () => request("GET", `/agent/pending-actions/${missing}`)],
       ["agentPendingActions.confirm", () => request("POST", `/agent/pending-actions/${missing}/confirm`, {})],
       ["agentPendingActions.cancel", () => request("POST", `/agent/pending-actions/${missing}/cancel`, {})],
+      ["agentPendingActions.complete", () => request("POST", `/agent/pending-actions/${missing}/complete`, { status: "executed", result: {} })],
       ["agentHistory.delete", () => request("DELETE", "/agent/history")],
     ] as const;
   };
@@ -315,12 +331,14 @@ describe("agent routes auth", () => {
   it("accepts no Idempotency-Key and ignores one if sent", async () => {
     const { app } = testApp();
     const chat = await linkedChat(app);
-    const response = await raw(app, "POST", "/agent/sessions/current", {
-      token: chat.token,
-      body: sessionInput(chat),
-      idempotencyKey: "whatever-key-0001",
-    });
-    expect(response.status).toBe(200);
+    expect((await raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: sessionInput(chat) })).status).toBe(200);
+    // The same key twice: both run (nothing is stored and replayed).
+    const fresh = () =>
+      raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: { ...sessionInput(chat), startNew: true }, idempotencyKey: "whatever-key-0001" });
+    const [first, second] = [await fresh(), await fresh()];
+    const id = (r: Awaited<ReturnType<typeof fresh>>) => (r.body.data as { session: { id: string } }).session.id;
+    expect([first.status, second.status]).toEqual([200, 200]);
+    expect(id(first)).not.toBe(id(second));
   });
 });
 
@@ -509,10 +527,13 @@ describe("agentMessages", () => {
     );
     const { items } = await chat.agent.agentMessages.list({ sessionId: s.id });
     expect(items.map((m) => m.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    // Each batch stays together, in order.
+    // Each batch appears once, its two messages together and in order; batches in any order.
+    const pairs = [];
     for (let i = 0; i < 10; i += 2) {
-      expect(JSON.parse(items[i]!.content).text.slice(1)).toBe(JSON.parse(items[i + 1]!.content).text.slice(1));
+      const [a, b] = [items[i]!, items[i + 1]!];
+      pairs.push(`${a.role}:${JSON.parse(a.content).text}|${b.role}:${JSON.parse(b.content).text}`);
     }
+    expect(pairs.sort()).toEqual([0, 1, 2, 3, 4].map((i) => `user:c${i}|assistant:r${i}`));
     expect((await sessionRow(s.id))!.messageCount).toBe(10);
   });
 
@@ -662,8 +683,11 @@ describe("agentPendingActions", () => {
     const { app } = testApp();
     const chat = await linkedChat(app, { withAccount: true });
     const s = await session(chat);
-    for (const operation of ["transactions.search", "agentHistory.delete", "accounts.create", "nope"]) {
-      const response = await raw(app, "POST", "/agent/pending-actions", { token: chat.token, body: { sessionId: s.id, operation, input: {}, summary: "x" } });
+    // `accounts.create` gets input its own schema accepts, so only the operation list can refuse it.
+    const accountInput = { name: "Checking", type: "bank", balance: { amountMinor: 0, currency: "USD" } };
+    const cases = [["transactions.search", {}], ["agentHistory.delete", {}], ["accounts.create", accountInput], ["nope", {}]] as const;
+    for (const [operation, input] of cases) {
+      const response = await raw(app, "POST", "/agent/pending-actions", { token: chat.token, body: { sessionId: s.id, operation, input, summary: "x" } });
       expect({ operation, status: response.status }).toEqual({ operation, status: 400 });
     }
   });
@@ -1081,11 +1105,11 @@ describe("contract conformance", () => {
   it("errors use the contract envelope with the right codes", async () => {
     const { app } = testApp();
     const chat = await linkedChat(app);
-    const codes: Array<[Promise<{ body: { error?: { code: ErrorCode } } }>, ErrorCode]> = [
-      [raw(app, "GET", "/agent/pending-actions/missing", { token: chat.token }), "not_found"],
-      [raw(app, "POST", "/agent/pending-actions/missing/confirm", { token: chat.token, body: {} }), "not_found"],
-      [raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: {} }), "validation_failed"],
+    const codes: Array<[Promise<RawResponse>, ErrorCode, number]> = [
+      [raw(app, "GET", "/agent/pending-actions/missing", { token: chat.token }), "not_found", 404],
+      [raw(app, "POST", "/agent/pending-actions/missing/confirm", { token: chat.token, body: {} }), "not_found", 404],
+      [raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: {} }), "validation_failed", 400],
     ];
-    for (const [response, code] of codes) expect((await response).body.error?.code).toBe(code);
+    for (const [response, code, status] of codes) expectError(await response, code, status);
   });
 });

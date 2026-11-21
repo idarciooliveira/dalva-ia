@@ -255,8 +255,20 @@ describe("jobs racing requests", () => {
     );
     await holding;
     const running = job();
-    await new Promise((resolve) => setTimeout(resolve, 150)); // the job is now waiting on the row lock
-    release();
+    try {
+      // Only release once the job's statement is waiting on the request's row lock.
+      await expect
+        .poll(async () => {
+          const [row] = await testDb().execute<{ n: number }>(sql`
+            select count(*)::int as n from pg_stat_activity
+            where datname = current_database() and wait_event_type = 'Lock' and pid <> pg_backend_pid()
+          `);
+          return row?.n;
+        }, { timeout: 3_000, interval: 10 })
+        .toBeGreaterThan(0);
+    } finally {
+      release();
+    }
     await request;
     return await running;
   }

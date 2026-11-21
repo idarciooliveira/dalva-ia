@@ -96,7 +96,8 @@ export async function updateEventStatus(
       status: args.status,
       updatedAt: args.now,
       ...(args.status === "processing" ? { attempts: event.attempts + 1 } : { payload: "" }),
-      ...(args.status === "failed" && args.error ? { error: args.error } : {}),
+      // NUL can't go in a Postgres `text`; dropping it keeps the final status and the payload clear from rolling back.
+      ...(args.status === "failed" && args.error ? { error: args.error.replaceAll("\u0000", "") } : {}),
     })
     .where(eq(agentInboundEvents.id, event.id))
     .returning();
