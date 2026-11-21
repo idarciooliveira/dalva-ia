@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { MIN_SERVICE_KEY_BYTES } from "./auth/service-key";
 import { MIN_TOKEN_SECRET_BYTES } from "./auth/tokens";
 
 const configSchema = z
@@ -33,6 +34,17 @@ const configSchema = z
       .refine((value) => new TextEncoder().encode(value).length >= MIN_TOKEN_SECRET_BYTES, `must be at least ${MIN_TOKEN_SECRET_BYTES} bytes`)
       .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder"),
     /**
+     * The chat agent's own credential (`Authorization: Bearer`) for the
+     * service routes: channel linking and inbound events. Same variable as on
+     * the Convex deployment and in the agent. Unset: service routes answer 401
+     * (allowed outside production only).
+     */
+    FINANCE_API_SERVICE_KEY: z
+      .string()
+      .refine((value) => new TextEncoder().encode(value).length >= MIN_SERVICE_KEY_BYTES, `must be at least ${MIN_SERVICE_KEY_BYTES} bytes`)
+      .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder")
+      .optional(),
+    /**
      * Request header the proxy in front sets to the client's address (e.g.
      * cf-connecting-ip behind Cloudflare Tunnel). Auth rate limits are per
      * address and stay off without it: with no address every user would
@@ -47,6 +59,16 @@ const configSchema = z
   .superRefine((config, ctx) => {
     if (config.FINANCE_API_TOKEN_SECRET === config.BETTER_AUTH_SECRET) {
       ctx.addIssue({ code: "custom", path: ["FINANCE_API_TOKEN_SECRET"], message: "must differ from BETTER_AUTH_SECRET" });
+    }
+    if (config.FINANCE_API_SERVICE_KEY !== undefined) {
+      for (const other of ["FINANCE_API_TOKEN_SECRET", "BETTER_AUTH_SECRET"] as const) {
+        if (config.FINANCE_API_SERVICE_KEY === config[other]) {
+          ctx.addIssue({ code: "custom", path: ["FINANCE_API_SERVICE_KEY"], message: `must differ from ${other}` });
+        }
+      }
+    }
+    if (config.NODE_ENV === "production" && !config.FINANCE_API_SERVICE_KEY) {
+      ctx.addIssue({ code: "custom", path: ["FINANCE_API_SERVICE_KEY"], message: "is required in production (chat agent)" });
     }
     if (config.NODE_ENV === "production" && !config.PUBLIC_URL.startsWith("https:")) {
       ctx.addIssue({ code: "custom", path: ["PUBLIC_URL"], message: "must be https in production" });
@@ -81,5 +103,10 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
 
 /** Values the logger scrubs from every line. */
 export function configSecrets(config: Config): string[] {
-  return [decodeURIComponent(new URL(config.DATABASE_URL).password), config.BETTER_AUTH_SECRET, config.FINANCE_API_TOKEN_SECRET];
+  return [
+    decodeURIComponent(new URL(config.DATABASE_URL).password),
+    config.BETTER_AUTH_SECRET,
+    config.FINANCE_API_TOKEN_SECRET,
+    ...(config.FINANCE_API_SERVICE_KEY ? [config.FINANCE_API_SERVICE_KEY] : []),
+  ];
 }

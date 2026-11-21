@@ -5,7 +5,7 @@
  * downstream looks at cookies or headers.
  *
  * Sources, tried in order; the first one that recognises its credential decides:
- * - service key (PR 8): `Authorization: Bearer <FINANCE_API_SERVICE_KEY>`, the
+ * - service key: `Authorization: Bearer <FINANCE_API_SERVICE_KEY>`, the
  *   agent's own routes; no user. It must come first: it is a bearer credential
  *   too, and the user-token source rejects anything that isn't a valid token.
  * - bearer user token: the agent acting for a user, with the token's scopes
@@ -20,6 +20,7 @@ import { getSessionCookie } from "better-auth/cookies";
 import type { Context, MiddlewareHandler } from "hono";
 
 import { type Auth, COOKIE_PREFIX } from "../auth/auth";
+import type { ServiceKey } from "../auth/service-key";
 import type { UserTokens } from "../auth/tokens";
 import { isUuid } from "../db/ids";
 import { errorResponse } from "./errors";
@@ -40,8 +41,12 @@ export interface UserPrincipal {
   channelIdentityId?: string;
 }
 
-/** Grows a `ServicePrincipal` with the service key. */
-export type Principal = UserPrincipal;
+/** The chat agent with the service key: the service routes only, acting for no user. */
+export interface ServicePrincipal {
+  kind: "service";
+}
+
+export type Principal = UserPrincipal | ServicePrincipal;
 
 export type AppEnv = { Variables: { principal: Principal | null } };
 
@@ -91,6 +96,21 @@ export function sessionSource(auth: Auth, options: { publicUrl: string }): Princ
     for (const cookie of headers.getSetCookie()) c.header("Set-Cookie", cookie, { append: true });
     if (!response) return { status: "invalid" };
     return { status: "ok", principal: { kind: "user", userId: response.user.id, scopes: SESSION_SCOPES, via: "session" } };
+  };
+}
+
+/**
+ * `Authorization: Bearer <service key>` → the service principal. Any other
+ * bearer value is `absent` here, so the user-token source judges it. Without a
+ * configured key nothing matches, and the service routes answer 401.
+ */
+export function serviceKeySource(serviceKey: ServiceKey | undefined): PrincipalSource {
+  return async (c) => {
+    const header = c.req.header("authorization");
+    if (!serviceKey || header === undefined) return { status: "absent" };
+    const presented = parseBearerToken(header);
+    if (!presented || !serviceKey.matches(presented)) return { status: "absent" };
+    return { status: "ok", principal: { kind: "service" } };
   };
 }
 

@@ -29,6 +29,13 @@
       "when": 1795187743682,
       "tag": "0003_composite_user_foreign_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795192942219,
+      "tag": "0004_agent_store",
+      "breakpoints": true
     }
   ]
 }

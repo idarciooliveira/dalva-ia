@@ -29,6 +29,9 @@ export const optionalId = (value: string | undefined, field: string) => (value =
 
 export const todayUtc = () => new Date().toISOString().slice(0, 10);
 
+/** Instants travel as ISO 8601 strings. */
+export const iso = (date: Date) => date.toISOString();
+
 /* DTOs: optional fields omitted (never null), `archived` only when true ----- */
 
 function compact<T extends Record<string, unknown>>(value: T): T {

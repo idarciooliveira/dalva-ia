@@ -11,9 +11,10 @@
  * `{ ok: true, data }`. A `DomainError` becomes its error envelope; anything
  * else is a logged 500 that says nothing about the cause.
  *
- * Agent-store routes (PR 8) still need their own handling here: no
- * idempotency record (already true: they take no key) and a way for a handler
- * to commit its writes and still answer with an error (Convex `handlerFailure`).
+ * Service routes (the agent's service key) take the same path minus the user
+ * checks: credential (401) → implemented (404) → body and schema (400) →
+ * handler in a transaction. Agent-store routes take no `Idempotency-Key`, and
+ * their handlers may commit and still answer with an error (`commitThenFail`).
  */
 import {
   IDEMPOTENCY_KEY_HEADER,
@@ -30,6 +31,7 @@ import {
 } from "@mpf/finance-contract";
 import type { Context, MiddlewareHandler } from "hono";
 
+import type { UserTokens } from "../auth/tokens";
 import type { Database } from "../db/client";
 import { readTx, sqlState, type Tx, withTx } from "../db/tx";
 import { channelTokenProblem } from "../domain/channelLinks";
@@ -38,7 +40,7 @@ import { MoneyRangeError } from "../domain/money";
 import type { Logger } from "../log";
 import { errorResponse } from "./errors";
 import { claimKey, type IdempotencyRecord, requestHash, storeResponse } from "./idempotency";
-import { type Operations, operationFor } from "./operation";
+import { CommittedFailure, type Operations, operationFor, type ServiceOperations, serviceOperationFor } from "./operation";
 import type { AppEnv, UserPrincipal } from "./principal";
 
 export const MAX_BODY_BYTES = 64 * 1024;
@@ -52,6 +54,9 @@ export interface RouterOptions {
   db: Database;
   logger: Logger;
   operations: Operations;
+  serviceOperations: ServiceOperations;
+  /** For service handlers that mint user tokens (`channelIdentities.resolve`). */
+  tokens: UserTokens;
 }
 
 /**
@@ -79,13 +84,11 @@ export function contractRouter(options: RouterOptions): MiddlewareHandler<AppEnv
   };
 }
 
-async function handle(c: Context<AppEnv>, url: URL, match: RouteMatch, { db, logger, operations }: RouterOptions): Promise<Response> {
+async function handle(c: Context<AppEnv>, url: URL, match: RouteMatch, options: RouterOptions): Promise<Response> {
+  const { db, logger, operations } = options;
   // The route decides the credential: service and user routes never share one.
   const principal = c.get("principal");
-  if (match.route.auth === "service") {
-    // Service-key auth arrives with the service routes (PR 8); until then nothing can call them.
-    throw new DomainError("unauthorized", "Invalid service credentials");
-  }
+  if (match.route.auth === "service") return await handleService(c, url, match, options);
   if (principal?.kind !== "user") throw new DomainError("unauthorized", "Authentication required");
 
   const operation = operationFor(operations, match.group, match.op);
@@ -120,6 +123,7 @@ async function handle(c: Context<AppEnv>, url: URL, match: RouteMatch, { db, log
       await assertChannelIdentity(tx, principal, required);
       return await operation.handler(tx, principal, input);
     });
+    if (data instanceof CommittedFailure) throw data.error; // nothing to commit in a read
     return c.json(ok(data));
   }
 
@@ -135,12 +139,35 @@ async function handle(c: Context<AppEnv>, url: URL, match: RouteMatch, { db, log
         if (!claim.claimed) return { replayed: true, data: claim.data };
       }
       const data = await operation.handler(tx, principal, input);
+      if (data instanceof CommittedFailure) {
+        // A replay would answer the stored failure as a success: only routes without a key may do this.
+        if (record) throw new Error(`${match.name}: commitThenFail on a route with an Idempotency-Key`);
+        return { replayed: false, failure: data.error };
+      }
       return { replayed: false, data: record ? await storeResponse(tx, record, data) : data };
     },
     { onRetry: ({ attempt, code }) => logger.debug("tx_retry", { operation: match.name, attempt, sqlState: code }) },
   );
+  if ("failure" in result) throw result.failure;
   if (result.replayed) c.header(REPLAYED_HEADER, "true");
   return c.json(ok(result.data));
+}
+
+/** A service route: the service key, no user, no scope, no `Idempotency-Key`. */
+async function handleService(c: Context<AppEnv>, url: URL, match: RouteMatch, options: RouterOptions): Promise<Response> {
+  if (c.get("principal")?.kind !== "service") throw new DomainError("unauthorized", "Invalid service credentials");
+  const operation = serviceOperationFor(options.serviceOperations, match.group, match.op);
+  if (!operation) throw new DomainError("not_found", "Route not found");
+
+  const write = isWriteRoute(match.route);
+  const input = parseInput(match, write ? await readJsonBody(c.req.raw) : url.searchParams);
+  const ctx = { tokens: options.tokens };
+  const data = write
+    ? await withTx(options.db, (tx) => operation.handler(tx, ctx, input), {
+        onRetry: ({ attempt, code }) => options.logger.debug("tx_retry", { operation: match.name, attempt, sqlState: code }),
+      })
+    : await readTx(options.db, (tx) => operation.handler(tx, ctx, input));
+  return c.json(ok(data));
 }
 
 /**

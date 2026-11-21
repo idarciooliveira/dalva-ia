@@ -17,6 +17,7 @@
   "dependencies": {
     "@mpf/finance-contract": "workspace:*",
     "better-auth": "^1.7.25",
+    "croner": "^9.1.0",
     "drizzle-orm": "^0.45.4",
     "hono": "^4.13.17",
     "postgres": "^3.4.9",

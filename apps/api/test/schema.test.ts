@@ -6,6 +6,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   accounts,
+  agentMessages,
+  agentPendingActions,
+  agentSessions,
   apiIdempotencyKeys,
   categories,
   channelIdentities,
@@ -449,6 +452,7 @@ describe("user isolation", () => {
         c.condeferrable and c.condeferred as deferred
       from pg_constraint c
       where c.contype = 'f' and c.connamespace = 'public'::regnamespace and c.confrelid <> 'users'::regclass
+        and c.conrelid::regclass::text not like 'agent\_%'
       order by c.conname
     `);
     expect(rows.map((row) => row.name)).toEqual(keys.map((key) => key.name).sort());
@@ -496,6 +500,75 @@ describe("user isolation", () => {
     await testDb().delete(subcategories).where(eq(subcategories.id, subcategoryId));
     const [after] = await testDb().select().from(transactions);
     expect(after).toMatchObject({ userId, subcategoryId: null });
+  });
+});
+
+describe("agent store keys", () => {
+  async function identity(userId: string) {
+    const [row] = await testDb()
+      .insert(channelIdentities)
+      .values({ userId, channel: "telegram", externalUserId: randomUUID(), chatId: "1", scopes: ["finance:read"], linkedAt: new Date(), consentAt: new Date() })
+      .returning();
+    return row!.id;
+  }
+  async function session(userId: string, identityId?: string) {
+    const now = new Date();
+    const [row] = await testDb()
+      .insert(agentSessions)
+      .values({ userId, identityId: identityId ?? (await identity(userId)), channel: "telegram", chatId: "1", startedAt: now, lastActivityAt: now })
+      .returning();
+    return row!.id;
+  }
+  const message = (userId: string, sessionId: string) =>
+    testDb().insert(agentMessages).values({ userId, sessionId, role: "user", content: "{}", seq: 1 });
+  const action = (userId: string, sessionId: string) =>
+    testDb()
+      .insert(agentPendingActions)
+      .values({ userId, sessionId, operation: "transactions.create", input: "{}", summary: "x", status: "pending", expiresAt: new Date(), updatedAt: new Date() });
+
+  it("are composite, immediate, and cascade from sessions to messages and actions", async () => {
+    const rows = await testDb().execute<{ name: string; columns: string; target: string; on_delete: string; deferrable: boolean }>(sql`
+      select c.conname as name,
+        (select string_agg(a.attname, ',' order by k.n) from unnest(c.conkey) with ordinality k(attnum, n)
+          join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as columns,
+        c.confrelid::regclass::text as target, c.confdeltype as on_delete, c.condeferrable as deferrable
+      from pg_constraint c
+      where c.contype = 'f' and c.conrelid::regclass::text like 'agent\_%' and c.confrelid <> 'users'::regclass
+      order by c.conname
+    `);
+    expect([...rows]).toEqual([
+      { name: "agent_messages_session_id_fk", columns: "session_id,user_id", target: "agent_sessions", on_delete: "c", deferrable: false },
+      { name: "agent_pending_actions_session_id_fk", columns: "session_id,user_id", target: "agent_sessions", on_delete: "c", deferrable: false },
+      { name: "agent_sessions_identity_id_fk", columns: "identity_id,user_id", target: "channel_identities", on_delete: "a", deferrable: false },
+    ]);
+  });
+
+  it("refuse another user's session or identity, accept the owner's", async () => {
+    const [owner, other] = await Promise.all([createTestUser(), createTestUser()]);
+    const ownerIdentity = await identity(owner);
+    expect(await violated(session(other, ownerIdentity))).toBe("agent_sessions_identity_id_fk");
+    const sessionId = await session(owner, ownerIdentity);
+    expect(await violated(message(other, sessionId))).toBe("agent_messages_session_id_fk");
+    expect(await violated(action(other, sessionId))).toBe("agent_pending_actions_session_id_fk");
+    await message(owner, sessionId);
+    await action(owner, sessionId);
+  });
+
+  it("delete a session's messages and actions with it", async () => {
+    const userId = await createTestUser();
+    const sessionId = await session(userId);
+    await message(userId, sessionId);
+    await action(userId, sessionId);
+    await testDb().delete(agentSessions).where(eq(agentSessions.id, sessionId));
+    expect(await testDb().select().from(agentMessages)).toHaveLength(0);
+    expect(await testDb().select().from(agentPendingActions)).toHaveLength(0);
+  });
+
+  it("keep seq unique per session", async () => {
+    const userId = await createTestUser();
+    const sessionId = await session(userId);
+    await message(userId, sessionId);
+    expect(await failure(message(userId, sessionId))).toBe("23505");
   });
 });
 

@@ -9,6 +9,8 @@ const valid = {
   FINANCE_API_TOKEN_SECRET: "t".repeat(32),
 };
 
+const service = { FINANCE_API_SERVICE_KEY: "s".repeat(32) };
+
 function configError(env: Record<string, string | undefined>): string {
   try {
     loadConfig(env);
@@ -80,12 +82,34 @@ describe("loadConfig", () => {
     const message = configError({ ...valid, NODE_ENV: "production", PUBLIC_URL: "http://dalva.example.com" });
     expect(message).toContain("PUBLIC_URL must be https in production");
     expect(message).toContain("CLIENT_IP_HEADER is required in production");
-    const config = loadConfig({ ...valid, NODE_ENV: "production", CLIENT_IP_HEADER: "CF-Connecting-IP" });
+    expect(message).toContain("FINANCE_API_SERVICE_KEY is required in production");
+    const config = loadConfig({ ...valid, ...service, NODE_ENV: "production", CLIENT_IP_HEADER: "CF-Connecting-IP" });
     expect(config.CLIENT_IP_HEADER).toBe("cf-connecting-ip");
     expect(configError({ ...valid, CLIENT_IP_HEADER: "x forwarded" })).toContain("CLIENT_IP_HEADER must be a header name");
   });
 
+  it("takes an optional service key of 32 bytes or more, distinct from both secrets", () => {
+    expect(loadConfig(valid).FINANCE_API_SERVICE_KEY).toBeUndefined();
+    expect(loadConfig({ ...valid, ...service }).FINANCE_API_SERVICE_KEY).toBe(service.FINANCE_API_SERVICE_KEY);
+    expect(configError({ ...valid, FINANCE_API_SERVICE_KEY: "short" })).toContain("FINANCE_API_SERVICE_KEY must be at least 32 bytes");
+    expect(configError({ ...valid, FINANCE_API_SERVICE_KEY: valid.FINANCE_API_TOKEN_SECRET })).toContain(
+      "FINANCE_API_SERVICE_KEY must differ from FINANCE_API_TOKEN_SECRET",
+    );
+    expect(configError({ ...valid, FINANCE_API_SERVICE_KEY: valid.BETTER_AUTH_SECRET })).toContain(
+      "FINANCE_API_SERVICE_KEY must differ from BETTER_AUTH_SECRET",
+    );
+    expect(configError({ ...valid, FINANCE_API_SERVICE_KEY: "replace-with-openssl-rand-hex-32-output-222222" })).toContain(
+      "FINANCE_API_SERVICE_KEY must not be the .env.example placeholder",
+    );
+  });
+
   it("lists the secrets to scrub from logs", () => {
     expect(configSecrets(loadConfig(valid))).toEqual(["s3cret-pass", "x".repeat(32), "t".repeat(32)]);
+    expect(configSecrets(loadConfig({ ...valid, ...service }))).toEqual([
+      "s3cret-pass",
+      "x".repeat(32),
+      "t".repeat(32),
+      service.FINANCE_API_SERVICE_KEY,
+    ]);
   });
 });

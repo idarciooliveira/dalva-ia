@@ -2,7 +2,7 @@ import { errorEnvelopeSchema } from "@mpf/finance-contract";
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { silentLogger, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../../test/app";
+import { silentLogger, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL, TEST_SERVICE_KEY } from "../../test/app";
 import { testDb } from "../../test/db";
 import { createApp } from "../app";
 import { createAuth } from "../auth/auth";
@@ -111,6 +111,19 @@ describe("principal middleware", () => {
     } finally {
       await unreachable.close(0);
     }
+  });
+
+  it("turns the service key into the service principal, which user routes refuse", async () => {
+    const app = withTestRoutes(testApp().app);
+    app.get("/api/v1/__test/who", (c) => c.json({ ok: true, data: c.get("principal") }));
+    const asService = { headers: { authorization: `Bearer ${TEST_SERVICE_KEY}` } };
+    expect(await (await app.request("/api/v1/__test/who", asService)).json()).toEqual({ ok: true, data: { kind: "service" } });
+    await expectError(await app.request("/api/v1/__test/me", asService), 401, "unauthorized");
+    // A near miss is just an invalid bearer token.
+    await expectError(await app.request("/api/v1/__test/who", { headers: { authorization: `Bearer ${TEST_SERVICE_KEY}x` } }), 401, "unauthorized");
+    // Without a configured key, the same header is an invalid token.
+    const unconfigured = testApp({ serviceKey: null }).app;
+    await expectError(await unconfigured.request("/api/v1/accounts", asService), 401, "unauthorized");
   });
 
   it("leaves auth and health routes alone", async () => {
