@@ -218,7 +218,14 @@ export function AccountFormDialog({
               <span className="text-base text-muted-foreground shrink-0 w-5 text-center font-medium">
                 {currencyInfo?.flag ?? "$"}
               </span>
-              <Select value={currency} onValueChange={setCurrency}>
+              <Select
+                value={currency}
+                onValueChange={(next) => {
+                  setCurrency(next);
+                  // The typed digits mean a different amount at another precision (USD 1.500,50 -> JPY 150.050).
+                  if (fractionDigits(next) !== fractionDigits(currency)) setBalance("");
+                }}
+              >
              <SelectTrigger aria-label="Currency" className="h-auto w-full min-w-0 border-0 bg-transparent px-2 py-0 text-left text-sm shadow-none ring-0 focus:ring-0">
                   <SelectValue>
                     {currencyInfo

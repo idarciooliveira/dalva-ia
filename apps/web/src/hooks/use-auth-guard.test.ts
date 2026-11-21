@@ -59,6 +59,13 @@ describe("useAuthGuard", () => {
     expect(navigate).toHaveBeenCalledWith({ to: "/login" });
   });
 
+  it("redirects a cached signed-out state even when the re-check failed", () => {
+    session = { data: null, isSuccess: false, isPending: false, isError: true, error: new TypeError("Failed to fetch") };
+    const { result } = renderHook(() => useAuthGuard());
+    expect(result.current.status).toBe("redirecting");
+    expect(navigate).toHaveBeenCalledWith({ to: "/login" });
+  });
+
   it("sends users who haven't finished onboarding there, and onboarded ones away from it", () => {
     profile = { data: { profile: null }, isSuccess: true, isPending: false, isError: false };
     const pending = renderHook(() => useAuthGuard({ requireOnboarding: true }));

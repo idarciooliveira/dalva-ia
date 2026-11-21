@@ -54,12 +54,14 @@ export function useAuthGuard(options: AuthGuardOptions = {}): AuthGuardResult {
   const profile = profileResult.data?.profile ?? null;
   const profileReady = isAuthenticated && profileResult.isSuccess;
 
-  // Redirect to login if unauthenticated
+  // Redirect to login if unauthenticated. `null` is a known signed-out state, even when a
+  // later re-check failed (React Query keeps the data), so that case redirects too.
+  const signedOut = session.data === null;
   useEffect(() => {
-    if (session.isSuccess && !isAuthenticated) {
+    if (signedOut) {
       router.navigate({ to: unauthenticatedRedirect });
     }
-  }, [session.isSuccess, isAuthenticated, router, unauthenticatedRedirect]);
+  }, [signedOut, router, unauthenticatedRedirect]);
 
   // Redirect to onboarding if not completed (dashboard, categories, etc.)
   useEffect(() => {

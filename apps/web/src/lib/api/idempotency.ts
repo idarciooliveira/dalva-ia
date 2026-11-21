@@ -7,13 +7,13 @@ export function fingerprint(value: unknown): string {
   );
 }
 
-export function newIdempotencyKey(): string {
+function newIdempotencyKey(): string {
   if (typeof crypto.randomUUID === "function") return crypto.randomUUID();
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** How long an unconfirmed key is reused: retries and double submits of one interaction. */
-export const KEY_REUSE_MS = 60_000;
+const KEY_REUSE_MS = 60_000;
 
 /**
  * One `Idempotency-Key` per submit: the same input gets the same key until a

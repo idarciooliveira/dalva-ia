@@ -37,12 +37,18 @@ export async function ensurePostgres(databaseUrl: string, label: string): Promis
   if (await reachable(host, port)) return;
 
   console.log(`${label}: Postgres not answering on ${host}:${port}, starting compose.dev.yml`);
-  const compose = Bun.spawnSync(["docker", "compose", "-f", "compose.dev.yml", "up", "-d", "--wait"], {
-    cwd: root,
-    stdout: "inherit",
-    stderr: "inherit",
-  });
-  if (compose.exitCode === 0 && (await reachable(host, port))) return;
+  let started = false;
+  try {
+    const compose = Bun.spawnSync(["docker", "compose", "-f", "compose.dev.yml", "up", "-d", "--wait"], {
+      cwd: root,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    started = compose.exitCode === 0;
+  } catch {
+    // No docker binary: fall through to the hint.
+  }
+  if (started && (await reachable(host, port))) return;
   console.error(
     `${label}: no Postgres on ${host}:${port}. Start Docker and run \`docker compose -f compose.dev.yml up -d\`, ` +
       "or point DATABASE_URL in apps/api/.env.local at a running server.",

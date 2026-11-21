@@ -12,14 +12,14 @@ type WriteOp<G extends Group> = {
   [O in keyof UserRoutes[G]]: UserRoutes[G][O] extends { method: "GET" } ? never : O;
 }[keyof UserRoutes[G]];
 type Def<G extends Group, O extends keyof UserRoutes[G]> = UserRoutes[G][O] extends RouteDef ? UserRoutes[G][O] : never;
-export type MutationName = { [G in Group]: `${G}.${WriteOp<G> & string}` }[Group];
+type MutationName = { [G in Group]: `${G}.${WriteOp<G> & string}` }[Group];
 
 /**
  * What each write makes stale. A write invalidates these prefixes on success and
  * waits for the active queries to refetch, so a dialog closes on fresh data.
  * Writes not listed invalidate nothing (their pages move in PRs 10-11).
  */
-export const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> = {
+const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> = {
   "profile.create": [queryKeys.profile],
   "profile.completeOnboarding": [queryKeys.profile],
   // Balances feed net worth and the account filters of the transaction pages.
@@ -49,7 +49,7 @@ export const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => Query
   "subcategories.delete": [queryKeys.subcategories.all, queryKeys.transactions.all],
 };
 
-export async function invalidateAfter(queryClient: QueryClient, name: MutationName): Promise<void> {
+async function invalidateAfter(queryClient: QueryClient, name: MutationName): Promise<void> {
   await Promise.all((INVALIDATES[name] ?? []).map((key) => queryClient.invalidateQueries({ queryKey: key() })));
 }
 

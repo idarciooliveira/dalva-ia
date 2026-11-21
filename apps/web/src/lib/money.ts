@@ -1,5 +1,4 @@
 import { currencyExponent } from "@mpf/finance-contract";
-import type { Money } from "@mpf/finance-contract";
 
 /*
  * Money from the API is `{ amountMinor, currency }` in ISO 4217 minor units
@@ -32,10 +31,6 @@ export function formatMinor(amountMinor: number, currency: string): string {
     // Intl rejects codes it doesn't know; still show the amount.
     return `${currency} ${value.toFixed(digits)}`;
   }
-}
-
-export function formatMoney(money: Money): string {
-  return formatMinor(money.amountMinor, money.currency);
 }
 
 const DECIMAL_RE = /^([+-])?(\d*)(?:\.(\d*))?$/;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { decimalPlaceholder, formatMinor, formatMoney, maskPlaceholder, parseDecimalInput } from "./money";
+import { decimalPlaceholder, formatMinor, maskPlaceholder, parseDecimalInput } from "./money";
 
 describe("formatMinor", () => {
   it("uses the currency's minor unit", () => {
@@ -10,8 +10,7 @@ describe("formatMinor", () => {
     expect(formatMinor(-5, "EUR")).toBe("-€0.05");
   });
 
-  it("formats Money and survives a code Intl rejects", () => {
-    expect(formatMoney({ amountMinor: 1234, currency: "USD" })).toBe("$12.34");
+  it("survives a code Intl rejects", () => {
     expect(formatMinor(1234, "X1")).toBe("X1 12.34");
   });
 });

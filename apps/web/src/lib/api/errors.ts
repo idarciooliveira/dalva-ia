@@ -41,8 +41,8 @@ export function apiErrorMessage(error: unknown, fallback: string = GENERIC_ERROR
     case "not_found":
       return error.message || fallback;
     default:
-      // A proxy without the API behind it answers 502/504 without an envelope.
-      return error.status !== null && error.status >= 502 ? OFFLINE_ERROR : fallback;
+      // No envelope from a 5xx: the proxy without the API behind it (Vite answers 500, others 502/504).
+      return error.code === "invalid_response" && error.status !== null && error.status >= 500 ? OFFLINE_ERROR : fallback;
   }
 }
 
