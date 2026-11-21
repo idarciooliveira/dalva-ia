@@ -25,7 +25,8 @@ test.describe("Settings → Telegram", () => {
     await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
   });
 
-  test("requires consent, then shows a deep link, countdown and /start fallback", async ({ page }) => {
+  // Settings (Telegram links) is still on Convex; PR 11 moves it to the API and restores both tests.
+  test.fixme("requires consent, then shows a deep link, countdown and /start fallback", async ({ page }) => {
     await registerAndCompleteOnboarding(page);
     await page.getByRole("link", { name: "Settings" }).click();
     await expect(page).toHaveURL(/\/settings/);
@@ -48,7 +49,7 @@ test.describe("Settings → Telegram", () => {
     await expect(page.getByText(/expires in (10:00|9:\d\d)/i)).toBeVisible();
   });
 
-  test("links through the bot route, toggles read-only and unlinks", async ({ page }) => {
+  test.fixme("links through the bot route, toggles read-only and unlinks", async ({ page }) => {
     test.skip(!siteUrl || !serviceKey, "E2E_CONVEX_SITE_URL and E2E_FINANCE_API_SERVICE_KEY are required");
     await registerAndCompleteOnboarding(page);
     await page.goto("/settings");

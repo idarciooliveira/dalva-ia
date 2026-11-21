@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+import { register } from "./helpers/auth";
+
 test.describe("Onboarding page — unauthenticated", () => {
   test("redirects unauthenticated users to /login", async ({ page }) => {
     await page.goto("/onboarding");
@@ -96,5 +98,62 @@ test.describe("Onboarding page — registration flow", () => {
     // Login form should have email and password fields
     await expect(page.getByLabel(/email/i)).toBeVisible();
     await expect(page.locator("#password")).toBeVisible();
+  });
+});
+
+test.describe("Onboarding page — full flow (apps/api)", () => {
+  test("sets the currency, creates accounts, seeds the chosen categories", async ({ page }) => {
+    await register(page);
+
+    // Step 1: currency
+    await page.getByLabel("Base currency").click();
+    await page.getByRole("option", { name: /Euro \(EUR\)/ }).click();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+
+    // Step 2: two accounts, one with an opening balance
+    await expect(page.getByRole("heading", { name: "Add your accounts" })).toBeVisible();
+    await page.getByLabel(/account name/i).fill("Main Checking");
+    await page.getByLabel(/opening balance/i).fill("1500.50");
+    await page.getByRole("button", { name: "Add another account" }).click();
+    await page.getByLabel(/account name/i).nth(1).fill("Wallet");
+    await page.getByRole("button", { name: /^continue$/i }).click();
+
+    // Back and forward again must not create the accounts twice.
+    await expect(page.getByRole("heading", { name: "Choose your categories" })).toBeVisible();
+    await page.getByRole("button", { name: "Back" }).click();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+
+    // Step 3: drop one default category
+    await expect(page.getByRole("heading", { name: "Choose your categories" })).toBeVisible();
+    await page.getByRole("checkbox", { name: "Gifts" }).click();
+    await page.getByRole("button", { name: /get started/i }).click();
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+
+    // Onboarded users can't go back.
+    await page.goto("/onboarding");
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 15_000 });
+
+    await page.goto("/accounts");
+    await expect(page.getByText("Main Checking")).toHaveCount(1);
+    await expect(page.getByText("€1,500.50")).toBeVisible();
+    await expect(page.getByText("Wallet", { exact: true })).toHaveCount(1);
+
+    await page.goto("/categories");
+    await expect(page.getByText("Salary", { exact: true })).toBeVisible();
+    await expect(page.getByText("Food & Dining", { exact: true })).toBeVisible();
+    await expect(page.getByText("Gifts", { exact: true })).toHaveCount(0);
+  });
+
+  test("an invalid opening balance is refused before anything is saved", async ({ page }) => {
+    await register(page);
+    await page.getByLabel("Base currency").click();
+    await page.getByRole("option", { name: /Japanese Yen \(JPY\)/ }).click();
+    await page.getByRole("button", { name: /^continue$/i }).click();
+
+    await page.getByLabel(/account name/i).fill("Cash");
+    await page.getByLabel(/opening balance/i).fill("10.5");
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await expect(page.getByRole("alert")).toContainText("Enter a valid opening balance for Cash");
+    await expect(page.getByRole("heading", { name: "Add your accounts" })).toBeVisible();
   });
 });
