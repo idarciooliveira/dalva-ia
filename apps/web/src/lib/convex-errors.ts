@@ -19,5 +19,4 @@ export function convexErrorMessage(error: unknown, code: string): string | null 
   return actual === code && typeof message === "string" ? message : null;
 }
 
-export const ACCOUNT_IN_USE = "ACCOUNT_IN_USE";
 export const TRANSACTION_MANAGED = "TRANSACTION_MANAGED";

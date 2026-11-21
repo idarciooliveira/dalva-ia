@@ -1,10 +1,10 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { useRouter } from "@tanstack/react-router";
-import { useAuthActions } from "@convex-dev/auth/react";
 import { useState } from "react";
 
 import { useDarkMode } from "@/hooks/use-dark-mode";
 import { useAuthGuard } from "@/hooks/use-auth-guard";
+import { useSignOut } from "@/hooks/use-session";
+import { FullPageError } from "@/components/error-state";
 import { AuthProfileContext } from "@/hooks/use-auth-profile";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
@@ -31,8 +31,7 @@ export const Route = createFileRoute("/_authenticated")({
  */
 function AuthenticatedLayout() {
   const auth = useAuthGuard({ requireOnboarding: true });
-  const router = useRouter();
-  const { signOut } = useAuthActions();
+  const signOut = useSignOut();
   const { isDark, toggle: toggleDark } = useDarkMode();
 
   // FAB quick-action dialog state
@@ -42,13 +41,11 @@ function AuthenticatedLayout() {
   );
   const [transferDialogOpen, setTransferDialogOpen] = useState(false);
 
+  if (auth.status === "error") {
+    return <FullPageError error={auth.error} onRetry={auth.retry} />;
+  }
   if (auth.status !== "ready") {
     return <DashboardSkeleton />;
-  }
-
-  async function handleSignOut() {
-    await signOut();
-    router.navigate({ to: "/" });
   }
 
   function handleFabAction(type: "income" | "expense" | "transfer") {
@@ -65,7 +62,7 @@ function AuthenticatedLayout() {
       <TooltipProvider>
         <SidebarProvider>
           <AppSidebar
-            onSignOut={() => void handleSignOut()}
+            onSignOut={() => void signOut()}
             onToggleDark={toggleDark}
             isDark={isDark}
             userName={auth.profile.name}

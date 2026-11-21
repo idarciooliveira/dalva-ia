@@ -1,9 +1,9 @@
-import { useConvexAuth } from "convex/react";
 import { useQuery } from "@tanstack/react-query";
-import { convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect } from "react";
+
+import { profileQuery } from "@/lib/api/queries";
+import { useSession } from "@/hooks/use-session";
 
 interface AuthGuardOptions {
   /** Where to redirect if the user is not authenticated. Defaults to "/login". */
@@ -17,11 +17,15 @@ interface AuthGuardOptions {
 export type AuthGuardResult =
   | { status: "loading" }
   | { status: "redirecting" }
+  /** The session or the profile couldn't be read (API down, network). */
+  | { status: "error"; error: unknown; retry: () => void }
   | {
       status: "ready";
       profile: {
         name?: string;
         onboardingCompleted?: boolean;
+        /** Absent until onboarding's first step creates the profile. */
+        baseCurrency?: string;
       };
     };
 
@@ -29,8 +33,8 @@ export type AuthGuardResult =
  * Unified auth guard hook for protected pages.
  *
  * Handles:
- * - Redirecting unauthenticated users to login
- * - Loading user profile
+ * - Redirecting unauthenticated users to login (Better Auth session cookie)
+ * - Loading user profile (`/api/v1/profile`)
  * - Redirecting to/from onboarding based on profile state
  *
  * Returns a discriminated union so consumers can pattern-match on `status`.
@@ -42,65 +46,60 @@ export function useAuthGuard(options: AuthGuardOptions = {}): AuthGuardResult {
     redirectIfOnboarded = false,
   } = options;
 
-  const { isLoading: authLoading, isAuthenticated } = useConvexAuth();
   const router = useRouter();
+  const session = useSession();
+  const isAuthenticated = session.data != null;
 
-  const { data: profile, isLoading: profileLoading } = useQuery({
-    ...convexQuery(api.userProfiles.getProfile, {}),
-    enabled: isAuthenticated,
-  });
+  const profileResult = useQuery({ ...profileQuery(), enabled: isAuthenticated });
+  const profile = profileResult.data?.profile ?? null;
+  const profileReady = isAuthenticated && profileResult.isSuccess;
 
   // Redirect to login if unauthenticated
   useEffect(() => {
-    if (!authLoading && !isAuthenticated) {
+    if (session.isSuccess && !isAuthenticated) {
       router.navigate({ to: unauthenticatedRedirect });
     }
-  }, [authLoading, isAuthenticated, router, unauthenticatedRedirect]);
+  }, [session.isSuccess, isAuthenticated, router, unauthenticatedRedirect]);
 
   // Redirect to onboarding if not completed (dashboard, categories, etc.)
   useEffect(() => {
-    if (
-      requireOnboarding &&
-      isAuthenticated &&
-      !profileLoading &&
-      !profile?.onboardingCompleted
-    ) {
+    if (requireOnboarding && profileReady && !profile?.onboardingCompleted) {
       router.navigate({ to: "/onboarding" });
     }
-  }, [requireOnboarding, isAuthenticated, profileLoading, profile, router]);
+  }, [requireOnboarding, profileReady, profile, router]);
 
   // Redirect to dashboard if onboarding IS completed (onboarding page only)
   useEffect(() => {
-    if (redirectIfOnboarded && profile?.onboardingCompleted) {
+    if (redirectIfOnboarded && profileReady && profile?.onboardingCompleted) {
       router.navigate({ to: "/dashboard" });
     }
-  }, [redirectIfOnboarded, profile, router]);
+  }, [redirectIfOnboarded, profileReady, profile, router]);
 
-  // Still loading auth or profile
-  if (authLoading || profileLoading) {
-    return { status: "loading" };
+  if (session.isError) {
+    return { status: "error", error: session.error, retry: () => void session.refetch() };
   }
+  if (session.isPending) return { status: "loading" };
 
   // Not authenticated -- redirect in progress
-  if (!isAuthenticated) {
-    return { status: "redirecting" };
+  if (!isAuthenticated) return { status: "redirecting" };
+
+  if (profileResult.isError) {
+    return { status: "error", error: profileResult.error, retry: () => void profileResult.refetch() };
   }
+  if (profileResult.isPending) return { status: "loading" };
 
   // Onboarding required but not completed -- redirect in progress
-  if (requireOnboarding && !profile?.onboardingCompleted) {
-    return { status: "redirecting" };
-  }
+  if (requireOnboarding && !profile?.onboardingCompleted) return { status: "redirecting" };
 
   // On onboarding page but already completed -- redirect in progress
-  if (redirectIfOnboarded && profile?.onboardingCompleted) {
-    return { status: "redirecting" };
-  }
+  if (redirectIfOnboarded && profile?.onboardingCompleted) return { status: "redirecting" };
 
   return {
     status: "ready",
     profile: {
-      name: profile?.name ?? undefined,
+      name: profile?.name ?? session.data?.name,
       onboardingCompleted: profile?.onboardingCompleted ?? false,
+      baseCurrency: profile?.baseCurrency,
     },
   };
 }

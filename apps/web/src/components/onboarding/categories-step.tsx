@@ -2,6 +2,7 @@ import { Wallet, ArrowRight, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getCategoryIcon } from "@/lib/category-icons";
+import { ErrorState } from "@/components/error-state";
 import { StepHeader } from "./step-header";
 
 interface DefaultCategory {
@@ -13,6 +14,8 @@ interface DefaultCategory {
 
 export function CategoriesStep({
   defaultCategories,
+  loadError = null,
+  onRetryLoad,
   selectedCategories,
   onSelectedChange,
   onFinish,
@@ -20,6 +23,9 @@ export function CategoriesStep({
   isSubmitting,
 }: {
   defaultCategories: DefaultCategory[];
+  /** The default list couldn't be loaded. */
+  loadError?: unknown;
+  onRetryLoad?: () => void;
   selectedCategories: string[];
   onSelectedChange: (names: string[]) => void;
   onFinish: () => void;
@@ -56,6 +62,10 @@ export function CategoriesStep({
         title="Choose your categories"
         subtitle="We'll start you with these defaults. You can customize later."
       />
+
+      {loadError != null && (
+        <ErrorState error={loadError} fallback="Couldn't load the categories." onRetry={onRetryLoad} />
+      )}
 
       {/* Select all / deselect all */}
       <div className="flex justify-end">

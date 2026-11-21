@@ -1,6 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useConvexAuth } from "convex/react";
-import { useAuthActions } from "@convex-dev/auth/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -13,7 +12,9 @@ import { AuthErrorAlert } from "@/components/auth-error-alert";
 import { AuthPageLayout } from "@/components/auth/auth-page-layout";
 import { GoogleOAuthButton } from "@/components/auth/google-oauth-button";
 import { OrDivider } from "@/components/auth/or-divider";
-import { parseConvexAuthError } from "@/lib/auth-errors";
+import { authClient, resetUserCache } from "@/lib/auth-client";
+import { authErrorMessage } from "@/lib/auth-errors";
+import { useSession } from "@/hooks/use-session";
 
 export const Route = createFileRoute("/register")({
   component: RegisterPage,
@@ -36,8 +37,9 @@ type RegisterValues = z.infer<typeof registerSchema>;
 /* -------------------------------------------------------------------------- */
 
 function RegisterPage() {
-  const { signIn } = useAuthActions();
-  const { isAuthenticated } = useConvexAuth();
+  const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const isAuthenticated = session != null;
   const router = useRouter();
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -59,14 +61,20 @@ function RegisterPage() {
   async function onSubmit(data: RegisterValues) {
     setAuthError(null);
     try {
-      await signIn("password", {
-        name: data.name,
+      // Signs the new user in too (autoSignIn on the server).
+      const { error } = await authClient.signUp.email({
+        name: data.name.trim(),
         email: data.email,
         password: data.password,
-        flow: "signUp",
       });
+      if (error) {
+        setAuthError(authErrorMessage(error, "signUp"));
+        return;
+      }
+      // The effect above navigates once the new session is read.
+      await resetUserCache(queryClient);
     } catch (error) {
-      setAuthError(parseConvexAuthError(error, "signUp"));
+      setAuthError(authErrorMessage(error, "signUp"));
     }
   }
 

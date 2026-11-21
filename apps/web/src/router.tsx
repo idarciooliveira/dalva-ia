@@ -1,49 +1,48 @@
 import { createRouter as createTanStackRouter } from "@tanstack/react-router";
-import { QueryClient } from "@tanstack/react-query";
+import { MutationCache, QueryCache, QueryClient } from "@tanstack/react-query";
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query";
-import { ConvexQueryClient } from "@convex-dev/react-query";
-import { ConvexAuthProvider } from "@convex-dev/auth/react";
 import { routeTree } from "./routeTree.gen";
 
+import { queryKeys } from "@/lib/api/keys";
+import { isApiError, isTransientError, LegacyBackendError } from "@/lib/api/errors";
+import { isLegacyConvexKey, LegacyConvexProvider } from "@/lib/legacy-convex";
+
 export function getRouter() {
-  const CONVEX_URL = (import.meta as any).env.VITE_CONVEX_URL as
-    | string
-    | undefined;
-
-  if (!CONVEX_URL) {
-    throw new Error(
-      "Missing VITE_CONVEX_URL environment variable. " +
-        "Run 'bun run setup' from the repo root: it creates the local Convex " +
-        "deployment that writes packages/backend/.env.local.",
-    );
-  }
-
-  const convexQueryClient = new ConvexQueryClient(CONVEX_URL);
+  // A 401 from the API means the session ended (expired, signed out elsewhere):
+  // re-read it and the auth guard sends the user to /login.
+  const onError = (error: unknown) => {
+    if (isApiError(error, "unauthorized")) void queryClient.invalidateQueries({ queryKey: queryKeys.session() });
+  };
 
   const queryClient: QueryClient = new QueryClient({
+    queryCache: new QueryCache({ onError }),
+    mutationCache: new MutationCache({ onError }),
     defaultOptions: {
       queries: {
-        queryKeyHashFn: convexQueryClient.hashFn(),
-        queryFn: convexQueryClient.queryFn(),
-        // Convex keeps data fresh via WebSocket subscriptions, so we can
-        // safely treat cached data as fresh for 30s to avoid unnecessary
-        // refetches when components remount (e.g. route navigation).
+        // Every API query sets its own queryFn. Only the legacy Convex keys land here.
+        queryFn: ({ queryKey }) => {
+          if (isLegacyConvexKey(queryKey)) throw new LegacyBackendError();
+          throw new Error(`No queryFn for ${JSON.stringify(queryKey)}`);
+        },
+        // No live updates until SSE (after cutover): writes invalidate what they change,
+        // and anything older than this refetches on mount and window focus.
         staleTime: 30_000,
+        retry: (failureCount, error) => failureCount < 2 && isTransientError(error),
+      },
+      mutations: {
+        // Safe: a retry sends the same Idempotency-Key, so the server replays instead of writing twice.
+        retry: (failureCount, error) =>
+          failureCount < 1 && (isApiError(error, "network_error") || isApiError(error, "timeout")),
       },
     },
   });
-  convexQueryClient.connect(queryClient);
 
   const router = createTanStackRouter({
     routeTree,
     defaultPreload: "intent",
     context: { queryClient },
     scrollRestoration: true,
-    Wrap: ({ children }) => (
-      <ConvexAuthProvider client={convexQueryClient.convexClient}>
-        {children}
-      </ConvexAuthProvider>
-    ),
+    Wrap: ({ children }) => <LegacyConvexProvider>{children}</LegacyConvexProvider>,
   });
 
   setupRouterSsrQueryIntegration({ router, queryClient });

@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import type { Account } from "@mpf/finance-contract";
 import {
   Landmark,
   FileText,
@@ -14,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -24,7 +22,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CurrencyInput, parseCurrencyInputToCents } from "@/components/ui/currency-input";
+import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
+import { FormError } from "@/components/error-state";
+import { useAuthProfile } from "@/hooks/use-auth-profile";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage } from "@/lib/api/errors";
+import { fractionDigits } from "@/lib/money";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES, type AccountType } from "@/lib/accounts";
 import { CURRENCIES, getCurrencySymbol } from "@/lib/currencies";
 import { cn } from "@/lib/utils";
@@ -32,7 +35,7 @@ import { cn } from "@/lib/utils";
 interface AccountFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  account: Doc<"accounts"> | null;
+  account: Account | null;
 }
 
 export function AccountFormDialog({
@@ -41,10 +44,12 @@ export function AccountFormDialog({
   account,
 }: AccountFormDialogProps) {
   const isEdit = account !== null;
+  // New accounts default to the base currency chosen in onboarding.
+  const defaultCurrency = useAuthProfile().baseCurrency ?? "USD";
 
   const [name, setName] = useState("");
   const [type, setType] = useState<AccountType>("bank");
-  const [currency, setCurrency] = useState("USD");
+  const [currency, setCurrency] = useState(defaultCurrency);
   const [theme, setTheme] = useState("default");
   const [balance, setBalance] = useState("");
   const [error, setError] = useState("");
@@ -53,25 +58,21 @@ export function AccountFormDialog({
     if (account) {
       setName(account.name);
       setType(account.type);
-      setCurrency(account.currency);
+      setCurrency(account.balance.currency);
       setTheme(account.theme ?? "default");
       setBalance("");
     } else {
       setName("");
       setType("bank");
-      setCurrency("USD");
+      setCurrency(defaultCurrency);
       setTheme("default");
       setBalance("");
     }
     setError("");
-  }, [account, open]);
+  }, [account, open, defaultCurrency]);
 
-  const { mutateAsync: createAccount, isPending: isCreating } = useMutation({
-    mutationFn: useConvexMutation(api.accounts.createAccount),
-  });
-  const { mutateAsync: updateAccount, isPending: isUpdating } = useMutation({
-    mutationFn: useConvexMutation(api.accounts.updateAccount),
-  });
+  const { mutateAsync: createAccount, isPending: isCreating } = useApiMutation("accounts", "create");
+  const { mutateAsync: updateAccount, isPending: isUpdating } = useApiMutation("accounts", "update");
 
   const isPending = isCreating || isUpdating;
 
@@ -83,25 +84,27 @@ export function AccountFormDialog({
       return;
     }
 
-    if (isEdit && account) {
-      await updateAccount({
-        id: account._id,
-        name: name.trim(),
-        type,
-        theme,
-      });
-      onOpenChange(false);
-    } else {
-      const balanceCents = parseCurrencyInputToCents(balance);
-      if (isNaN(balanceCents)) {
+    try {
+      if (isEdit && account) {
+        await updateAccount({
+          id: account.id,
+          name: name.trim(),
+          type,
+          theme,
+        });
+        onOpenChange(false);
+        return;
+      }
+
+      const amountMinor = parseCurrencyInput(balance);
+      if (Number.isNaN(amountMinor)) {
         setError("Please enter a valid balance");
         return;
       }
       await createAccount({
         name: name.trim(),
         type,
-        balance: balanceCents,
-        currency,
+        balance: { amountMinor, currency },
         theme,
       });
 
@@ -109,13 +112,15 @@ export function AccountFormDialog({
         // Reset form for another entry
         setName("");
         setType("bank");
-        setCurrency("USD");
+        setCurrency(defaultCurrency);
         setTheme("default");
         setBalance("");
         setError("");
       } else {
         onOpenChange(false);
       }
+    } catch (err) {
+      setError(apiErrorMessage(err, isEdit ? "Couldn't save the account. Try again." : "Couldn't create the account. Try again."));
     }
   }
 
@@ -130,6 +135,9 @@ export function AccountFormDialog({
           <DialogTitle className="text-lg font-semibold">
             {isEdit ? "Edit account" : "New account"}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            {isEdit ? "Change the account's name, type and color." : "Create an account with its opening balance."}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="min-w-0 px-4 pt-3.5 pb-0 sm:px-5 sm:pt-4">
@@ -143,6 +151,8 @@ export function AccountFormDialog({
                 <CurrencyInput
                   value={balance}
                   onValueChange={setBalance}
+                  fractionDigits={fractionDigits(currency)}
+                  allowNegative
                   placeholder="0,00"
                   autoFocus
                   className="min-w-0 flex-1 bg-transparent text-2xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/50"
@@ -171,7 +181,7 @@ export function AccountFormDialog({
           <div className="flex items-center gap-3 border-b border-border py-3">
             <Landmark className="size-5 text-muted-foreground shrink-0" />
             <Select value={type} onValueChange={(v) => setType(v as AccountType)}>
-              <SelectTrigger className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5">
+              <SelectTrigger aria-label="Account type" className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5">
                 <SelectValue>
                   {(() => {
                     const typeInfo = ACCOUNT_TYPES.find((t) => t.value === type);
@@ -205,7 +215,7 @@ export function AccountFormDialog({
                 {currencyInfo?.flag ?? "$"}
               </span>
               <Select value={currency} onValueChange={setCurrency}>
-             <SelectTrigger className="h-auto w-full min-w-0 border-0 bg-transparent px-2 py-0 text-left text-sm shadow-none ring-0 focus:ring-0">
+             <SelectTrigger aria-label="Currency" className="h-auto w-full min-w-0 border-0 bg-transparent px-2 py-0 text-left text-sm shadow-none ring-0 focus:ring-0">
                   <SelectValue>
                     {currencyInfo
                       ? `${currencyInfo.code} — ${currencyInfo.name}`
@@ -244,6 +254,7 @@ export function AccountFormDialog({
                   }}
                   title={t.label}
                   aria-label={`Theme: ${t.label}`}
+                  aria-pressed={theme === t.id}
                 >
                   {theme === t.id && (
                     <Check className="absolute inset-0 m-auto size-4 text-white drop-shadow-md" />
@@ -254,9 +265,7 @@ export function AccountFormDialog({
           </div>
 
           {/* ── Error ── */}
-          {error && (
-            <p className="mt-3 text-sm text-destructive">{error}</p>
-          )}
+          <FormError message={error} />
         </div>
 
         {/* ── Footer with actions ── */}

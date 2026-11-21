@@ -3,30 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { SubcategoryRow } from "./subcategory-row";
 
-vi.mock("@convex-dev/react-query", () => ({
-  useConvexMutation: vi.fn((mutation: unknown) => mutation),
-}));
-
-vi.mock("@tanstack/react-query", () => ({
-  useMutation: vi.fn(() => ({
-    mutate: vi.fn(),
-  })),
-}));
-
-vi.mock("@mpf/backend/convex/_generated/api", () => ({
-  api: {
-    categories: {
-      archiveSubcategory: "archiveSubcategoryMutation",
-      restoreSubcategory: "restoreSubcategoryMutation",
-      deleteSubcategory: "deleteSubcategoryMutation",
-    },
-  },
+vi.mock("@/lib/api/mutations", () => ({
+  useApiMutation: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
 }));
 
 const subcategory = {
-  _id: "sub_1",
-  _creationTime: 0,
-  userId: "user_1",
+  id: "sub_1",
   categoryId: "cat_1",
   name: "Groceries",
   archived: false,
