@@ -86,6 +86,22 @@ describe("api/v1 transfers", () => {
     }
   });
 
+  it("gets a transfer by either leg (web-only), and not_found for anything else", async () => {
+    const t = setupApi();
+    const { alice, aliceAccount, asAlice, asBob } = await twoUsers(t);
+    const savings = await seedAccount(t, alice, { name: "Savings" });
+    const { transfer } = await asAlice.transfers.create({ amount: usd(300), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-01", note: "n" });
+    for (const id of [transfer.outgoingId, transfer.incomingId]) {
+      expect((await asAlice.transfers.get({ id })).transfer).toEqual(transfer);
+    }
+    expectConforms(routes.transfers.get, await raw(t, "GET", `/transfers/${transfer.incomingId}`, { token: await tokenFor(alice) }));
+
+    const { transaction } = await asAlice.transactions.create({ type: "expense", amount: usd(1), accountId: aliceAccount, date: "2026-01-01" });
+    await expectApiError(asAlice.transfers.get({ id: transaction.id }), "not_found", 404);
+    await expectApiError(asBob.transfers.get({ id: transfer.outgoingId }), "not_found", 404);
+    await expectApiError(asAlice.transfers.get({ id: "bad" }), "validation_failed", 400);
+  });
+
   it("isolates users", async () => {
     const t = setupApi();
     const { alice, aliceAccount, bobAccount, asAlice, asBob } = await twoUsers(t);

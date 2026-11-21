@@ -418,6 +418,12 @@ export const transferCreateRequestSchema = z
   });
 export const transferResponseSchema = z.object({ transfer: transferSchema });
 
+/**
+ * Web-only (`webOnly` in routes.ts). `id` may be either leg. Transactions that
+ * are not transfer legs, and legs whose pair is missing, are `not_found`.
+ */
+export const transferGetRequestSchema = z.strictObject({ id: transactionIdSchema });
+
 /** `id` may be either leg of the transfer. */
 export const transferUpdateRequestSchema = z
   .strictObject({

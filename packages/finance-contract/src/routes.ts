@@ -30,7 +30,7 @@ export interface RouteDef {
   /** User routes only. Overrides the method-derived finance scope (`agent:state` for the agent store). */
   scope?: TokenScope;
   /**
-   * User routes for the web app only (profile, account and category management): tokens
+   * User routes for the web app only (profile, account and category management, reading one transfer): tokens
    * minted for a chat (`cid`) get `forbidden`, and they are not pending-action
    * operations, so the chat agent can neither call nor propose them.
    */
@@ -129,6 +129,7 @@ export const routes = {
     delete: route("DELETE", "/transactions/:id", s.transactionDeleteRequestSchema, s.transactionDeleteResponseSchema),
   },
   transfers: {
+    get: webRoute("GET", "/transfers/:id", s.transferGetRequestSchema, s.transferResponseSchema),
     create: route("POST", "/transfers", s.transferCreateRequestSchema, s.transferResponseSchema),
     update: route("PATCH", "/transfers/:id", s.transferUpdateRequestSchema, s.transferResponseSchema),
     delete: route("DELETE", "/transfers/:id", s.transferDeleteRequestSchema, s.transferDeleteResponseSchema),

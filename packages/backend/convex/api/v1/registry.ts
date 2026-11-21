@@ -61,6 +61,7 @@ export const implementations: Implementations = {
     delete: internal.api.v1.transactions.remove,
   },
   transfers: {
+    get: internal.api.v1.transfers.get,
     create: internal.api.v1.transfers.create,
     update: internal.api.v1.transfers.update,
     delete: internal.api.v1.transfers.remove,
