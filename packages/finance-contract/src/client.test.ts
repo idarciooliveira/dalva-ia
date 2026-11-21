@@ -53,6 +53,24 @@ describe("reads", () => {
     expect(req.headers.get("idempotency-key")).toBeNull();
   });
 
+  it("sends no Authorization header without getToken (cookie session), relative base URL included", async () => {
+    const calls: Request[] = [];
+    const client = createFinanceClient({
+      baseUrl: "",
+      fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+        calls.push(new Request(new URL(String(input), "https://app.example.test"), init));
+        return json({ ok: true, data: { account: accountJson } });
+      }) as typeof fetch,
+      generateIdempotencyKey: () => "key-12345678",
+    });
+    await client.accounts.archive({ id: "acc_1" });
+
+    const req = calls[0]!;
+    expect(req.url).toBe("https://app.example.test/api/v1/accounts/acc_1/archive");
+    expect(req.headers.get("authorization")).toBeNull();
+    expect(req.headers.get("idempotency-key")).toBe("key-12345678");
+  });
+
   it("awaits an async getToken on every call", async () => {
     let n = 0;
     const calls: string[] = [];
