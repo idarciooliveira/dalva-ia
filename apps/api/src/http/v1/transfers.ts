@@ -61,7 +61,7 @@ export const transferOperations = {
       throw invalid("amount", "Provide amount when moving a transfer to accounts in another currency");
     }
 
-    const outgoingId = await transfers.updateTransfer(tx, user.userId, id, {
+    const outgoingId = await transfers.updateLoadedTransfer(tx, user.userId, current, {
       amount,
       fromAccountId: input.fromAccountId === undefined ? undefined : from.id,
       toAccountId: input.toAccountId === undefined ? undefined : to.id,

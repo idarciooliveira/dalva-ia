@@ -164,6 +164,31 @@ describe("domain/transfers", () => {
       await tx((t) => transfers.deleteTransfer(t, alice, outgoing));
       expect(await balanceOf(from)).toBe(10_000);
     });
+    it("tells the legs apart when the import nulled the destination (destination account deleted in Convex)", async () => {
+      const alice = await createTestUser();
+      const from = await seedAccount(alice, { balance: 10_000, name: "From" });
+      for (const pick of ["outgoing", "incoming"] as const) {
+        const legs = await seedTransfer(alice, from, await seedAccount(alice), 1_000);
+        // What the import writes for a dangling destination: no destination on the outgoing leg, no account on the incoming one.
+        await testDb().update(transactions).set({ destinationAccountId: null }).where(eq(transactions.id, legs.outgoing));
+        await testDb().update(transactions).set({ accountId: null }).where(eq(transactions.id, legs.incoming));
+
+        const view = await readTx(testDb(), (t) => transfers.getTransfer(t, alice, legs[pick]));
+        expect([view.outgoing.id, view.incoming.id, view.fromAccount?.name, view.toAccount]).toEqual([legs.outgoing, legs.incoming, "From", null]);
+        await tx((t) => transfers.deleteTransfer(t, alice, legs[pick]));
+        expect(await balanceOf(from), pick).toBe(10_000);
+      }
+    });
+
+    it("updates only the fields given on each leg", async () => {
+      const alice = await createTestUser();
+      const from = await seedAccount(alice, { balance: 10_000 });
+      const { outgoing, incoming } = await seedTransfer(alice, from, await seedAccount(alice));
+      await testDb().update(transactions).set({ note: "incoming's own" }).where(eq(transactions.id, incoming));
+      await tx((t) => transfers.updateTransfer(t, alice, outgoing, { amount: 400 }));
+      expect(await getTransactionRow(incoming)).toMatchObject({ amount: 400, note: "incoming's own", description: "Move" });
+      expect(await getTransactionRow(outgoing)).toMatchObject({ amount: 400, note: null });
+    });
   });
 
   it("refuses to change a goal contribution's transfer through either leg", async () => {

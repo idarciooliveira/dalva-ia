@@ -181,7 +181,17 @@ export async function updateTransaction(
   id: string,
   changes: Partial<TransactionFields>,
 ): Promise<Transaction> {
-  const row = await getEditableTransaction(tx, userId, id);
+  return await updateLoadedTransaction(tx, userId, await getEditableTransaction(tx, userId, id), changes);
+}
+
+/** `updateTransaction` for a row the caller loaded with `getEditableTransaction` in this transaction. */
+export async function updateLoadedTransaction(
+  tx: Tx,
+  userId: string,
+  row: Transaction,
+  changes: Partial<TransactionFields>,
+): Promise<Transaction> {
+  const id = row.id;
   assertWritableType(changes.type);
 
   const type = changes.type ?? row.type;

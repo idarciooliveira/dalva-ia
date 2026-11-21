@@ -16,6 +16,7 @@ import type { AnyPgColumn } from "drizzle-orm/pg-core";
 
 import { accounts, categories, debtPayments, debts, transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
+import { invalid } from "./errors";
 import { NEWEST_FIRST, type Transaction, type TransactionType } from "./transactions";
 
 /** Account types whose balances are owed, not owned: not counted as assets. */
@@ -28,9 +29,10 @@ const TOP_DEBTS = 5;
 
 const pad = (n: number, width: number) => String(n).padStart(width, "0");
 
-/** Month `offset` months after `month` (negative: before). */
+/** Month `offset` months after `month` (negative: before). Before year 1 there are no dates: `validation_failed`. */
 export function addMonths(month: string, offset: number): string {
   const total = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1 + offset;
+  if (total < 12) throw invalid("month", "Month out of range");
   return `${pad(Math.floor(total / 12), 4)}-${pad((total % 12) + 1, 2)}`;
 }
 
@@ -41,7 +43,8 @@ export function monthsEndingAt(month: string, count: number): string[] {
 
 /** First day of `first` up to (excluding) the first day of the month after `last`. */
 function dateRange(first: string, last = first): SQL {
-  return sql`${transactions.date} >= ${`${first}-01`}::date and ${transactions.date} < ${`${addMonths(last, 1)}-01`}::date`;
+  // addMonths(first, 0) refuses a month before year 1.
+  return sql`${transactions.date} >= ${`${addMonths(first, 0)}-01`}::date and ${transactions.date} < ${`${addMonths(last, 1)}-01`}::date`;
 }
 
 /** Sum of `amount` (over the rows matching `where`), 0 for none. sum(bigint) is numeric: read as a JS number. */

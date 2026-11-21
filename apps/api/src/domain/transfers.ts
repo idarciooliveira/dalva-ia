@@ -47,16 +47,25 @@ async function getLeg(tx: Tx, userId: string, id: string): Promise<Transaction> 
   return row;
 }
 
+/** Created first: Convex inserted the outgoing leg before the incoming one. */
+const createdBefore = (a: Transaction, b: Transaction) =>
+  a.createdAt.getTime() !== b.createdAt.getTime() ? a.createdAt < b.createdAt : a.id < b.id;
+
 /**
- * Both legs from either one. A leg without its pair is the outgoing one when it
- * carries `destination_account_id`, else the incoming one.
+ * Both legs from either one. The outgoing leg carries
+ * `destination_account_id`. The import nulls it when Convex deleted the
+ * destination account; then the leg that isn't the incoming one by that rule
+ * is told by creation order. A leg without its pair is the outgoing one when
+ * it carries `destination_account_id`, else the incoming one.
  */
 async function legsOf(tx: Tx, userId: string, row: Transaction): Promise<{ outgoing: Transaction | null; incoming: Transaction | null }> {
   const linked = row.linkedTransactionId
     ? ((await tx.select().from(transactions).where(owned(userId, row.linkedTransactionId)).limit(1))[0] ?? null)
     : null;
-  if (row.destinationAccountId !== null) return { outgoing: row, incoming: linked };
-  return { outgoing: linked, incoming: row };
+  const rowIsOutgoing =
+    row.destinationAccountId !== null ||
+    (linked !== null && linked.destinationAccountId === null && createdBefore(row, linked));
+  return rowIsOutgoing ? { outgoing: row, incoming: linked } : { outgoing: linked, incoming: row };
 }
 
 async function accountOrNull(tx: Tx, userId: string, id: string | null): Promise<Account | null> {
@@ -147,9 +156,16 @@ export async function createTransfer(tx: Tx, userId: string, args: TransferField
  * old balance effects and applying the new ones. Returns the outgoing leg's id.
  */
 export async function updateTransfer(tx: Tx, userId: string, id: string, changes: Partial<TransferFields>): Promise<string> {
-  const { outgoing, incoming } = await legsOf(tx, userId, await getEditableLeg(tx, userId, id));
-  if (!outgoing || !incoming) throw notFound("Transfer");
+  return await updateLoadedTransfer(tx, userId, await getTransfer(tx, userId, id, { editable: true }), changes);
+}
 
+/** `updateTransfer` for a transfer the caller loaded with `getTransfer(..., { editable: true })` in this transaction. */
+export async function updateLoadedTransfer(
+  tx: Tx,
+  userId: string,
+  { outgoing, incoming }: Transfer,
+  changes: Partial<TransferFields>,
+): Promise<string> {
   const amount = changes.amount ?? outgoing.amount;
   assertAmount(amount);
   const fromAccountId = changes.fromAccountId ?? outgoing.accountId;
@@ -157,19 +173,24 @@ export async function updateTransfer(tx: Tx, userId: string, id: string, changes
   if (fromAccountId === null || toAccountId === null) throw notFound("Account");
   await transferAccounts(tx, userId, fromAccountId, toAccountId);
 
+  // Only what changed, as Convex patched: legacy legs may disagree on the rest.
   const shared = {
-    amount,
-    date: changes.date ?? outgoing.date,
-    description: changes.description ?? outgoing.description,
-    note: changes.note ?? outgoing.note,
+    ...(changes.amount !== undefined && { amount: changes.amount }),
+    ...(changes.date !== undefined && { date: changes.date }),
+    ...(changes.description !== undefined && { description: changes.description }),
+    ...(changes.note !== undefined && { note: changes.note }),
   };
   await tx
     .update(transactions)
-    .set({ ...shared, accountId: fromAccountId, destinationAccountId: toAccountId })
+    .set({
+      ...shared,
+      ...(changes.fromAccountId !== undefined && { accountId: changes.fromAccountId }),
+      ...(changes.toAccountId !== undefined && { destinationAccountId: changes.toAccountId }),
+    })
     .where(owned(userId, outgoing.id));
   await tx
     .update(transactions)
-    .set({ ...shared, accountId: toAccountId })
+    .set({ ...shared, ...(changes.toAccountId !== undefined && { accountId: changes.toAccountId }) })
     .where(owned(userId, incoming.id));
   await addToBalances(tx, userId, [
     [outgoing.accountId, outgoing.amount],

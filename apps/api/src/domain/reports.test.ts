@@ -78,6 +78,13 @@ describe("domain/reports", () => {
     ]);
   });
 
+  it("refuses months whose range would start before year 1", async () => {
+    const alice = await createTestUser();
+    await expect(read((t) => reports.cashflow(t, alice, "0001-03", 6))).rejects.toThrow("Month out of range");
+    await expect(read((t) => reports.transactionSummary(t, alice, "0000-12"))).rejects.toThrow("Month out of range");
+    expect((await read((t) => reports.cashflow(t, alice, "0001-03", 3))).trend.map((p) => p.month)).toEqual(["0001-01", "0001-02", "0001-03"]);
+  });
+
   it("totals every row of the month, past what Convex read", async () => {
     const alice = await createTestUser();
     const accountId = await seedAccount(alice);

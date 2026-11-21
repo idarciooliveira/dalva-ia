@@ -79,7 +79,7 @@ export const transactionOperations = {
       throw invalid("amount.amountMinor", "Amount must be positive");
     }
 
-    const updated = await transactions.updateTransaction(tx, user.userId, id, {
+    const updated = await transactions.updateLoadedTransaction(tx, user.userId, row, {
       type: input.type,
       amount,
       accountId: input.accountId === undefined ? undefined : account.id,
