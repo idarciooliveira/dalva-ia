@@ -231,9 +231,18 @@ export async function updateLoadedTransaction(
 
 /** Delete the row and reverse its balance effect. */
 export async function deleteTransaction(tx: Tx, userId: string, id: string): Promise<void> {
-  const row = await getEditableTransaction(tx, userId, id);
-  await tx.delete(transactions).where(ownedTransaction(userId, id));
-  await addToBalances(tx, userId, [[row.accountId, -balanceDelta(row.type, row.amount)]]);
+  await deleteTransactionRows(tx, userId, [await getEditableTransaction(tx, userId, id)]);
+}
+
+/**
+ * Delete rows the caller loaded and reverse their balance effects, without
+ * the managed-row check: for the debt-payment flow removing its own rows.
+ * Not for transfer legs (`deleteTransferLegs`).
+ */
+export async function deleteTransactionRows(tx: Tx, userId: string, rows: Transaction[]): Promise<void> {
+  if (rows.length === 0) return;
+  await tx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, rows.map((r) => r.id))));
+  await addToBalances(tx, userId, rows.map((r): [string | null, number] => [r.accountId, -balanceDelta(r.type, r.amount)]));
 }
 
 /* Search ------------------------------------------------------------------- */

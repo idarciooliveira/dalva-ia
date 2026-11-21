@@ -71,6 +71,13 @@ Transactions, transfers and reports (`src/domain/{transactions,transfers,reports
 - Reports: a month is `[first day, first day of next month)`, never a `-31` bound. Totals use SQL aggregates over every row of the range.
 - A date the contract accepts but Postgres can't hold (year 0000) is `validation_failed` (router, SQLSTATE 22008); a stored amount or total the contract can't express is `conflict` (`MoneyRangeError`).
 
+Goals and debts (`src/domain/{goals,debts}.ts`), in the base currency like Convex:
+
+- A contribution to an account-linked goal is a transfer into the linked account (`createTransfer`); removing the contribution deletes it (`deleteTransferLegs`). A contribution whose transfer is gone (`transaction_id` nulled) only moves `current_amount` on removal. Deleting a goal keeps its transfers as plain transfers.
+- A debt payment is an expense on the paying account plus, for a linked debt, an adjustment of minus the principal on the linked account (`createTransaction`). Removing it, or deleting the debt, deletes those rows and reverses their balances (`deleteTransactionRows`). Legacy payments with a null `from_account_id` or `source_transaction_id` list with the nil-UUID placeholders (`MISSING_ACCOUNT_ID`, `MISSING_TRANSACTION_ID`) and skip what is gone on removal.
+- `current_amount` and `current_balance` move with relative updates; the principal check reads the balance in the same SERIALIZABLE transaction, so racing payments can't pay down more than is left.
+- A goal's or debt's linked account, and the accounts a contribution or payment moves money on, must be in the base currency (`validation_failed`).
+
 Tests use `test/api.ts`: `seedUser`, `seedAccount`, `seedCategory`, `seedSubcategory`, `seedTransaction` (rows only, no balance; `null` account for legacy rows), `seedDebt`, `seedDebtPayment`, `seedContribution`, `seedChannelIdentity`, `tokenFor(userId, scopes?)`, `clientFor(app, token)` (the contract client, which parses every success with the response schema), `serviceClientFor(app)` (service key), `linkedChat(app)` (a user linked through the real code/redeem/resolve flow, with its agent token), `raw(app, method, path, { token | cookie, body, idempotencyKey })`, `expectApiError(promise, code, status)` and `twoUsers()` for isolation checks. `testApp({ operations })` swaps in fake operations (e.g. one that writes then throws).
 
 ## Idempotency

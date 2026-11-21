@@ -8,7 +8,8 @@ import { and, eq, inArray } from "drizzle-orm";
 
 import { accounts } from "../../db/schema";
 import type { Tx } from "../../db/tx";
-import { conflict } from "../../domain/errors";
+import { type Account, getAccount } from "../../domain/accounts";
+import { conflict, invalid } from "../../domain/errors";
 import type { Transaction } from "../../domain/transactions";
 import { getProfile } from "../../domain/userProfiles";
 import { transactionDto } from "./shared";
@@ -21,6 +22,26 @@ export async function requireBaseCurrency(tx: Tx, userId: string): Promise<strin
   const profile = await getProfile(tx, userId);
   if (!profile) throw conflict("User profile not found; complete onboarding first");
   return profile.baseCurrency;
+}
+
+/**
+ * The user's account, in the base currency: goals and debts have no currency
+ * of their own, so the accounts they move money on must share it. `label`
+ * names the goal or debt in the message.
+ */
+export async function requireBaseCurrencyAccount(
+  tx: Tx,
+  userId: string,
+  accountId: string,
+  field: string,
+  baseCurrency: string,
+  label = "base",
+): Promise<Account> {
+  const account = await getAccount(tx, userId, accountId);
+  if (account.currency !== baseCurrency) {
+    throw invalid(field, `Account currency ${account.currency} differs from the ${label} currency ${baseCurrency}`);
+  }
+  return account;
 }
 
 async function currenciesOf(tx: Tx, userId: string, accountIds: string[]): Promise<Map<string, string>> {
