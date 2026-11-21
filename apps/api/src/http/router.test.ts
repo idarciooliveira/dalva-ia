@@ -44,7 +44,7 @@ const optionsFor = (route: RouteDef) =>
 describe("api/v1 router", () => {
   it("implements whole contract groups, each operation bound to its own route", () => {
     const groups = new Set(implemented.map((r) => r.group));
-    expect([...groups].sort()).toEqual(["accounts", "profile"]);
+    expect([...groups].sort()).toEqual(["accounts", "categories", "profile", "subcategories"]);
     for (const { group, op, route } of allRoutes()) {
       const found = operationFor(operations, group, op);
       if (!groups.has(group)) {

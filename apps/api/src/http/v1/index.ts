@@ -1,5 +1,6 @@
 import type { Operations } from "../operation";
 import { accountOperations } from "./accounts";
+import { categoryOperations, subcategoryOperations } from "./categories";
 import { profileOperations } from "./profile";
 
 /**
@@ -9,4 +10,6 @@ import { profileOperations } from "./profile";
 export const operations = {
   accounts: accountOperations,
   profile: profileOperations,
+  categories: categoryOperations,
+  subcategories: subcategoryOperations,
 } satisfies Operations;

@@ -1,5 +1,6 @@
 import { isUuid } from "../../db/ids";
 import type { Account } from "../../domain/accounts";
+import type { Category, Subcategory } from "../../domain/categories";
 import { invalid } from "../../domain/errors";
 import type { UserProfile } from "../../domain/userProfiles";
 import { toMoney } from "./money";
@@ -40,3 +41,24 @@ export const profileDto = (p: UserProfile) =>
     baseCurrency: p.baseCurrency,
     onboardingCompleted: p.onboardingCompleted,
   });
+
+export const categoryDto = (c: Category) =>
+  compact({
+    id: c.id,
+    name: c.name,
+    type: c.type,
+    icon: c.icon ?? undefined,
+    color: c.color ?? undefined,
+    isDefault: c.isDefault,
+    archived: c.archived || undefined,
+    sortOrder: c.sortOrder ?? undefined,
+  });
+
+/** `archived` is required on subcategories. */
+export const subcategoryDto = (s: Subcategory) => ({
+  id: s.id,
+  categoryId: s.categoryId,
+  name: s.name,
+  archived: s.archived,
+  sortOrder: s.sortOrder,
+});
