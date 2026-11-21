@@ -23,8 +23,10 @@ on:
     paths: *paths
   workflow_dispatch:
 
+# PRs: one run per branch, newest wins. Pushes: one run per commit. Each push diffs only its
+# own commits, so a cancelled push run would never build what it changed.
 concurrency:
-  group: images-${{ github.ref }}
+  group: images-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

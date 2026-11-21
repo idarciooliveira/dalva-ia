@@ -12,7 +12,7 @@ migrate (one-shot, before api) -> postgres     backup (daily pg_dump) -> postgre
 
 Files: `deploy/docker-compose.yml`, `deploy/.env.example`, `deploy/smoke.sh`. Images: `ghcr.io/<owner>/dalva-api`, `dalva-web`, `dalva-agent`.
 
-Only the agent and cloudflared reach the internet. Postgres, API, web and backup sit on internal networks. Every service runs read-only, with no capabilities, `no-new-privileges`, CPU and memory limits, a healthcheck and rotated logs.
+Only the agent and cloudflared reach the internet. Postgres, API, web and backup sit on internal networks. Every service runs read-only, with no capabilities, `no-new-privileges`, CPU and memory limits and rotated logs; the long-running ones have healthchecks. `postgres` runs as its own user, API, web and agent as 65532, `backup` as root without capabilities.
 
 ## Images
 
@@ -34,7 +34,7 @@ Generate secrets with `openssl rand -hex 32`. Hex matters: the Postgres password
 | --- | --- |
 | `COMPOSE_PROJECT_NAME` | `dalva` for production, `dalva-staging` for staging on the same host. Prefixes containers, volumes, networks. |
 | `GHCR_OWNER` | GitHub owner, lowercase. |
-| `API_IMAGE_TAG`, `WEB_IMAGE_TAG`, `AGENT_IMAGE_TAG` | `latest` or a short SHA. Pin all three to the same SHA for a release. |
+| `API_IMAGE_TAG`, `WEB_IMAGE_TAG`, `AGENT_IMAGE_TAG` | `latest` or a short SHA. Each image is tagged with the commit that built it, so the three SHAs usually differ (see Updates). |
 | `POSTGRES_USER`, `POSTGRES_DB` | `dalva`. |
 | `POSTGRES_PASSWORD` | Generate. Only read when the volume is first created; changing it later needs `ALTER ROLE` too. |
 | `NODE_ENV` | `production`. |
@@ -81,7 +81,7 @@ Prove the stack on a staging hostname with an empty database before cutover. Sta
    curl -s -o /dev/null -w '%{http_code}\n' https://staging.dalva.example.com/api/v1/accounts         # 401
    curl -s -o /dev/null -w '%{http_code}\n' -X POST https://staging.dalva.example.com/webhooks/telegram  # 401
    ```
-   Then sign up in the browser and link Telegram from Settings with the staging bot.
+   Then sign up in the browser and link Telegram from Settings with the staging bot. Until the web app moves off Convex, the SPA in this image can't sign in (it has no Convex URL): `smoke.sh` covers the API path through Caddy, the browser check waits for that change.
 
 Production at cutover follows the same steps with `COMPOSE_PROJECT_NAME=dalva`, the production hostname and the production bot, after the data migration.
 
@@ -95,7 +95,7 @@ docker compose up -d
 
 `migrate` runs on every `up` and the API waits for it, so a new API never starts on an old schema. Migrations are forward-only: rolling an image back does not roll the schema back. Before an update that carries a migration, take a backup (`docker compose run --rm backup now`).
 
-Pin a release by setting the three `*_IMAGE_TAG` to a short SHA. Roll back by setting the previous SHA and running `up -d`, as long as no migration in between removed something the old code needs.
+Pin a release by setting each `*_IMAGE_TAG` to a short SHA from its package in GHCR (Packages → `dalva-api` / `dalva-web` / `dalva-agent` → tags). An image is only rebuilt when its inputs change, so each has its own SHA; for one SHA across all three, run Actions → Images → Run workflow on `main` (it builds all three; on `main` it also moves `:latest`). Roll back by setting the previous SHAs and running `up -d`, as long as no migration in between removed something the old code needs.
 
 ## Backup and restore
 
@@ -104,10 +104,10 @@ The `backup` service dumps the database daily at `BACKUP_AT` (UTC) into the `bac
 ```bash
 docker compose run --rm backup now                       # dump now
 docker compose run --rm backup list                      # what is on disk
-docker run --rm -v dalva_backups:/b -v "$PWD":/out alpine cp /b/<file> /out/   # copy one off the volume
+docker run --rm -v dalva_backups:/b -v "$PWD":/out alpine cp /b/<file> /out/   # copy one off the volume (<project>_backups)
 ```
 
-Restore always goes into a new database; it refuses one that exists.
+Restore always goes into a new database; it refuses one that exists. Volume names carry the project prefix: `dalva_backups` in production, `dalva-staging_backups` on staging.
 
 Check a dump (what CI does):
 
@@ -133,7 +133,7 @@ A dump from another host: copy it into the volume (`docker run --rm -v dalva_bac
 
 ```bash
 docker compose logs -f --tail 100 api agent
-docker compose logs api 2>&1 | jq -R 'fromjson? | select(.level=="error" or .level=="warn")'
+docker compose logs --no-log-prefix api 2>&1 | jq -R 'fromjson? | select(.level=="error" or .level=="warn")'
 ```
 
 API, agent, migrate and backup log JSON lines without secrets. Rotation: 5 files of 10 MB per container.
