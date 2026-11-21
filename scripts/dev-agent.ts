@@ -3,7 +3,7 @@
 //
 // DALVA_BACKEND=convex (default): the agent's own env files (apps/agent/.env.local from `bun run setup`).
 // DALVA_BACKEND=api: the local apps/api instead. FINANCE_API_URL and FINANCE_API_SERVICE_KEY come
-// from apps/api/.env.local (PORT, FINANCE_API_SERVICE_KEY), overriding the agent's env files.
+// from apps/api/.env.local or .env (PORT, FINANCE_API_SERVICE_KEY), overriding the agent's env files.
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -27,7 +27,8 @@ if (backend !== "convex" && backend !== "api") {
 
 const env: Record<string, string | undefined> = { ...process.env };
 if (backend === "api") {
-  const api = readEnvFile(join(root, "apps/api/.env.local"));
+  // Same precedence as Bun's env loading for apps/api: .env.local over .env.
+  const api = { ...readEnvFile(join(root, "apps/api/.env")), ...readEnvFile(join(root, "apps/api/.env.local")) };
   if (!api.FINANCE_API_SERVICE_KEY) {
     console.error("dev:agent: set FINANCE_API_SERVICE_KEY in apps/api/.env.local (openssl rand -hex 32), then restart dev:api");
     process.exit(1);

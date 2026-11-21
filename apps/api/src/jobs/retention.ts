@@ -9,9 +9,9 @@
  *   actions of that age, daily
  *
  * Each step deletes or updates one batch per statement and repeats until a
- * batch comes back short. A job runs under a Postgres advisory lock, so two
- * API instances never run the same job at once; one that finds it locked
- * skips that run.
+ * batch comes back short. A job runs on one connection that holds a Postgres
+ * advisory lock, so two API instances never run the same job at once; one
+ * that finds it locked skips that run.
  */
 import { Cron } from "croner";
 
@@ -74,11 +74,11 @@ export type JobResult = { status: "done"; rows: number } | { status: "skipped" }
 
 /** Run one job now: every step until a batch comes back short, under the job's advisory lock. */
 export async function runJob(db: Database, job: RetentionJob, now = new Date()): Promise<JobResult> {
-  const result = await withAdvisoryLock(db, `dalva:job:${job.name}`, async () => {
+  const result = await withAdvisoryLock(db, `dalva:job:${job.name}`, async (lockedDb) => {
     let rows = 0;
     for (const step of job.steps) {
       for (let batches = 0; batches < MAX_BATCHES_PER_STEP; batches++) {
-        const n = await step(db, now, job.batch);
+        const n = await step(lockedDb, now, job.batch);
         rows += n;
         if (n < job.batch) break;
       }

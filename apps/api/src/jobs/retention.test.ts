@@ -20,7 +20,15 @@ import {
   channelLinkCodes,
 } from "../db/schema";
 import { withTx } from "../db/tx";
-import { DAY_MS, EVENT_RETENTION_MS, HOUR_MS, purgeInactiveSessions, purgeStaleEvents, SESSION_RETENTION_MS } from "../domain/agentStore";
+import {
+  DAY_MS,
+  EVENT_RETENTION_MS,
+  expirePendingActions,
+  HOUR_MS,
+  purgeInactiveSessions,
+  purgeStaleEvents,
+  SESSION_RETENTION_MS,
+} from "../domain/agentStore";
 import { IDEMPOTENCY_TTL_MS } from "../http/idempotency";
 import { createLogger } from "../log";
 import { withAdvisoryLock } from "./lock";
@@ -273,6 +281,17 @@ describe("jobs racing requests", () => {
     expect(deleted).toBe(0);
     expect(await counts()).toEqual({ sessions: 1, messages: 0, actions: 1 });
   });
+
+  it("doesn't expire an action a request is confirming", async () => {
+    const { userId, identity } = await aliceWithIdentity();
+    await seedSession(userId, identity, { actions: [{ status: "pending", expiresAt: new Date(Date.now() - 1) }] });
+    const expired = await whileRequestHolds(
+      (tx) => tx.update(agentPendingActions).set({ status: "confirmed", updatedAt: new Date() }),
+      () => expirePendingActions(testDb(), new Date(), 10),
+    );
+    expect(expired).toBe(0);
+    expect((await testDb().select().from(agentPendingActions))[0]!.status).toBe("confirmed");
+  });
 });
 
 describe("advisory lock", () => {
@@ -293,6 +312,18 @@ describe("advisory lock", () => {
       expect(await runJob(testDb(), job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 1 });
     } finally {
       await other.close();
+    }
+  });
+
+  it("runs a job on a one-connection pool", async () => {
+    await seedEvent("old", "done", at(-2 * DAY_MS));
+    const tiny = createDatabase({ url: testDatabaseUrl(), max: 1 });
+    try {
+      expect(await runJob(tiny.db, job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 1 });
+      // The connection went back to the pool unlocked: the next run gets the lock again.
+      expect(await runJob(tiny.db, job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 0 });
+    } finally {
+      await tiny.close();
     }
   });
 
