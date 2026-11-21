@@ -382,11 +382,21 @@ export async function deleteIdentityHistory(tx: Tx, userId: string, identityId: 
 /* -------------------------------------------------------------------------- */
 /*  Retention (src/jobs): one batch per call, single statements on the pool   */
 /* -------------------------------------------------------------------------- */
+/*
+ * READ COMMITTED, outside any request transaction. Each statement repeats its
+ * condition on the rows it changes: a row a request touched meanwhile (an
+ * event moved to `processing`, a message appended) is re-checked after the
+ * request commits and left alone. A request that loses to the job reruns
+ * (serialization failure) and sees the row gone.
+ */
 
 /** Delete events untouched since `cutoff`, whatever their status. Returns how many. */
 export async function purgeStaleEvents(db: Database, cutoff: Date, batch: number): Promise<number> {
   const stale = db.select({ id: agentInboundEvents.id }).from(agentInboundEvents).where(lt(agentInboundEvents.updatedAt, cutoff)).limit(batch);
-  const deleted = await db.delete(agentInboundEvents).where(inArray(agentInboundEvents.id, stale)).returning({ id: agentInboundEvents.id });
+  const deleted = await db
+    .delete(agentInboundEvents)
+    .where(and(inArray(agentInboundEvents.id, stale), lt(agentInboundEvents.updatedAt, cutoff)))
+    .returning({ id: agentInboundEvents.id });
   return deleted.length;
 }
 
@@ -410,15 +420,21 @@ export async function expirePendingActions(db: Database, now: Date, batch: numbe
 export async function purgeInactiveSessions(db: Database, now: Date, batch: number): Promise<number> {
   const cutoff = new Date(now.getTime() - SESSION_RETENTION_MS);
   const inactive = db.select({ id: agentSessions.id }).from(agentSessions).where(lt(agentSessions.lastActivityAt, cutoff)).limit(batch);
-  const deleted = await db.delete(agentSessions).where(inArray(agentSessions.id, inactive)).returning({ id: agentSessions.id });
+  const deleted = await db
+    .delete(agentSessions)
+    .where(and(inArray(agentSessions.id, inactive), lt(agentSessions.lastActivityAt, cutoff)))
+    .returning({ id: agentSessions.id });
   return deleted.length;
 }
 
-/** Delete actions (any status) not updated for `SESSION_RETENTION_MS`, in sessions that are still active. Returns how many. */
+/** Delete actions (any status, any session) not updated for `SESSION_RETENTION_MS`. Returns how many. */
 export async function purgeStaleActions(db: Database, now: Date, batch: number): Promise<number> {
   const cutoff = new Date(now.getTime() - SESSION_RETENTION_MS);
   const stale = db.select({ id: agentPendingActions.id }).from(agentPendingActions).where(lt(agentPendingActions.updatedAt, cutoff)).limit(batch);
-  const deleted = await db.delete(agentPendingActions).where(inArray(agentPendingActions.id, stale)).returning({ id: agentPendingActions.id });
+  const deleted = await db
+    .delete(agentPendingActions)
+    .where(and(inArray(agentPendingActions.id, stale), lt(agentPendingActions.updatedAt, cutoff)))
+    .returning({ id: agentPendingActions.id });
   return deleted.length;
 }
 

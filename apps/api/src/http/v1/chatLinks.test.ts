@@ -13,6 +13,7 @@ import {
   linkedChat,
   raw,
   seedUser,
+  serviceClientFor,
   tokenFor,
   type TestApp,
 } from "../../../test/api";
@@ -85,6 +86,19 @@ describe("chatLinks (web)", () => {
     expect(rows[0]!.consentAt.getTime()).toBeGreaterThan(0);
     // No Idempotency-Key, so no replay record holding the raw code.
     expect(await testDb().select().from(apiIdempotencyKeys)).toHaveLength(0);
+  });
+
+  it("concurrent creates leave one code, and only the code that was stored works", async () => {
+    const { app } = testApp();
+    const { web } = await newUser(app);
+    const codes = await Promise.all([1, 2, 3, 4].map(() => web.chatLinks.createCode({ channel: TG, consent: true })));
+    const rows = await testDb().select().from(channelLinkCodes);
+    expect(rows).toHaveLength(1);
+    const service = serviceClientFor(app);
+    const results = await Promise.allSettled(
+      codes.map(({ code }, i) => service.channelLinks.redeem({ channel: TG, externalUserId: `${i + 1}`, chatId: `${i + 1}`, code })),
+    );
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
   });
 
   it("replaces used codes too, so old rows never pile up", async () => {

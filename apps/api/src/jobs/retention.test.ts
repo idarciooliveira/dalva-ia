@@ -4,7 +4,7 @@
  * `api/v1/channels.test.ts`, the idempotency purge); batching, the advisory
  * lock and the scheduler are new.
  */
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { seedUser } from "../../test/api";
@@ -19,7 +19,8 @@ import {
   channelIdentities,
   channelLinkCodes,
 } from "../db/schema";
-import { DAY_MS, EVENT_RETENTION_MS, HOUR_MS, SESSION_RETENTION_MS } from "../domain/agentStore";
+import { withTx } from "../db/tx";
+import { DAY_MS, EVENT_RETENTION_MS, HOUR_MS, purgeInactiveSessions, purgeStaleEvents, SESSION_RETENTION_MS } from "../domain/agentStore";
 import { IDEMPOTENCY_TTL_MS } from "../http/idempotency";
 import { createLogger } from "../log";
 import { withAdvisoryLock } from "./lock";
@@ -225,6 +226,52 @@ describe("job: purge_idempotency_keys", () => {
       ]);
     expect(await runJob(testDb(), job("purge_idempotency_keys", 2), NOW)).toEqual({ status: "done", rows: 5 });
     expect((await testDb().select().from(apiIdempotencyKeys)).map((k) => k.key)).toEqual(["fresh"]);
+  });
+});
+
+describe("jobs racing requests", () => {
+  /** Run `write` in a request transaction that stays open until the job below has queued behind it. */
+  async function whileRequestHolds(write: Parameters<typeof withTx>[1], job: () => Promise<number>) {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let started!: () => void;
+    const holding = new Promise<void>((resolve) => (started = resolve));
+    const request = withTx(
+      testDb(),
+      async (tx) => {
+        await write(tx);
+        started();
+        await gate;
+      },
+      { maxAttempts: 1 },
+    );
+    await holding;
+    const running = job();
+    await new Promise((resolve) => setTimeout(resolve, 150)); // the job is now waiting on the row lock
+    release();
+    await request;
+    return await running;
+  }
+
+  it("leaves an old event alone that a request just moved to processing", async () => {
+    await seedEvent("e1", "received", new Date(Date.now() - 2 * DAY_MS));
+    const deleted = await whileRequestHolds(
+      (tx) => tx.update(agentInboundEvents).set({ status: "processing", updatedAt: new Date() }).where(eq(agentInboundEvents.eventId, "e1")),
+      () => purgeStaleEvents(testDb(), new Date(Date.now() - EVENT_RETENTION_MS), 10),
+    );
+    expect(deleted).toBe(0);
+    expect(await testDb().select().from(agentInboundEvents)).toHaveLength(1);
+  });
+
+  it("leaves an old session alone that a request just wrote to", async () => {
+    const { userId, identity } = await aliceWithIdentity();
+    const sessionId = await seedSession(userId, identity, { lastActivityAt: new Date(Date.now() - 40 * DAY_MS) });
+    const deleted = await whileRequestHolds(
+      (tx) => tx.update(agentSessions).set({ lastActivityAt: new Date() }).where(eq(agentSessions.id, sessionId)),
+      () => purgeInactiveSessions(testDb(), new Date(), 10),
+    );
+    expect(deleted).toBe(0);
+    expect(await counts()).toEqual({ sessions: 1, messages: 0, actions: 1 });
   });
 });
 

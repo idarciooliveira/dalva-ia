@@ -242,7 +242,7 @@ export async function purgeExpiredCodes(db: Database, now: Date, batch: number):
   const expired = db.select({ id: channelLinkCodes.id }).from(channelLinkCodes).where(lt(channelLinkCodes.expiresAt, now)).limit(batch);
   const deleted = await db
     .delete(channelLinkCodes)
-    .where(inArray(channelLinkCodes.id, expired))
+    .where(and(inArray(channelLinkCodes.id, expired), lt(channelLinkCodes.expiresAt, now)))
     .returning({ id: channelLinkCodes.id });
   return deleted.length;
 }

@@ -162,6 +162,15 @@ describe("channelLinks.redeem", () => {
     expect(response.status).toBe(400);
   });
 
+  it("links one chat account to one user when two users' codes arrive from it at once", async () => {
+    const { app } = testApp();
+    const codes = await Promise.all([seedUser(), seedUser()].map(async (user) => (await createCode(app, await user)).code));
+    const service = serviceClientFor(app);
+    const results = await Promise.allSettled(codes.map((code) => service.channelLinks.redeem({ ...chat("1001"), code })));
+    expect(results.map((r) => (r.status === "fulfilled" ? "ok" : (r.reason as { code: string }).code)).sort()).toEqual(["conflict", "ok"]);
+    expect(await identityRows()).toHaveLength(1);
+  });
+
   it("links exactly once under concurrent redeems of one code", async () => {
     const { app } = testApp();
     const userId = await seedUser();
