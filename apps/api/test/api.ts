@@ -95,26 +95,20 @@ export const tokenFor = (userId: string, scopes: TokenScope[] = ALL_SCOPES, opti
 
 /** The contract's client, calling `app` in-process with `token`. */
 export function clientFor(app: TestApp, token: string) {
-  return createFinanceClient({
-    baseUrl: "https://finance.test",
-    getToken: () => token,
-    fetch: async (input, init) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-      return await app.request(`${url.pathname}${url.search}`, init);
-    },
-  });
+  return createFinanceClient({ baseUrl: "https://finance.test", getToken: () => token, fetch: inProcess(app) });
+}
+
+/** `fetch` that calls `app` in-process. */
+function inProcess(app: TestApp): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
+    return await app.request(`${url.pathname}${url.search}`, init);
+  }) as typeof fetch;
 }
 
 /** The contract's service client (the agent's service key), calling `app` in-process. */
 export function serviceClientFor(app: TestApp, serviceKey = TEST_SERVICE_KEY) {
-  return createFinanceServiceClient({
-    baseUrl: "https://finance.test",
-    getServiceKey: () => serviceKey,
-    fetch: async (input, init) => {
-      const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
-      return await app.request(`${url.pathname}${url.search}`, init);
-    },
-  });
+  return createFinanceServiceClient({ baseUrl: "https://finance.test", getServiceKey: () => serviceKey, fetch: inProcess(app) });
 }
 
 export interface RawResponse {

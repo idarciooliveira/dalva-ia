@@ -22,7 +22,10 @@ import { purgeExpiredIdempotencyKeys } from "../http/idempotency";
 import { errorFields, type Logger } from "../log";
 import { withAdvisoryLock } from "./lock";
 
-/** One batch: rows deleted or updated (fewer than `batch` means done). */
+/**
+ * One batch: rows deleted or updated (fewer than `batch` means done). `db` is
+ * the job's locked connection: single statements only, no transactions.
+ */
 type Step = (db: Database, now: Date, batch: number) => Promise<number>;
 
 export interface RetentionJob {
@@ -72,12 +75,17 @@ export const RETENTION_JOBS: RetentionJob[] = [
 
 export type JobResult = { status: "done"; rows: number } | { status: "skipped" };
 
-/** Run one job now: every step until a batch comes back short, under the job's advisory lock. */
-export async function runJob(db: Database, job: RetentionJob, now = new Date()): Promise<JobResult> {
+/**
+ * Run one job now: every step until a batch comes back short, under the job's
+ * advisory lock. An aborted `signal` stops it after the current batch (the
+ * next run picks up the rest).
+ */
+export async function runJob(db: Database, job: RetentionJob, now = new Date(), signal?: AbortSignal): Promise<JobResult> {
   const result = await withAdvisoryLock(db, `dalva:job:${job.name}`, async (lockedDb) => {
     let rows = 0;
     for (const step of job.steps) {
       for (let batches = 0; batches < MAX_BATCHES_PER_STEP; batches++) {
+        if (signal?.aborted) return rows;
         const n = await step(lockedDb, now, job.batch);
         rows += n;
         if (n < job.batch) break;
@@ -89,18 +97,19 @@ export async function runJob(db: Database, job: RetentionJob, now = new Date()):
 }
 
 export interface JobScheduler {
-  /** Stop scheduling and wait for runs in progress. */
+  /** Stop scheduling, let runs in progress finish their current batch, and wait for them. */
   stop(): Promise<void>;
 }
 
 /** Schedule `jobs` (default: all). A run still going when its next one is due is not doubled (`protect`). */
 export function startRetentionJobs(db: Database, logger: Logger, jobs: RetentionJob[] = RETENTION_JOBS): JobScheduler {
   const running = new Set<Promise<unknown>>();
+  const stopping = new AbortController();
   const crons = jobs.map(
     (job) =>
       new Cron(job.schedule, { name: job.name, timezone: "UTC", protect: true }, async () => {
         const started = Date.now();
-        const run = runJob(db, job).then(
+        const run = runJob(db, job, new Date(), stopping.signal).then(
           (result) =>
             result.status === "done"
               ? logger.info("job_done", { job: job.name, rows: result.rows, ms: Date.now() - started })
@@ -118,6 +127,7 @@ export function startRetentionJobs(db: Database, logger: Logger, jobs: Retention
   return {
     async stop() {
       for (const cron of crons) cron.stop();
+      stopping.abort();
       await Promise.all(running);
     },
   };

@@ -294,6 +294,15 @@ describe("jobs racing requests", () => {
   });
 });
 
+/** Advisory locks held in this worker's database (workers share the server). */
+async function advisoryLocksHeld() {
+  const [row] = await testDb().execute<{ n: number }>(sql`
+    select count(*)::int as n from pg_locks
+    where locktype = 'advisory' and granted and database = (select oid from pg_database where datname = current_database())
+  `);
+  return row?.n;
+}
+
 describe("advisory lock", () => {
   it("skips a job another connection (another API instance) is running", async () => {
     await seedEvent("old", "done", at(-2 * DAY_MS));
@@ -320,8 +329,9 @@ describe("advisory lock", () => {
     const tiny = createDatabase({ url: testDatabaseUrl(), max: 1 });
     try {
       expect(await runJob(tiny.db, job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 1 });
-      // The connection went back to the pool unlocked: the next run gets the lock again.
-      expect(await runJob(tiny.db, job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 0 });
+      // The connection went back to the pool unlocked (another session can take the lock).
+      expect(await runJob(testDb(), job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 0 });
+      expect(await advisoryLocksHeld()).toBe(0);
     } finally {
       await tiny.close();
     }
@@ -330,8 +340,7 @@ describe("advisory lock", () => {
   it("is released when the job fails", async () => {
     const failing: RetentionJob = { name: "failing", schedule: "* * * * *", batch: 1, steps: [() => Promise.reject(new Error("boom"))] };
     await expect(runJob(testDb(), failing)).rejects.toThrow("boom");
-    const [row] = await testDb().execute<{ n: number }>(sql`select count(*)::int as n from pg_locks where locktype = 'advisory' and granted`);
-    expect(row?.n).toBe(0);
+    expect(await advisoryLocksHeld()).toBe(0);
   });
 });
 
@@ -365,6 +374,29 @@ describe("scheduler", () => {
     await stopped;
     expect(calls).toBe(1); // `protect`: no second run while the first was going, and none after stop
     expect(lines).toContainEqual(expect.objectContaining({ msg: "job_done", job: "test_job", rows: 3 }));
+  });
+
+  it("stop interrupts a long job between batches", async () => {
+    let batches = 0;
+    const endless: RetentionJob = {
+      name: "endless_job",
+      schedule: "* * * * * *",
+      batch: 1,
+      steps: [
+        async () => {
+          batches++;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return 1; // always a full batch
+        },
+      ],
+    };
+    const scheduler = startRetentionJobs(testDb(), createLogger({ level: "error", write: () => {} }), [endless]);
+    await expect.poll(() => batches, { timeout: 3_000 }).toBeGreaterThan(2);
+    await scheduler.stop();
+    const after = batches;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(batches).toBe(after);
+    expect(await advisoryLocksHeld()).toBe(0);
   });
 
   it("schedules the five retention jobs on valid UTC patterns", () => {

@@ -14,6 +14,7 @@ import type { ChannelIdentity } from "../../domain/channelLinks";
 import { DomainError } from "../../domain/errors";
 import { commitThenFail, operation } from "../operation";
 import type { UserPrincipal } from "../principal";
+import { iso } from "./shared";
 
 /** The chat identity the token was resolved for. */
 async function callerIdentity(tx: Tx, user: UserPrincipal): Promise<ChannelIdentity> {
@@ -47,8 +48,6 @@ function requireWriteAccess(identity: ChannelIdentity) {
 }
 
 /* DTOs --------------------------------------------------------------------- */
-
-const iso = (date: Date) => date.toISOString();
 
 const sessionDto = (session: agentStore.AgentSession) => ({
   id: session.id,

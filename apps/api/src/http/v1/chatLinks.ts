@@ -8,13 +8,13 @@ import { routes } from "@mpf/finance-contract";
 import * as agentStore from "../../domain/agentStore";
 import * as channelLinks from "../../domain/channelLinks";
 import { operation } from "../operation";
-import { toId } from "./shared";
+import { iso, toId } from "./shared";
 
 const chatLinkDto = (identity: channelLinks.ChannelIdentity) => ({
   id: identity.id,
   channel: identity.channel,
   ...(identity.username ? { username: identity.username } : {}),
-  linkedAt: identity.linkedAt.toISOString(),
+  linkedAt: iso(identity.linkedAt),
   readOnly: !identity.scopes.includes("finance:write"),
 });
 
@@ -31,7 +31,7 @@ export const chatLinkOperations = {
       codeHash: channelLinks.hashLinkCode(code),
       now: new Date(),
     });
-    return { code, expiresAt: expiresAt.toISOString() };
+    return { code, expiresAt: iso(expiresAt) };
   }),
 
   unlink: operation(routes.chatLinks.unlink, async (tx, user, input) => {

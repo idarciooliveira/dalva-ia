@@ -11,11 +11,10 @@ import * as agentStore from "../../domain/agentStore";
 import * as channelLinks from "../../domain/channelLinks";
 import { notFound } from "../../domain/errors";
 import { serviceOperation } from "../operation";
+import { iso } from "./shared";
 
 /** Lifetime of a token minted by `channelIdentities.resolve`. */
 export const RESOLVED_TOKEN_TTL_SECONDS = 15 * 60;
-
-const iso = (date: Date) => date.toISOString();
 
 const identityDto = (identity: channelLinks.ChannelIdentity) => ({
   id: identity.id,
