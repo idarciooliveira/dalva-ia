@@ -1,0 +1,23 @@
+# Context filter for apps/web/Dockerfile.
+**/node_modules
+**/dist
+**/.output
+**/.tanstack
+**/.nitro
+**/.env
+**/.env.*
+!**/.env.example
+.git
+.github
+docs
+deploy
+scripts
+apps/agent
+apps/api
+!apps/agent/package.json
+!apps/api/package.json
+apps/web/e2e
+apps/web/playwright-report
+apps/web/test-results
+**/*.test.ts
+**/*.test.tsx

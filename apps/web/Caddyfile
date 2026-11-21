@@ -1,0 +1,58 @@
+# Single entry of the compose stack (cloudflared -> web:8080). Plain HTTP inside the
+# Docker network: Cloudflare terminates TLS. Upstreams resolve by compose service name.
+{
+	admin off
+	auto_https off
+	persist_config off
+	servers {
+		# The API reads the client address from cf-connecting-ip (CLIENT_IP_HEADER);
+		# Caddy passes it through untouched.
+		trusted_proxies static private_ranges
+	}
+}
+
+:8080 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		X-Frame-Options DENY
+		-Server
+	}
+
+	# Better Auth and the contract routes. The API caps bodies at 1 MiB itself.
+	@api path /api/auth/* /api/v1/*
+	handle @api {
+		request_body {
+			max_size 2MB
+		}
+		reverse_proxy api:4000
+	}
+
+	# Nothing else under /api: never fall through to the SPA.
+	handle /api/* {
+		respond 404
+	}
+
+	# Telegram webhook only; the agent's /health stays internal.
+	handle /webhooks/telegram {
+		reverse_proxy agent:3000
+	}
+
+	# Hashed bundles never change. No SPA fallback here: a missing bundle is a 404, not HTML.
+	handle /assets/* {
+		root * /srv
+		@exists file
+		header @exists Cache-Control "public, max-age=31536000, immutable"
+		file_server
+	}
+
+	# Client routes fall back to the SPA shell. Revalidate so a deploy shows up at once.
+	handle {
+		root * /srv
+		header Cache-Control "no-cache"
+		try_files {path} /_shell.html
+		file_server
+	}
+}

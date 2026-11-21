@@ -1,0 +1,117 @@
+name: Compose stack
+
+# Builds the three images, runs deploy/docker-compose.yml on an empty database (no
+# cloudflared) and runs deploy/smoke.sh: health, routing, sign-up and sign-in through the
+# web entry, backup and restore. Nothing is pushed.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - deploy/**
+      - apps/*/Dockerfile
+      - apps/*/Dockerfile.dockerignore
+      - apps/web/Caddyfile
+      - apps/api/drizzle/**
+      - .dockerignore
+      - .github/workflows/images.yml
+      - .github/workflows/stack.yml
+  workflow_dispatch:
+
+concurrency:
+  group: stack-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  stack:
+    name: Stack smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      COMPOSE_PROJECT_NAME: dalva-ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Same cache scopes as images.yml. Loaded into the local daemon under the names compose expects.
+      - name: Build api
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          load: true
+          provenance: false
+          tags: ghcr.io/ci/dalva-api:ci
+          cache-from: type=gha,scope=dalva-api
+      - name: Build web
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          load: true
+          provenance: false
+          tags: ghcr.io/ci/dalva-web:ci
+          cache-from: type=gha,scope=dalva-web
+      - name: Build agent
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/agent/Dockerfile
+          load: true
+          provenance: false
+          tags: ghcr.io/ci/dalva-agent:ci
+          cache-from: type=gha,scope=dalva-agent
+
+      - name: Write deploy/.env from .env.example
+        working-directory: deploy
+        run: |
+          cp .env.example .env
+          set_env() { sed -i "s|^$1=.*|$1=$2|" .env; grep -q "^$1=$2\$" .env || echo "$1=$2" >> .env; }
+          secret() { openssl rand -hex 32; }
+          set_env COMPOSE_PROJECT_NAME "$COMPOSE_PROJECT_NAME"
+          set_env GHCR_OWNER ci
+          set_env API_IMAGE_TAG ci
+          set_env WEB_IMAGE_TAG ci
+          set_env AGENT_IMAGE_TAG ci
+          set_env POSTGRES_PASSWORD "$(secret)"
+          set_env PUBLIC_URL https://dalva-ci.example.com
+          set_env BETTER_AUTH_SECRET "$(secret)"
+          set_env FINANCE_API_TOKEN_SECRET "$(secret)"
+          set_env FINANCE_API_SERVICE_KEY "$(secret)"
+          # Shaped like real values; webhook mode never calls Telegram at boot.
+          set_env TELEGRAM_BOT_TOKEN "123456789:$(openssl rand -hex 20)"
+          set_env TELEGRAM_WEBHOOK_SECRET "$(secret)"
+          set_env AI_GATEWAY_API_KEY "ci-$(secret)"
+          set_env TUNNEL_TOKEN unused-in-ci
+          # Fail on any placeholder left behind.
+          ! grep -n 'replace-with' .env
+
+      - name: Validate compose file
+        working-directory: deploy
+        run: docker compose config --quiet
+
+      - name: Start the stack (no cloudflared)
+        working-directory: deploy
+        run: |
+          # Public images only; ours were just built and loaded.
+          docker compose pull postgres backup
+          docker compose up -d --pull never postgres migrate api web agent backup
+
+      - name: Smoke test
+        run: deploy/smoke.sh
+
+      - name: Logs
+        if: always()
+        working-directory: deploy
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --timestamps
+
+      - name: Stop
+        if: always()
+        working-directory: deploy
+        run: docker compose down -v
