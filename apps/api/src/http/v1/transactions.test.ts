@@ -145,6 +145,15 @@ describe("api/v1 transactions: writes", () => {
     await expectApiError(client.accounts.adjust({ id: kwd, amount: { amountMinor: 5, currency: "KWD" } }), "validation_failed");
   });
 
+  it("refuses a balance the contract can't show in the currency's minor units (KWD x10), writing nothing", async () => {
+    const { user, client } = await oneUser({ baseCurrency: "KWD" });
+    const kwd = await seedAccount(user, { currency: "KWD" });
+    const big = { amountMinor: 9e15, currency: "KWD" };
+    await client.transactions.create({ type: "income", amount: big, accountId: kwd, date: "2026-01-01" });
+    await expectApiError(client.transactions.create({ type: "income", amount: big, accountId: kwd, date: "2026-01-01" }), "validation_failed", 400);
+    expect((await client.accounts.list()).items[0]?.balance).toEqual(big);
+  });
+
   it("drops the old subcategory when only the category changes", async () => {
     const { alice, aliceAccount, asAlice } = await twoUsers();
     const food = await seedCategory(alice);

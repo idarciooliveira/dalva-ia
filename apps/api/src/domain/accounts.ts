@@ -4,6 +4,7 @@
  * missing and foreign accounts are both "Account not found". Amounts are
  * stored minor units (value × 100).
  */
+import { currencyExponent } from "@mpf/finance-contract";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import { accounts, debtPayments, debts, savingsGoals, transactions } from "../db/schema";
@@ -141,9 +142,11 @@ export async function addToBalances(tx: Tx, userId: string, deltas: Array<[accou
       .update(accounts)
       .set({ balance: sql`${accounts.balance} + ${delta}` })
       .where(owned(userId, accountId))
-      .returning({ balance: accounts.balance });
+      .returning({ balance: accounts.balance, currency: accounts.currency });
     if (!account) throw notFound("Account");
-    // bigint is read as a JS number: refuse a balance it can't hold exactly (the transaction rolls back).
-    if (!Number.isSafeInteger(account.balance)) throw invalid("amount.amountMinor", "Balance out of range");
+    // bigint is read as a JS number, and the API shows the balance in ISO minor units (×10 for KWD):
+    // refuse a balance either can't hold exactly (the transaction rolls back).
+    const scale = 10 ** Math.max(0, currencyExponent(account.currency) - 2);
+    if (!Number.isSafeInteger(account.balance * scale)) throw invalid("amount.amountMinor", "Balance out of range");
   }
 }

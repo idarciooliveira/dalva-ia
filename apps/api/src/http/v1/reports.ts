@@ -1,9 +1,16 @@
 import { routes } from "@mpf/finance-contract";
 
 import * as reports from "../../domain/reports";
-import { requireBaseCurrency, requireBaseCurrencyOnly, transactionDtos } from "./currency";
+import { conflict } from "../../domain/errors";
 import { operation } from "../operation";
-import { toMoney } from "./money";
+import { requireBaseCurrency, requireBaseCurrencyOnly, transactionDtos } from "./currency";
+import { fitsMoney, toMoney as moneyOf } from "./money";
+
+/** A total past the safe integer range (in ISO minor units) can't be answered exactly. */
+function toMoney(amount: number, currency: string) {
+  if (!fitsMoney(amount, currency)) throw conflict("Report total out of range");
+  return moneyOf(amount, currency);
+}
 
 /*
  * Totals are labelled with the user's base currency. The domain sums across

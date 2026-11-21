@@ -105,6 +105,17 @@ describe("api/v1 reports", () => {
     ]);
   });
 
+  it("answers conflict, not a 500, for a total past the safe integer range", async () => {
+    const { user, client } = await oneUser();
+    for (const name of ["A", "B"]) {
+      const accountId = await seedAccount(user, { name });
+      await client.transactions.create({ type: "income", amount: { amountMinor: 5e15, currency: "USD" }, accountId, date: "2026-01-01" });
+    }
+    const error = await expectApiError(client.reports.transactionSummary({ month: "2026-01" }), "conflict", 409);
+    expect(error.message).toBe("Report total out of range");
+    await expectApiError(client.reports.netWorth(), "conflict", 409);
+  });
+
   it("needs a profile: conflict before onboarding", async () => {
     const { client } = await oneUser({ profile: false });
     await expectApiError(client.reports.netWorth(), "conflict", 409);
