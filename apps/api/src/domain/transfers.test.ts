@@ -169,9 +169,10 @@ describe("domain/transfers", () => {
       const from = await seedAccount(alice, { balance: 10_000, name: "From" });
       for (const pick of ["outgoing", "incoming"] as const) {
         const legs = await seedTransfer(alice, from, await seedAccount(alice), 1_000);
-        // What the import writes for a dangling destination: no destination on the outgoing leg, no account on the incoming one.
-        await testDb().update(transactions).set({ destinationAccountId: null }).where(eq(transactions.id, legs.outgoing));
-        await testDb().update(transactions).set({ accountId: null }).where(eq(transactions.id, legs.incoming));
+        // What the import writes for a dangling destination: no destination on the outgoing leg, no account on the
+        // incoming one. Imported ids within one millisecond are in any order: make the incoming leg the older one.
+        await testDb().update(transactions).set({ destinationAccountId: null, createdAt: new Date("2026-01-01T00:00:01Z") }).where(eq(transactions.id, legs.outgoing));
+        await testDb().update(transactions).set({ accountId: null, createdAt: new Date("2026-01-01T00:00:00Z") }).where(eq(transactions.id, legs.incoming));
 
         const view = await readTx(testDb(), (t) => transfers.getTransfer(t, alice, legs[pick]));
         expect([view.outgoing.id, view.incoming.id, view.fromAccount?.name, view.toAccount]).toEqual([legs.outgoing, legs.incoming, "From", null]);

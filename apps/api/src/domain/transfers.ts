@@ -13,18 +13,14 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { and, eq } from "drizzle-orm";
-
 import { transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
 import { type Account, addToBalances, getAccount } from "./accounts";
 import { conflict, invalid, notFound } from "./errors";
-import { getTransaction, ownedByContribution, type Transaction } from "./transactions";
+import { getTransaction, ownedByContribution, ownedTransaction, type Transaction } from "./transactions";
 
 export const CONTRIBUTION_MANAGED_MESSAGE =
   "Goal contribution transfers must be changed through the goal contribution endpoints";
-
-const owned = (userId: string, id: string) => and(eq(transactions.id, id), eq(transactions.userId, userId));
 
 export interface TransferLegs {
   outgoing: Transaction;
@@ -47,24 +43,21 @@ async function getLeg(tx: Tx, userId: string, id: string): Promise<Transaction> 
   return row;
 }
 
-/** Created first: Convex inserted the outgoing leg before the incoming one. */
-const createdBefore = (a: Transaction, b: Transaction) =>
-  a.createdAt.getTime() !== b.createdAt.getTime() ? a.createdAt < b.createdAt : a.id < b.id;
-
 /**
  * Both legs from either one. The outgoing leg carries
- * `destination_account_id`. The import nulls it when Convex deleted the
- * destination account; then the leg that isn't the incoming one by that rule
- * is told by creation order. A leg without its pair is the outgoing one when
- * it carries `destination_account_id`, else the incoming one.
+ * `destination_account_id`, the incoming leg sits on that same account. When
+ * Convex deleted it, the import nulled both, so the incoming leg is then the
+ * one without an account (with both accounts gone, which leg is which changes
+ * no balance). A leg without its pair is the outgoing one when it carries
+ * `destination_account_id`, else the incoming one.
  */
 async function legsOf(tx: Tx, userId: string, row: Transaction): Promise<{ outgoing: Transaction | null; incoming: Transaction | null }> {
   const linked = row.linkedTransactionId
-    ? ((await tx.select().from(transactions).where(owned(userId, row.linkedTransactionId)).limit(1))[0] ?? null)
+    ? ((await tx.select().from(transactions).where(ownedTransaction(userId, row.linkedTransactionId)).limit(1))[0] ?? null)
     : null;
   const rowIsOutgoing =
     row.destinationAccountId !== null ||
-    (linked !== null && linked.destinationAccountId === null && createdBefore(row, linked));
+    (linked !== null && linked.destinationAccountId === null && row.accountId !== null && linked.accountId === null);
   return rowIsOutgoing ? { outgoing: row, incoming: linked } : { outgoing: linked, incoming: row };
 }
 
@@ -143,7 +136,7 @@ export async function createTransfer(tx: Tx, userId: string, args: TransferField
     .insert(transactions)
     .values({ ...shared, accountId: args.toAccountId, linkedTransactionId: outgoing!.id })
     .returning({ id: transactions.id });
-  await tx.update(transactions).set({ linkedTransactionId: incoming!.id }).where(owned(userId, outgoing!.id));
+  await tx.update(transactions).set({ linkedTransactionId: incoming!.id }).where(ownedTransaction(userId, outgoing!.id));
   await addToBalances(tx, userId, [
     [args.fromAccountId, -args.amount],
     [args.toAccountId, args.amount],
@@ -187,11 +180,11 @@ export async function updateLoadedTransfer(
       ...(changes.fromAccountId !== undefined && { accountId: changes.fromAccountId }),
       ...(changes.toAccountId !== undefined && { destinationAccountId: changes.toAccountId }),
     })
-    .where(owned(userId, outgoing.id));
+    .where(ownedTransaction(userId, outgoing.id));
   await tx
     .update(transactions)
     .set({ ...shared, ...(changes.toAccountId !== undefined && { accountId: changes.toAccountId }) })
-    .where(owned(userId, incoming.id));
+    .where(ownedTransaction(userId, incoming.id));
   await addToBalances(tx, userId, [
     [outgoing.accountId, outgoing.amount],
     [incoming.accountId, -outgoing.amount],
@@ -209,11 +202,11 @@ export async function deleteTransfer(tx: Tx, userId: string, id: string): Promis
   const { outgoing, incoming } = await legsOf(tx, userId, await getEditableLeg(tx, userId, id));
   const deltas: Array<[string | null, number]> = [];
   if (outgoing) {
-    await tx.delete(transactions).where(owned(userId, outgoing.id));
+    await tx.delete(transactions).where(ownedTransaction(userId, outgoing.id));
     deltas.push([outgoing.accountId, outgoing.amount]);
   }
   if (incoming) {
-    await tx.delete(transactions).where(owned(userId, incoming.id));
+    await tx.delete(transactions).where(ownedTransaction(userId, incoming.id));
     deltas.push([incoming.accountId, -incoming.amount]);
   }
   await addToBalances(tx, userId, deltas);

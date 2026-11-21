@@ -59,6 +59,18 @@ describe("domain/reports", () => {
     expect(await read((t) => reports.spendingByCategory(t, bob, "2026-03"))).toEqual({ total: 0, categories: [] });
   });
 
+  it("orders tied categories by their first expense of the month, as Convex", async () => {
+    const alice = await createTestUser();
+    const accountId = await seedAccount(alice);
+    const zed = await seedCategory(alice, { name: "Zed" });
+    const abe = await seedCategory(alice, { name: "Abe" });
+    await seedTransaction(alice, accountId, { amount: 100, date: "2026-03-02", categoryId: zed });
+    await seedTransaction(alice, accountId, { amount: 100, date: "2026-03-05", categoryId: abe });
+    await seedTransaction(alice, accountId, { amount: 100, date: "2026-03-09" });
+    const { categories } = await read((t) => reports.spendingByCategory(t, alice, "2026-03"));
+    expect(categories.map((c) => c.name)).toEqual(["Zed", "Abe", "Uncategorized"]);
+  });
+
   it("uses each month's real last day: February, leap years, December", async () => {
     const alice = await createTestUser();
     const accountId = await seedAccount(alice);

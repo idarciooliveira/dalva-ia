@@ -316,9 +316,10 @@ describe("domain/transactions", () => {
       expect(await ids({ accountId })).toEqual([feb, jan]);
       expect(await ids({ categoryId: food })).toEqual([feb]);
       expect(await ids({ q: "COFFEE" })).toEqual([mar, feb]);
-      // LIKE metacharacters in q match themselves.
-      expect(await ids({ q: "100%" })).toEqual([jan]);
-      expect(await ids({ q: "_" })).toEqual([]);
+      // LIKE metacharacters in q match themselves, not any character(s).
+      expect(await ids({ q: "%" })).toEqual([jan]);
+      expect(await ids({ q: "10_" })).toEqual([]);
+      expect(await ids({ q: "Coffee_beans" })).toEqual([]);
     });
 
     it("pages rows created in one transaction (same created_at) without gaps or repeats, with every limit", async () => {

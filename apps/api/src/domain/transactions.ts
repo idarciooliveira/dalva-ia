@@ -30,7 +30,9 @@ export type TransactionType = Transaction["type"];
 /** Types the transaction endpoints write. Transfers have their own. */
 export type WritableTransactionType = Exclude<TransactionType, "transfer">;
 
-const owned = (userId: string, id: string) => and(eq(transactions.id, id), eq(transactions.userId, userId));
+/** The user's transaction `id`. */
+export const ownedTransaction = (userId: string, id: string) => and(eq(transactions.id, id), eq(transactions.userId, userId));
+const owned = ownedTransaction;
 
 /** Newest first: date, then creation order (the id breaks ties within one transaction). */
 export const NEWEST_FIRST = [desc(transactions.date), desc(transactions.createdAt), desc(transactions.id)] as const;
