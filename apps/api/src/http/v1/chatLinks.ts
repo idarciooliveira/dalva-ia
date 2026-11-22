@@ -23,11 +23,15 @@ export interface ChatLinkSettings {
   telegramBotUsername?: string;
 }
 
+/** The configured bots, by channel (`botUsernames` in the contract). */
+const botUsernames = (settings: ChatLinkSettings): Record<string, string> =>
+  settings.telegramBotUsername ? { telegram: settings.telegramBotUsername } : {};
+
 export const chatLinkOperations = (settings: ChatLinkSettings = {}) => ({
   list: operation(routes.chatLinks.list, async (tx, user) => {
     return {
       items: (await channelLinks.listActiveForUser(tx, user.userId)).map(chatLinkDto),
-      botUsernames: settings.telegramBotUsername ? { telegram: settings.telegramBotUsername } : {},
+      botUsernames: botUsernames(settings),
     };
   }),
 
