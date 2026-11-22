@@ -63,8 +63,12 @@ export interface CallOptions {
 export interface FinanceClientOptions {
   /** Origin only, e.g. `https://finance.example.com`. `/api/v1` is appended. */
   baseUrl: string;
-  /** Called before every request; return the user-scoped bearer token. */
-  getToken: () => string | Promise<string>;
+  /**
+   * Called before every request; return the user-scoped bearer token. Omit it in a
+   * same-origin browser app: no `Authorization` header is sent and the session cookie
+   * authenticates the request instead.
+   */
+  getToken?: () => string | Promise<string>;
   fetch?: typeof fetch;
   /** Override idempotency key generation (defaults to `crypto.randomUUID()`). */
   generateIdempotencyKey?: () => string;
@@ -100,7 +104,8 @@ function defaultIdempotencyKey(): string {
 
 interface TransportOptions {
   baseUrl: string;
-  getCredential: () => string | Promise<string>;
+  /** Omitted: no `Authorization` header (cookie session). */
+  getCredential?: () => string | Promise<string>;
   fetch?: typeof fetch;
   generateIdempotencyKey?: () => string;
 }
@@ -127,11 +132,13 @@ function buildClient(auth: RouteAuth, options: TransportOptions): unknown {
     ) => new FinanceApiError(code, message, status, details, { cause, idempotencyKey });
 
     const headers = new Headers({ Accept: "application/json" });
-    const token = await options.getCredential();
-    try {
-      headers.set(AUTHORIZATION_HEADER, bearerAuthorization(token));
-    } catch (error) {
-      throw apiError("validation_failed", "Token is not a valid header value", null, undefined, error);
+    if (options.getCredential) {
+      const token = await options.getCredential();
+      try {
+        headers.set(AUTHORIZATION_HEADER, bearerAuthorization(token));
+      } catch (error) {
+        throw apiError("validation_failed", "Token is not a valid header value", null, undefined, error);
+      }
     }
 
     const { path, query, body } = buildRequestParts(route, parsed.data as Record<string, unknown>);
@@ -223,7 +230,7 @@ function buildClient(auth: RouteAuth, options: TransportOptions): unknown {
   );
 }
 
-/** Client for the user routes, authenticated with a user token. */
+/** Client for the user routes, authenticated with a user token, or with the session cookie when `getToken` is omitted. */
 export function createFinanceClient(options: FinanceClientOptions): FinanceClient {
   return buildClient("user", {
     baseUrl: options.baseUrl,

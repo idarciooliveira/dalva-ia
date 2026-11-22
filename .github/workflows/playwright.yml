@@ -16,6 +16,23 @@ jobs:
     # Pinned: ubuntu-latest is 26.04 now and Playwright 1.59 cannot install Chromium there.
     runs-on: ubuntu-24.04
 
+    # The local stack: playwright.config.ts starts apps/api on a fresh database of this
+    # server (migrated on start) and the web dev server, which proxies /api to it.
+    services:
+      postgres:
+        image: postgres:18.7-alpine
+        env:
+          POSTGRES_USER: dalva
+          POSTGRES_PASSWORD: dalva
+          POSTGRES_DB: dalva
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dalva -d dalva"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
     steps:
       - uses: actions/checkout@v4
 
@@ -34,7 +51,7 @@ jobs:
         run: bunx playwright test --project=chromium
         working-directory: apps/web
         env:
-          VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
+          E2E_DATABASE_URL: postgres://dalva:dalva@127.0.0.1:5432/dalva_e2e
 
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}

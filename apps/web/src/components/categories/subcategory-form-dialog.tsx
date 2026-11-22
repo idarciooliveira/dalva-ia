@@ -1,8 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import type { Category, Subcategory } from "@mpf/finance-contract";
 import { FileText, FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -14,12 +11,15 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { getCategoryIcon } from "@/lib/category-icons";
+import { FormError } from "@/components/error-state";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage } from "@/lib/api/errors";
 
 interface SubcategoryFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  parentCategory: Doc<"categories"> | null;
-  subcategory?: Doc<"subcategories"> | null;
+  parentCategory: Category | null;
+  subcategory?: Subcategory | null;
 }
 
 export function SubcategoryFormDialog({
@@ -39,12 +39,8 @@ export function SubcategoryFormDialog({
     }
   }, [open, subcategory]);
 
-  const { mutateAsync: createSubcategory, isPending: isCreating } = useMutation({
-    mutationFn: useConvexMutation(api.categories.createSubcategory),
-  });
-  const { mutateAsync: updateSubcategory, isPending: isUpdating } = useMutation({
-    mutationFn: useConvexMutation(api.categories.updateSubcategory),
-  });
+  const { mutateAsync: createSubcategory, isPending: isCreating } = useApiMutation("subcategories", "create");
+  const { mutateAsync: updateSubcategory, isPending: isUpdating } = useApiMutation("subcategories", "update");
 
   const isPending = isCreating || isUpdating;
 
@@ -57,25 +53,29 @@ export function SubcategoryFormDialog({
     }
     if (!parentCategory) return;
 
-    if (isEdit && subcategory) {
-      await updateSubcategory({
-        id: subcategory._id,
+    try {
+      if (isEdit && subcategory) {
+        await updateSubcategory({
+          id: subcategory.id,
+          name: name.trim(),
+        });
+        onOpenChange(false);
+        return;
+      }
+
+      await createSubcategory({
+        categoryId: parentCategory.id,
         name: name.trim(),
       });
-      onOpenChange(false);
-      return;
-    }
 
-    await createSubcategory({
-      categoryId: parentCategory._id,
-      name: name.trim(),
-    });
-
-    if (andCreateNew) {
-      setName("");
-      setError("");
-    } else {
-      onOpenChange(false);
+      if (andCreateNew) {
+        setName("");
+        setError("");
+      } else {
+        onOpenChange(false);
+      }
+    } catch (err) {
+      setError(apiErrorMessage(err, isEdit ? "Couldn't save the subcategory. Try again." : "Couldn't add the subcategory. Try again."));
     }
   }
 
@@ -138,9 +138,7 @@ export function SubcategoryFormDialog({
           </div>
 
           {/* ── Error ── */}
-          {error && (
-            <p className="mt-3 text-sm text-destructive">{error}</p>
-          )}
+          <FormError message={error} />
         </div>
 
         {/* ── Footer with actions ── */}

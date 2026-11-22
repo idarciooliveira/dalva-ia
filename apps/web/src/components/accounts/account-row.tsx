@@ -1,8 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import type { Account } from "@mpf/finance-contract";
 import {
   MoreVertical,
   Pencil,
@@ -22,13 +19,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import { ACCOUNT_IN_USE, convexErrorMessage } from "@/lib/convex-errors";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage, isApiError } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/format";
+import { formatMinor } from "@/lib/money";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES } from "@/lib/accounts";
 
 interface AccountRowProps {
-  account: Doc<"accounts">;
+  account: Account;
   onEdit: () => void;
   onAdjustBalance: () => void;
 }
@@ -42,35 +40,39 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
   const Icon = accountType?.icon;
   const theme = ACCOUNT_THEMES.find((t) => t.id === (account.theme ?? "default")) ?? ACCOUNT_THEMES[0];
 
-  const { mutate: archiveAccount } = useMutation({
-    mutationFn: useConvexMutation(api.accounts.archiveAccount),
+  const { mutate: archiveAccount, isPending: isArchiving } = useApiMutation("accounts", "archive", {
     onMutate: () => setDeleteError(null),
-    onError: () => {
-      setDeleteError("Couldn't archive the account. Try again.");
+    onError: (error) => {
+      setDeleteError(apiErrorMessage(error, "Couldn't archive the account. Try again."));
       setCanArchive(false);
     },
+    onSuccess: () => setCanArchive(false),
   });
-  const { mutate: restoreAccount } = useMutation({
-    mutationFn: useConvexMutation(api.accounts.restoreAccount),
-  });
-  const { mutate: deleteAccount } = useMutation({
-    mutationFn: useConvexMutation(api.accounts.deleteAccount),
+  const { mutate: restoreAccount, isPending: isRestoring } = useApiMutation("accounts", "restore", {
     onMutate: () => setDeleteError(null),
-    // Accounts with transactions, goals or debts can't be deleted; archive instead.
+    onError: (error) => setDeleteError(apiErrorMessage(error, "Couldn't restore the account. Try again.")),
+  });
+  const { mutate: deleteAccount, isPending: isDeleting } = useApiMutation("accounts", "delete", {
+    onMutate: () => setDeleteError(null),
+    // Accounts with transactions, goals or debts can't be deleted (`conflict`); archive instead.
     onError: (error) => {
+      const inUse = isApiError(error, "conflict");
       setDeleteError(
-        convexErrorMessage(error, ACCOUNT_IN_USE)
+        inUse
           ? "This account has transactions, goals or debts linked to it, so it can't be deleted."
-          : "Couldn't delete the account. Try again.",
+          : apiErrorMessage(error, "Couldn't delete the account. Try again."),
       );
-      setCanArchive(convexErrorMessage(error, ACCOUNT_IN_USE) !== null);
+      setCanArchive(inUse);
     },
   });
+  const isBusy = isArchiving || isRestoring || isDeleting;
 
-  const isNegative = account.balance < 0;
+  const balance = account.balance.amountMinor;
+  const currency = account.balance.currency;
+  const isNegative = balance < 0;
 
   return (
-    <div>
+    <div role="listitem" aria-label={account.name}>
     <div
       className={cn(
         "flex min-h-20 items-center gap-3 rounded-2xl border border-border/60 bg-card px-3 py-3.5 transition-colors sm:min-h-22 sm:gap-5 sm:px-5 sm:py-4",
@@ -100,7 +102,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
           )}
         </div>
         <span className="mt-0.5 block text-xs text-muted-foreground sm:mt-1 sm:text-sm">
-          {accountType?.label ?? account.type} · {account.currency}
+          {accountType?.label ?? account.type} · {currency}
         </span>
       </div>
 
@@ -112,7 +114,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
             isNegative ? "text-destructive" : "text-foreground",
           )}
         >
-          {formatCurrency(Math.abs(account.balance), account.currency)}
+          {formatMinor(Math.abs(balance), currency)}
         </span>
         {isNegative && (
           <span className="ml-1 text-xs text-destructive sm:text-sm">owing</span>
@@ -122,7 +124,12 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
       {/* Actions dropdown */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" className="text-muted-foreground">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="text-muted-foreground"
+            aria-label={`Open ${account.name} actions`}
+          >
             <MoreVertical className="size-4" />
           </Button>
         </DropdownMenuTrigger>
@@ -138,20 +145,23 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
           <DropdownMenuSeparator />
           {account.archived ? (
             <DropdownMenuItem
-              onClick={() => restoreAccount({ id: account._id })}
+              disabled={isBusy}
+              onClick={() => restoreAccount({ id: account.id })}
             >
               <ArchiveRestore className="mr-2 size-4" />
               Restore
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem
-              onClick={() => archiveAccount({ id: account._id })}
+              disabled={isBusy}
+              onClick={() => archiveAccount({ id: account.id })}
             >
               <Archive className="mr-2 size-4" />
               Archive
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
+            disabled={isBusy}
             className="text-destructive focus:text-destructive"
             onClick={() => setDeleteDialogOpen(true)}
           >
@@ -166,7 +176,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
         onOpenChange={setDeleteDialogOpen}
         title="Delete account"
         description="Delete this account? This cannot be undone."
-        onConfirm={() => deleteAccount({ id: account._id })}
+        onConfirm={() => deleteAccount({ id: account.id })}
       />
     </div>
     {deleteError && (
@@ -179,8 +189,9 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
           <Button
             variant="outline"
             size="sm"
+            disabled={isBusy}
             onClick={() => {
-              archiveAccount({ id: account._id });
+              archiveAccount({ id: account.id });
             }}
           >
             Archive instead
