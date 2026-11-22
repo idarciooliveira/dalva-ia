@@ -81,7 +81,7 @@ Prove the stack on a staging hostname with an empty database before cutover. Sta
    curl -s -o /dev/null -w '%{http_code}\n' https://staging.dalva.example.com/api/v1/accounts         # 401
    curl -s -o /dev/null -w '%{http_code}\n' -X POST https://staging.dalva.example.com/webhooks/telegram  # 401
    ```
-   Then sign up in the browser and link Telegram from Settings with the staging bot. Until the web app moves off Convex, the SPA in this image can't sign in (it has no Convex URL): `smoke.sh` covers the API path through Caddy, the browser check waits for that change.
+   Then sign up in the browser, finish onboarding, and link Telegram from Settings with the staging bot. Pages still on Convex (transactions, goals, debts, dashboard widgets, Telegram linking) show an error in this image until the web migration finishes; auth, onboarding, accounts and categories already run on the API.
 
 Production at cutover follows the same steps with `COMPOSE_PROJECT_NAME=dalva`, the production hostname and the production bot, after the data migration.
 
