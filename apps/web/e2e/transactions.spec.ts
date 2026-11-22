@@ -103,7 +103,7 @@ test.describe("Transactions page - edit flow", () => {
     await expect(page.getByLabel("Amount")).toHaveValue("20,00");
 
     await page.getByRole("button", { name: "Save changes" }).click();
-    await expect(page.getByRole("heading", { name: "Edit expense" })).not.toBeVisible();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
 
     await openRowAction(page, "Lunch", "Edit");
     await expect(page.getByLabel("Amount")).toHaveValue("20,00");
@@ -150,6 +150,24 @@ test.describe("Transactions (apps/api)", () => {
 
     await page.goto("/accounts");
     await expect(accountRow(page, "Main Checking")).toContainText("$960.00");
+
+    // Clearing a field on edit clears it (the API takes null).
+    await page.goto("/transactions");
+    await openRowAction(page, "Salary", "Edit");
+    await page.getByRole("button", { name: "More details" }).click();
+    await page.getByLabel("Payee").fill("Acme Corp");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await openRowAction(page, "Salary", "Edit");
+    await expect(page.getByLabel("Payee")).toHaveValue("Acme Corp");
+    await page.getByLabel("Payee").fill("");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
+    await openRowAction(page, "Salary", "Edit");
+    // No payee or note left: the extra fields start collapsed again.
+    await expect(page.getByRole("button", { name: "More details" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).not.toBeVisible();
 
     // Delete restores the balance.
     await page.goto("/transactions");

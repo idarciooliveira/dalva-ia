@@ -215,8 +215,19 @@ export async function createTransaction(tx: Tx, userId: string, args: Transactio
   return row!;
 }
 
+/** What an update may change: `null` clears the subcategory and the free-text fields. */
+export type TransactionChanges = Partial<Omit<TransactionFields, "subcategoryId" | "description" | "note" | "payee">> & {
+  subcategoryId?: string | null;
+  description?: string | null;
+  note?: string | null;
+  payee?: string | null;
+};
+
+/** The change if given (`null` included), else the stored value. */
+const changed = <T>(change: T | undefined, stored: T): T => (change === undefined ? stored : change);
+
 /**
- * Change the fields given (none can be cleared). Reverses the old balance
+ * Change the fields given; `null` clears a nullable one. Reverses the old balance
  * effect on the old account and applies the new one on the new account.
  * A new category without a subcategory drops the old subcategory, which
  * belongs to the old category.
@@ -225,7 +236,7 @@ export async function updateTransaction(
   tx: Tx,
   userId: string,
   id: string,
-  changes: Partial<TransactionFields>,
+  changes: TransactionChanges,
 ): Promise<Transaction> {
   return await updateLoadedTransaction(tx, userId, await getEditableTransaction(tx, userId, id), changes);
 }
@@ -235,7 +246,7 @@ export async function updateLoadedTransaction(
   tx: Tx,
   userId: string,
   row: Transaction,
-  changes: Partial<TransactionFields>,
+  changes: TransactionChanges,
 ): Promise<Transaction> {
   const id = row.id;
   assertWritableType(changes.type);
@@ -243,15 +254,15 @@ export async function updateLoadedTransaction(
   const type = changes.type ?? row.type;
   const amount = changes.amount ?? row.amount;
   if (type === "adjustment") {
-    assertNoCategoryOnAdjustment(changes.categoryId ?? row.categoryId, changes.subcategoryId ?? row.subcategoryId);
+    assertNoCategoryOnAdjustment(changes.categoryId ?? row.categoryId, changed(changes.subcategoryId, row.subcategoryId));
   }
-  await checkClassification(tx, userId, changes, row.categoryId);
+  await checkClassification(tx, userId, { categoryId: changes.categoryId, subcategoryId: changes.subcategoryId ?? undefined }, row.categoryId);
   const accountId = changes.accountId ?? row.accountId;
   if (changes.accountId && changes.accountId !== row.accountId) await getAccount(tx, userId, changes.accountId);
   assertAmount(type, amount);
 
   const categoryChanged = changes.categoryId !== undefined && changes.categoryId !== row.categoryId;
-  const subcategoryId = changes.subcategoryId ?? (categoryChanged ? null : row.subcategoryId);
+  const subcategoryId = changed(changes.subcategoryId, categoryChanged ? null : row.subcategoryId);
   const [updated] = await tx
     .update(transactions)
     .set({
@@ -261,9 +272,9 @@ export async function updateLoadedTransaction(
       categoryId: changes.categoryId ?? row.categoryId,
       subcategoryId,
       date: changes.date ?? row.date,
-      description: changes.description ?? row.description,
-      note: changes.note ?? row.note,
-      payee: changes.payee ?? row.payee,
+      description: changed(changes.description, row.description),
+      note: changed(changes.note, row.note),
+      payee: changed(changes.payee, row.payee),
     })
     .where(ownedTransaction(userId, id))
     .returning();

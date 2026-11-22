@@ -68,7 +68,8 @@ export function CashflowCard({ month, trendMonths = 6 }: CashflowCardProps) {
     );
   }
 
-  if (isError) {
+  // A failed background refetch keeps the cached data on screen.
+  if (isError && !data) {
     return (
       <Card>
         <CardHeader>

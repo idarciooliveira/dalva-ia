@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { Account } from "@mpf/finance-contract";
 import { formatMinor } from "@/lib/money";
 import { ACCOUNT_THEMES } from "@/lib/accounts";
+import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -107,6 +108,7 @@ interface AccountCardsSectionProps {
   expenses: number | null;
   currency: string;
   holderName?: string;
+  status?: CardStatus;
 }
 
 export function AccountCardsSection({
@@ -115,11 +117,22 @@ export function AccountCardsSection({
   expenses,
   currency,
   holderName,
+  status,
 }: AccountCardsSectionProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   // An account can disappear (archived elsewhere) while its dot was selected.
   const shownIndex = Math.min(activeIndex, accounts.length - 1);
   const active = accounts[shownIndex];
+
+  // Loading, or the accounts couldn't be read: not the "no accounts yet" placeholder.
+  if (showsStatus(status)) {
+    return (
+      <div className="flex flex-col gap-3 sm:gap-4">
+        <h2 className="text-sm font-medium text-muted-foreground">My Accounts</h2>
+        <CardStatusBody status={status} />
+      </div>
+    );
+  }
 
   // Empty state when no accounts exist yet
   if (accounts.length === 0) {
@@ -192,7 +205,7 @@ export function AccountCardsSection({
         {/* Income & Expenses summary — row on mobile, column on sm+ */}
         <div className="flex w-full flex-row gap-3 sm:w-1/4 sm:flex-col sm:gap-4">
           {/* Total Income */}
-          <div className="glass-surface flex flex-1 flex-col items-center justify-center rounded-2xl p-3 sm:items-start sm:p-4">
+          <div role="group" aria-label="Total income" className="glass-surface flex flex-1 flex-col items-center justify-center rounded-2xl p-3 sm:items-start sm:p-4">
             <div className="flex items-center gap-2 text-muted-foreground">
               <TrendingUp className="size-4 text-emerald-500" />
               <span className="text-xs font-medium">Total Income</span>
@@ -203,7 +216,7 @@ export function AccountCardsSection({
           </div>
 
           {/* Total Expenses */}
-          <div className="glass-surface flex flex-1 flex-col items-center justify-center rounded-2xl p-3 sm:items-start sm:p-4">
+          <div role="group" aria-label="Total expenses" className="glass-surface flex flex-1 flex-col items-center justify-center rounded-2xl p-3 sm:items-start sm:p-4">
             <div className="flex items-center gap-2 text-muted-foreground">
               <TrendingDown className="size-4 text-red-500" />
               <span className="text-xs font-medium">Total Expenses</span>

@@ -28,7 +28,7 @@ test.describe("Dashboard (apps/api)", () => {
     await apiWrite(page, "POST", "/debts", { name: "Car loan", debtType: "loan", lender: "Bank", originalAmount: usd(1_000_000), currentBalance: usd(750_000) });
 
     await page.goto("/dashboard");
-    const income = page.getByText("Total Income").locator("../..");
+    const income = page.getByRole("group", { name: "Total income" });
     await expect(income).toContainText("$3,000.00");
     await expect(page.getByText("Paycheck")).toBeVisible();
     await expect(page.getByText("Holiday")).toBeVisible();
@@ -46,7 +46,7 @@ test.describe("Dashboard (apps/api)", () => {
     await page.getByRole("button", { name: "Save", exact: true }).click();
     await expect(page.getByRole("dialog")).not.toBeVisible();
 
-    const expenses = page.getByText("Total Expenses").locator("../..");
+    const expenses = page.getByRole("group", { name: "Total expenses" });
     await expect(expenses).toContainText("$42.50");
     await expect(page.getByText("Dinner out")).toBeVisible();
     await expect(page.getByText("Food & Dining").first()).toBeVisible();

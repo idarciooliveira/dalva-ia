@@ -61,7 +61,8 @@ export function SpendingCategoryCard({ month }: SpendingCategoryCardProps) {
     );
   }
 
-  if (isError) {
+  // A failed background refetch keeps the cached data on screen.
+  if (isError && !data) {
     return (
       <Card>
         <CardHeader>

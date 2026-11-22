@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Account } from "@mpf/finance-contract";
 import { Calculator, CalendarDays, FileText, Landmark, StickyNote, ArrowDown } from "lucide-react";
@@ -28,7 +28,7 @@ import { useApiMutation } from "@/lib/api/mutations";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fractionDigits, maskPlaceholder } from "@/lib/money";
 import { cn } from "@/lib/utils";
-import { accountTheme, getDatePreset, localISODate, selectableAccounts } from "./form-helpers";
+import { accountTheme, getDatePreset, localISODate, selectableAccounts, transferChanges } from "./form-helpers";
 
 const ERROR_ID = "transfer-form-error";
 
@@ -56,22 +56,24 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
   const [filledFrom, setFilledFrom] = useState<string | null>(null);
 
   const datePreset = getDatePreset(date);
+  const amountRef = useRef<HTMLInputElement>(null);
 
   const accountsResult = useQuery({ ...accountsQuery({ includeArchived: true }), enabled: open });
   const transferResult = useQuery({ ...transferQuery(transferId ?? ""), enabled: open && isEdit });
   const transfer = transferResult.data?.transfer;
 
-  // Reset on open/close and when switching to create mode.
+  // Reset on open (an edit refills below). Closing keeps the fields, so the dialog doesn't flash empty while it animates out.
   useEffect(() => {
-    if (!open || !isEdit) {
+    if (!open) return;
+    if (!isEdit) {
       setAmount("");
       setFromAccountId("");
       setToAccountId("");
       setDate(localISODate());
       setDescription("");
       setNote("");
-      setFilledFrom(null);
     }
+    setFilledFrom(null);
     setShowDatePicker(false);
     setError("");
   }, [open, isEdit, transferId]);
@@ -96,9 +98,12 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
   const fromAccount = accounts.find((a) => a.id === fromAccountId);
   const toAccount = accounts.find((a) => a.id === toAccountId);
   // The amount is in the source account's currency; both accounts must share it.
-  const currency = fromAccount?.balance.currency ?? baseCurrency;
+  const currency =
+    fromAccount?.balance.currency ??
+    (transfer && fromAccountId === transfer.fromAccountId ? transfer.amount.currency : baseCurrency);
   const digits = fractionDigits(currency);
-  const loadingTransfer = isEdit && filledFrom !== transferId;
+  // An edit waits for the transfer and the accounts its selects show.
+  const loadingTransfer = isEdit && (filledFrom !== transferId || accountsResult.isPending);
 
   function changeFrom(next: string) {
     const nextCurrency = accounts.find((a) => a.id === next)?.balance.currency ?? baseCurrency;
@@ -143,17 +148,21 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
       fromAccountId: fromAccount.id,
       toAccountId: toAccount.id,
       date,
-      ...(description.trim() ? { description: description.trim() } : {}),
-      ...(note.trim() ? { note: note.trim() } : {}),
     };
 
     try {
-      if (transferId) {
-        await updateTransfer({ id: transferId, ...fields });
+      if (transferId && transfer) {
+        // Only what changed; an emptied description or note is cleared (`null`).
+        const changes = transferChanges(transfer, { ...fields, description, note });
+        if (Object.keys(changes).length > 0) await updateTransfer({ id: transferId, ...changes });
         onOpenChange(false);
         return;
       }
-      await createTransfer(fields);
+      await createTransfer({
+        ...fields,
+        ...(description.trim() ? { description: description.trim() } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
+      });
       if (andCreateNew) {
         setAmount("");
         setFromAccountId("");
@@ -162,6 +171,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
         setDescription("");
         setNote("");
         setShowDatePicker(false);
+        amountRef.current?.focus();
       } else {
         onOpenChange(false);
       }
@@ -214,6 +224,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
                 <div className="flex items-center gap-2 border-b-2 border-blue-500 dark:border-blue-400 pb-2">
                   <Calculator className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
                   <CurrencyInput
+                    ref={amountRef}
                     value={amount}
                     onValueChange={setAmount}
                     fractionDigits={digits}

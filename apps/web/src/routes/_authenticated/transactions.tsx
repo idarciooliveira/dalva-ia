@@ -70,8 +70,11 @@ function TransactionsContent() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
+  // The record stays set while its dialog closes, so the dialog doesn't flip to create mode as it animates out.
   const [editTransaction, setEditTransaction] = useState<Transaction | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
   const [editTransferId, setEditTransferId] = useState<string | null>(null);
+  const [transferOpen, setTransferOpen] = useState(false);
 
   const q = useDebounced(searchText, 300);
   const invalidRange = hasInvalidDateRange(filters);
@@ -142,11 +145,22 @@ function TransactionsContent() {
               transaction={tx}
               accountName={(id) => (id ? accountNames.get(id) : undefined)}
               categoryName={(id) => (id ? categoryNames.get(id) : undefined)}
-              onEdit={() => setEditTransaction(tx)}
-              onEditTransfer={() => setEditTransferId(tx.id)}
+              onEdit={() => {
+                setEditTransaction(tx);
+                setEditOpen(true);
+              }}
+              onEditTransfer={() => {
+                setEditTransferId(tx.id);
+                setTransferOpen(true);
+              }}
             />
           ))}
         </div>
+        {result.isRefetchError && (
+          <p role="alert" className="mt-3 text-center text-sm text-destructive">
+            {apiErrorMessage(result.error, "Couldn't refresh your transactions. Showing the last loaded list.")}
+          </p>
+        )}
         {result.isFetchNextPageError && (
           <p role="alert" className="mt-3 text-center text-sm text-destructive">
             {apiErrorMessage(result.error, "Couldn't load more transactions. Try again.")}
@@ -207,22 +221,10 @@ function TransactionsContent() {
       <TransactionFormDialog open={createDialogOpen} onOpenChange={setCreateDialogOpen} transaction={null} />
 
       {/* Edit Dialog (income / expense) */}
-      <TransactionFormDialog
-        open={editTransaction !== null}
-        onOpenChange={(open) => {
-          if (!open) setEditTransaction(null);
-        }}
-        transaction={editTransaction}
-      />
+      <TransactionFormDialog open={editOpen && editTransaction !== null} onOpenChange={setEditOpen} transaction={editTransaction} />
 
       {/* Edit Transfer Dialog */}
-      <TransferFormDialog
-        open={editTransferId !== null}
-        onOpenChange={(open) => {
-          if (!open) setEditTransferId(null);
-        }}
-        transferId={editTransferId}
-      />
+      <TransferFormDialog open={transferOpen && editTransferId !== null} onOpenChange={setTransferOpen} transferId={editTransferId} />
     </>
   );
 }

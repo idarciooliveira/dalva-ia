@@ -166,6 +166,40 @@ describe("api/v1 transactions: writes", () => {
     expect(moved.transaction.subcategoryId).toBeUndefined();
   });
 
+  it("clears description, note, payee and subcategory with null, and keeps omitted fields", async () => {
+    const { alice, aliceAccount, asAlice } = await twoUsers();
+    const food = await seedCategory(alice);
+    const groceries = await seedSubcategory(alice, food, "Groceries");
+    const { transaction } = await asAlice.transactions.create({
+      type: "expense",
+      amount: usd(100),
+      accountId: aliceAccount,
+      categoryId: food,
+      subcategoryId: groceries,
+      date: "2026-01-01",
+      description: "Lunch",
+      note: "with Bob",
+      payee: "Cafe",
+    });
+    const cleared = await asAlice.transactions.update({ id: transaction.id, note: null, payee: null, subcategoryId: null });
+    expect(cleared.transaction).toEqual({
+      id: transaction.id,
+      type: "expense",
+      amount: usd(100),
+      accountId: aliceAccount,
+      categoryId: food,
+      date: "2026-01-01",
+      description: "Lunch",
+    });
+    const row = await getTransactionRow(transaction.id);
+    expect(row).toMatchObject({ note: null, payee: null, subcategoryId: null, description: "Lunch" });
+    await asAlice.transactions.update({ id: transaction.id, description: null });
+    expect((await getTransactionRow(transaction.id))?.description).toBeNull();
+    // An adjustment without a subcategory may "clear" it.
+    const adjustment = await asAlice.transactions.create({ type: "adjustment", amount: usd(-50), accountId: aliceAccount, date: "2026-01-02" });
+    await asAlice.transactions.update({ id: adjustment.transaction.id, subcategoryId: null, note: "fix" });
+  });
+
   it("deletes a plain row and restores the balance", async () => {
     const { aliceAccount, asAlice } = await twoUsers();
     const { transaction } = await asAlice.transactions.create({ type: "expense", amount: usd(700), accountId: aliceAccount, date: "2026-03-01" });
@@ -348,6 +382,16 @@ describe("api/v1 transactions: search", () => {
       [payment.liabilityTransactionId!]: "debt_payment",
     });
     expect(items.find((t) => t.id === plain)).not.toHaveProperty("managedBy");
+
+    // One row per page: a leg is flagged even when its pair is on another page.
+    const paged: Record<string, string | undefined> = {};
+    let cursor: string | undefined;
+    do {
+      const page = await asAlice.transactions.search({ limit: 1, ...(cursor ? { cursor } : {}) });
+      for (const t of page.items) paged[t.id] = t.managedBy;
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor);
+    expect(paged).toEqual(flags);
   });
 
   it("rejects a malformed cursor and isolates users", async () => {

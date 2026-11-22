@@ -41,9 +41,12 @@ function DashboardPage() {
   const baseCurrency = profile.baseCurrency ?? "USD";
   const currentMonth = getCurrentMonth();
 
-  const accountsResult = useQuery(accountsQuery());
-  // Names for the recent rows: archived accounts and categories included.
-  const allAccountsResult = useQuery(accountsQuery({ includeArchived: true }));
+  // Archived accounts too: their names label older recent rows. The cards show active ones.
+  const accountsResult = useQuery(accountsQuery({ includeArchived: true }));
+  const activeAccounts = useMemo(
+    () => (accountsResult.data?.items ?? []).filter((a) => !a.archived),
+    [accountsResult.data],
+  );
   const categoriesResult = useQuery(categoriesQuery({ includeArchived: true }));
   const summaryResult = useQuery(transactionSummaryQuery(currentMonth));
   const netWorthResult = useQuery(netWorthQuery());
@@ -55,10 +58,10 @@ function DashboardPage() {
     () =>
       buildRecentTransactions(
         summary?.recentTransactions ?? [],
-        new Map<string, string>((allAccountsResult.data?.items ?? []).map((a) => [a.id, a.name])),
+        new Map<string, string>((accountsResult.data?.items ?? []).map((a) => [a.id, a.name])),
         new Map<string, string>((categoriesResult.data?.items ?? []).map((c) => [c.id, c.name])),
       ),
-    [summary, allAccountsResult.data, categoriesResult.data],
+    [summary, accountsResult.data, categoriesResult.data],
   );
 
   const netWorth: NetWorthData = netWorthResult.data
@@ -83,7 +86,7 @@ function DashboardPage() {
           : 0,
       targetDate: g.targetDate,
     })),
-    currency: baseCurrency,
+    currency: goalsResult.data?.items[0]?.targetAmount.currency ?? baseCurrency,
   };
 
   const debts = debtsResult.data;
@@ -124,7 +127,8 @@ function DashboardPage() {
           {/* --- Left column --- */}
           <div className="flex flex-col gap-4 sm:gap-5 lg:gap-6">
             <AccountCardsSection
-              accounts={accountsResult.data?.items ?? []}
+              accounts={activeAccounts}
+              status={cardStatus(accountsResult)}
               income={summary ? summary.totalIncome.amountMinor : null}
               expenses={summary ? summary.totalExpenses.amountMinor : null}
               currency={summary?.totalIncome.currency ?? baseCurrency}

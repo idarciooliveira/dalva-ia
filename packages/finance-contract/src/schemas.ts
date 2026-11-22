@@ -371,9 +371,11 @@ export const transactionGetResponseSchema = z.object({
 });
 
 /**
- * Partial update; omitted fields are unchanged and fields cannot be cleared.
- * The sign rule for `amount` depends on the transaction's effective type, so
- * the server enforces it (positive unless the result is an adjustment).
+ * Partial update; omitted fields are unchanged. `null` clears `subcategoryId`,
+ * `description`, `note` and `payee` (additive: the Convex HTTP API treats
+ * `null` as omitted). The sign rule for `amount` depends on the transaction's
+ * effective type, so the server enforces it (positive unless the result is an
+ * adjustment).
  */
 export const transactionUpdateRequestSchema = z
   .strictObject({
@@ -382,11 +384,11 @@ export const transactionUpdateRequestSchema = z
     amount: nonZeroMoneySchema.optional(),
     accountId: accountIdSchema.optional(),
     categoryId: categoryIdSchema.optional(),
-    subcategoryId: subcategoryIdSchema.optional(),
+    subcategoryId: subcategoryIdSchema.nullable().optional(),
     date: isoDateSchema.optional(),
-    description: descriptionField.optional(),
-    note: noteField.optional(),
-    payee: payeeField.optional(),
+    description: descriptionField.nullable().optional(),
+    note: noteField.nullable().optional(),
+    payee: payeeField.nullable().optional(),
   })
   .superRefine((v, ctx) => {
     if (!hasChangesBesidesId(v)) ctx.addIssue({ code: "custom", message: NO_CHANGES });
@@ -428,7 +430,10 @@ export const transferResponseSchema = z.object({ transfer: transferSchema });
  */
 export const transferGetRequestSchema = z.strictObject({ id: transactionIdSchema });
 
-/** `id` may be either leg of the transfer. */
+/**
+ * `id` may be either leg of the transfer. `null` clears `description` and
+ * `note` on both legs (additive: the Convex HTTP API treats `null` as omitted).
+ */
 export const transferUpdateRequestSchema = z
   .strictObject({
     id: transactionIdSchema,
@@ -436,8 +441,8 @@ export const transferUpdateRequestSchema = z
     fromAccountId: accountIdSchema.optional(),
     toAccountId: accountIdSchema.optional(),
     date: isoDateSchema.optional(),
-    description: descriptionField.optional(),
-    note: noteField.optional(),
+    description: descriptionField.nullable().optional(),
+    note: noteField.nullable().optional(),
   })
   .superRefine((v, ctx) => {
     if (!hasChangesBesidesId(v)) ctx.addIssue({ code: "custom", message: NO_CHANGES });

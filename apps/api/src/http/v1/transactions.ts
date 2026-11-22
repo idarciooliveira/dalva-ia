@@ -87,7 +87,7 @@ export const transactionOperations = {
       amount,
       accountId: input.accountId === undefined ? undefined : account.id,
       categoryId: optionalId(input.categoryId, "categoryId"),
-      subcategoryId: optionalId(input.subcategoryId, "subcategoryId"),
+      subcategoryId: input.subcategoryId === null ? null : optionalId(input.subcategoryId, "subcategoryId"),
       date: input.date,
       description: input.description,
       note: input.note,

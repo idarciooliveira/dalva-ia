@@ -157,7 +157,8 @@ export async function updateLoadedTransfer(
   tx: Tx,
   userId: string,
   { outgoing, incoming }: Transfer,
-  changes: Partial<TransferFields>,
+  /** `null` clears the description or note on both legs. */
+  changes: Partial<Omit<TransferFields, "description" | "note">> & { description?: string | null; note?: string | null },
 ): Promise<string> {
   const amount = changes.amount ?? outgoing.amount;
   assertAmount(amount);

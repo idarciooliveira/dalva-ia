@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import type { TransactionListItem, TransactionManagedBy } from "@mpf/finance-contract";
 import {
@@ -60,6 +60,7 @@ export function managedByOf(transaction: TransactionListItem): TransactionManage
 export function TransactionRow({ transaction, accountName, categoryName, onEdit, onEditTransfer }: TransactionRowProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const ownerNoteId = useId();
 
   const config = typeConfig[transaction.type];
   const Icon = config.icon;
@@ -153,10 +154,10 @@ export function TransactionRow({ transaction, accountName, categoryName, onEdit,
           <DropdownMenuContent align="end" className="min-w-48">
             {ownedElsewhere ? (
               <>
-                <DropdownMenuLabel className="max-w-56 text-xs font-normal text-muted-foreground">
+                <DropdownMenuLabel id={ownerNoteId} className="max-w-56 text-xs font-normal text-muted-foreground">
                   {ownedElsewhere.label}. Edit or delete it there.
                 </DropdownMenuLabel>
-                <DropdownMenuItem asChild>
+                <DropdownMenuItem asChild aria-describedby={ownerNoteId}>
                   <Link to={ownedElsewhere.to}>
                     {managedBy === "goal_contribution" ? (
                       <Target className="mr-2 size-4" />

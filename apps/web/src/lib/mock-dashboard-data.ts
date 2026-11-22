@@ -9,16 +9,16 @@
 
 export interface NetWorthData {
   hasData: boolean;
-  totalAssets: number; // minor units
-  totalDebts: number; // minor units
-  netWorth: number; // minor units
+  totalAssets: number; // cents
+  totalDebts: number; // cents
+  netWorth: number; // cents
   currency: string;
 }
 
 export interface CashflowMonth {
   month: string; // e.g. "Jan", "Feb"
-  income: number; // minor units
-  expenses: number; // minor units
+  income: number; // cents
+  expenses: number; // cents
 }
 
 export interface CashflowData {
@@ -33,13 +33,13 @@ export interface CashflowData {
 
 export interface CategorySpending {
   name: string;
-  amount: number; // minor units
+  amount: number; // cents
   fill: string; // chart color CSS variable
 }
 
 export interface SpendingByCategoryData {
   categories: CategorySpending[];
-  total: number; // minor units
+  total: number; // cents
   currency: string;
 }
 
@@ -48,7 +48,7 @@ export interface RecentTransaction {
   date: string; // ISO date
   description: string;
   category: string;
-  amount: number; // minor units (negative = expense, positive = income)
+  amount: number; // cents (negative = expense, positive = income)
   type: "income" | "expense" | "adjustment" | "transfer";
   account: string;
 }
@@ -61,8 +61,8 @@ export interface RecentTransactionsData {
 export interface BudgetItem {
   id: string;
   category: string;
-  limit: number; // minor units
-  spent: number; // minor units
+  limit: number; // cents
+  spent: number; // cents
   status: "on_track" | "approaching" | "over";
 }
 
@@ -77,8 +77,8 @@ export interface BudgetSummaryData {
 export interface GoalItem {
   id: string;
   name: string;
-  targetAmount: number; // minor units
-  currentAmount: number; // minor units
+  targetAmount: number; // cents
+  currentAmount: number; // cents
   percentComplete: number;
   targetDate?: string; // ISO date
 }
@@ -92,24 +92,24 @@ export interface DebtItem {
   id: string;
   name: string;
   creditor: string;
-  originalAmount: number; // minor units
-  currentBalance: number; // minor units
+  originalAmount: number; // cents
+  currentBalance: number; // cents
   percentPaid: number;
-  minimumPayment?: number; // minor units
+  minimumPayment?: number; // cents
 }
 
 export interface DebtPaydownData {
   debts: DebtItem[];
-  totalRemaining: number; // minor units
-  totalOriginal: number; // minor units
-  recentPayment: number; // minor units
+  totalRemaining: number; // cents
+  totalOriginal: number; // cents
+  recentPayment: number; // cents
   currency: string;
 }
 
 export interface AccountCardData {
   name: string;
   type: string;
-  balance: number; // minor units
+  balance: number; // cents
   currency: string;
   cardNumber: string; // last 4 digits
   holderName: string;

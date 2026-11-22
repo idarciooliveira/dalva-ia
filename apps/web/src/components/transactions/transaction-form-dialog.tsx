@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import type { Transaction } from "@mpf/finance-contract";
 import {
@@ -37,7 +37,7 @@ import { useApiMutation } from "@/lib/api/mutations";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fractionDigits, maskPlaceholder } from "@/lib/money";
 import { cn } from "@/lib/utils";
-import { accountTheme, getDatePreset, localISODate, selectableAccounts } from "./form-helpers";
+import { accountTheme, getDatePreset, localISODate, selectableAccounts, transactionChanges } from "./form-helpers";
 
 type TxType = "income" | "expense";
 
@@ -77,6 +77,7 @@ export function TransactionFormDialog({
   const [showDatePicker, setShowDatePicker] = useState(false);
 
   const datePreset = getDatePreset(date);
+  const amountRef = useRef<HTMLInputElement>(null);
 
   // Archived accounts and categories stay listed only when the row already uses them.
   const accountsResult = useQuery({ ...accountsQuery({ includeArchived: true }), enabled: open });
@@ -94,8 +95,9 @@ export function TransactionFormDialog({
     (sc) => !sc.archived || sc.id === transaction?.subcategoryId,
   );
 
-  // Reset form when opening/closing or switching between create/edit
+  // Fill the form on open. Closing keeps the fields, so the dialog doesn't flash empty while it animates out.
   useEffect(() => {
+    if (!open) return;
     if (transaction) {
       setType(transaction.type === "income" ? "income" : "expense");
       setAmount(String(transaction.amount.amountMinor));
@@ -134,8 +136,11 @@ export function TransactionFormDialog({
 
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const selectedCategory = filteredCategories.find((c) => c.id === categoryId);
-  // Amounts are typed in the account's minor units (base currency until one is picked).
-  const currency = selectedAccount?.balance.currency ?? baseCurrency;
+  // Amounts are typed in the account's minor units: the row's own currency while
+  // accounts load, the base currency until one is picked.
+  const currency =
+    selectedAccount?.balance.currency ??
+    (transaction && accountId === transaction.accountId ? transaction.amount.currency : baseCurrency);
   const digits = fractionDigits(currency);
 
   function changeAccount(next: string) {
@@ -176,28 +181,41 @@ export function TransactionFormDialog({
       return;
     }
 
-    const fields = {
-      type,
-      amount: { amountMinor, currency },
-      accountId: selectedAccount.id,
-      date,
-      ...(categoryId ? { categoryId } : {}),
-      ...(subcategoryId ? { subcategoryId } : {}),
-      ...(description.trim() ? { description: description.trim() } : {}),
-      ...(note.trim() ? { note: note.trim() } : {}),
-      ...(payee.trim() ? { payee: payee.trim() } : {}),
-    };
+    const amountValue = { amountMinor, currency };
 
     try {
       if (transaction) {
-        await updateTransaction({ id: transaction.id, ...fields });
+        const changes = transactionChanges(transaction, {
+          type,
+          amount: amountValue,
+          accountId: selectedAccount.id,
+          date,
+          categoryId,
+          subcategoryId,
+          description,
+          note,
+          payee,
+        });
+        // Nothing changed: no request (the API refuses an empty update).
+        if (Object.keys(changes).length > 0) await updateTransaction({ id: transaction.id, ...changes });
         onOpenChange(false);
         return;
       }
-      await createTransaction(fields);
+      await createTransaction({
+        type,
+        amount: amountValue,
+        accountId: selectedAccount.id,
+        date,
+        ...(categoryId ? { categoryId } : {}),
+        ...(subcategoryId ? { subcategoryId } : {}),
+        ...(description.trim() ? { description: description.trim() } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
+        ...(payee.trim() ? { payee: payee.trim() } : {}),
+      });
       if (andCreateNew) {
         resetFields();
         setShowDatePicker(false);
+        amountRef.current?.focus();
       } else {
         onOpenChange(false);
       }
@@ -274,6 +292,7 @@ export function TransactionFormDialog({
             <div className={cn("flex items-center gap-2 border-b-2 pb-2", accentColor)}>
               <Calculator className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
               <CurrencyInput
+                ref={amountRef}
                 value={amount}
                 onValueChange={setAmount}
                 fractionDigits={digits}
