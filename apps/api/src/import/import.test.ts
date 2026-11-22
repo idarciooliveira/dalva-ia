@@ -336,6 +336,26 @@ describe("plan", () => {
     ]);
   });
 
+  it("keeps the newest of a user's password accounts", () => {
+    const fixture = variant((f) => {
+      f.authAccounts!.push({ ...find(f, "authAccounts", "aa_bob"), _id: "aa_bob_new", _creationTime: 1_767_300_000_000, secret: HASHES.umlaut.hash });
+    });
+    const { report, rows } = plan(asExport(fixture));
+    expect(issues(report.warnings, "extra_password_account")).toEqual([expect.objectContaining({ id: "aa_bob", detail: "kept aa_bob_new" })]);
+    expect(rows.authAccounts.find((row) => row.userId === id("users", fixture, "u_bob"))).toMatchObject({ password: HASHES.umlaut.hash });
+  });
+
+  it("fails on sort orders that are not 32-bit integers", () => {
+    const fixture = variant((f) => {
+      find(f, "categories", "c_food").sortOrder = 1.5;
+      find(f, "subcategories", "sc_groceries").sortOrder = 2 ** 31;
+    });
+    expect(plan(asExport(fixture)).report.errors.map((issue) => `${issue.code} ${issue.id}.${issue.field}`)).toEqual([
+      "invalid_value c_food.sortOrder",
+      "invalid_value sc_groceries.sortOrder",
+    ]);
+  });
+
   it("fails on tables it doesn't know", () => {
     const { report } = plan(asExport({ ...convexFixture(), legacyNotes: [{ _id: "n", _creationTime: 1 }] }));
     expect(report.errors).toEqual([

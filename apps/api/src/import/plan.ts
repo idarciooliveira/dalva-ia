@@ -352,6 +352,12 @@ class Fields {
   }
 }
 
+/** `a` is strictly greater than `b`, compared element by element. */
+function ranksHigher(a: number[], b: number[]): boolean {
+  const i = a.findIndex((value, index) => value !== b[index]);
+  return i >= 0 && a[i]! > b[i]!;
+}
+
 export function isCalendarDate(value: string): boolean {
   const match = DATE.exec(value);
   if (!match) return false;
@@ -516,11 +522,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
       const secret = passwordAccounts.get(user._id)?.secret;
       return [typeof secret === "string" && PASSWORD_HASH.test(secret) ? 1 : 0, lastSignIn.get(user._id) ?? -1, user._creationTime];
     };
-    const primary = group.reduce((best, user) => {
-      const [a, b] = [rank(user), rank(best)];
-      const i = a.findIndex((value, index) => value !== b[index]);
-      return i >= 0 && a[i]! > b[i]! ? user : best;
-    });
+    const primary = group.reduce((best, user) => (ranksHigher(rank(user), rank(best)) ? user : best));
     if (group.length > 1) {
       issues.add({
         code: "email_case_merge",
@@ -633,9 +635,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     const current = profileByOwner.get(owner);
     if (current) {
       const rank = (profile: ConvexDoc) => [profile.onboardingCompleted === true ? 1 : 0, ownedByPrimary(profile) ? 1 : 0, -profile._creationTime];
-      const [a, b] = [rank(doc), rank(current.doc)];
-      const i = a.findIndex((value, index) => value !== b[index]);
-      const replace = i >= 0 && a[i]! > b[i]!;
+      const replace = ranksHigher(rank(doc), rank(current.doc));
       const [kept, dropped] = replace ? [doc, current.doc] : [current.doc, doc];
       issues.add({ code: "duplicate_profile_dropped", table: "userProfiles", id: dropped._id, detail: `kept ${kept._id}` });
       if (!replace) continue;

@@ -11,7 +11,7 @@
  * Exit codes: 0 success, 1 errors / refused / verification failed, 2 usage.
  * See docs/deploy.md, "Cutover".
  */
-import { writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 
 import { createDatabase } from "../src/db/client";
@@ -68,7 +68,10 @@ try {
   exitCode = importSucceeded(report) ? 0 : 1;
   const json = `${JSON.stringify(report, null, 2)}\n`;
   try {
-    if (args.values.report) await writeFile(args.values.report, json, { mode: 0o600 });
+    if (args.values.report) {
+      await writeFile(args.values.report, json, { mode: 0o600 });
+      await chmod(args.values.report, 0o600); // also when the file already existed
+    }
     else process.stdout.write(json);
   } catch (error) {
     // The import's outcome stands (see the summary); only the report is missing.
