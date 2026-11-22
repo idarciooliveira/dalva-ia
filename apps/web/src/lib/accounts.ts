@@ -52,3 +52,18 @@ export function createAccountDraft(
     ...overrides,
   };
 }
+
+/**
+ * Accounts a goal or debt can move money on: goals and debts are in the base
+ * currency, and the API refuses an account in another one (`validation_failed`).
+ * `types` narrows the list further (savings accounts for a goal, liabilities for a debt).
+ */
+export function accountsForBaseCurrency<A extends { type: string; balance: { currency: string } }>(
+  accounts: readonly A[],
+  baseCurrency: string,
+  types?: readonly string[],
+): { usable: A[]; otherCurrency: number } {
+  const ofType = types ? accounts.filter((a) => types.includes(a.type)) : [...accounts];
+  const usable = ofType.filter((a) => a.balance.currency === baseCurrency);
+  return { usable, otherCurrency: ofType.length - usable.length };
+}

@@ -18,9 +18,17 @@ const chatLinkDto = (identity: channelLinks.ChannelIdentity) => ({
   readOnly: !identity.scopes.includes("finance:write"),
 });
 
-export const chatLinkOperations = {
+export interface ChatLinkSettings {
+  /** Config `TELEGRAM_BOT_USERNAME`, without `@`. */
+  telegramBotUsername?: string;
+}
+
+export const chatLinkOperations = (settings: ChatLinkSettings = {}) => ({
   list: operation(routes.chatLinks.list, async (tx, user) => {
-    return { items: (await channelLinks.listActiveForUser(tx, user.userId)).map(chatLinkDto) };
+    return {
+      items: (await channelLinks.listActiveForUser(tx, user.userId)).map(chatLinkDto),
+      botUsernames: settings.telegramBotUsername ? { telegram: settings.telegramBotUsername } : {},
+    };
   }),
 
   createCode: operation(routes.chatLinks.createCode, async (tx, user, input) => {
@@ -43,7 +51,7 @@ export const chatLinkOperations = {
   setReadOnly: operation(routes.chatLinks.setReadOnly, async (tx, user, input) => {
     return { link: chatLinkDto(await channelLinks.setReadOnly(tx, user.userId, toId(input.id, "id"), input.readOnly)) };
   }),
-};
+});
 
 export const chatHistoryOperations = {
   delete: operation(routes.chatHistory.delete, async (tx, user) => {

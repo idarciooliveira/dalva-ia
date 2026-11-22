@@ -59,7 +59,9 @@ bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh d
 - `useApiMutation` sends one `Idempotency-Key` per submit (reused on retries of the same input) and invalidates what `INVALIDATES` in `mutations.ts` lists for that write. Add an entry for every new write.
 - Show failures with `apiErrorMessage()`: `ErrorState` for a page's data, `FormError` inside dialogs (`src/components/error-state.tsx`).
 - Money from the API is `{ amountMinor, currency }` in ISO minor units: format with `formatMinor` and parse with `parseDecimalInput` (`src/lib/money.ts`), or `CurrencyInput` with `fractionDigits` + `parseCurrencyInput`. `formatCurrency(cents)` is for the Convex pages only.
-- Transactions, transfers, dashboard data, goals, debts and settings still use Convex hooks. `src/lib/legacy-convex.tsx` makes those calls fail at once (no Convex client), so the pages show empty or error states until PRs 10-11 move them.
+- Transactions, transfers and dashboard data still use Convex hooks. `src/lib/legacy-convex.tsx` makes those calls fail at once (no Convex client), so the pages show empty or error states until PR 10 moves them.
+- Goal and debt account pickers list only accounts in the base currency (`accountsForBaseCurrency` in `src/lib/accounts.ts`): the API refuses others.
+- Settings → Telegram gets the bot username from `chatLinks.list` (`botUsernames`, API setting `TELEGRAM_BOT_USERNAME`) and polls the list while a link code is pending.
 - `src/router.tsx` sets a 30 second `staleTime`, retries transient errors only, and turns any API 401 into a session re-check (the guard then redirects to /login).
 
 ### Frontend UI Rule
@@ -149,7 +151,8 @@ Tests currently live in `apps/web/e2e/` and cover:
 - `transfers.spec.ts`
 - `goals.spec.ts`
 - `categories.spec.ts`
-- `settings.spec.ts`, `debts.spec.ts`, the transaction edit flow: `test.fixme` until PRs 10-11 move those pages
+- The transaction edit flow: `test.fixme` until PR 10 moves the transactions page
+- `settings.spec.ts` links a chat through the service route with the key `playwright.config.ts` generates per run (`E2E_FINANCE_API_SERVICE_KEY`)
 - `legacy-pages.spec.ts`: the pages still on Convex render without crashing
 
 Playwright starts `apps/api` on a fresh `dalva_e2e_<port>` database (`apps/api/scripts/e2e-server.ts`) and the web dev server. `E2E_DATABASE_URL`, `E2E_WEB_PORT` and `E2E_API_PORT` override the defaults.

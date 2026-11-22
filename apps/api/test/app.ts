@@ -30,6 +30,7 @@ export function testApp(
     serviceOperations?: ServiceOperations;
     /** Default `TEST_SERVICE_KEY`; `null` leaves the service key unconfigured. */
     serviceKey?: string | null;
+    telegramBotUsername?: string;
   } = {},
 ) {
   const logger = options.logger ?? silentLogger;
@@ -45,6 +46,7 @@ export function testApp(
     operations: options.operations,
     serviceOperations: options.serviceOperations,
     serviceKey: options.serviceKey === null ? undefined : (options.serviceKey ?? TEST_SERVICE_KEY),
+    telegramBotUsername: options.telegramBotUsername,
   });
   return { app, auth };
 }

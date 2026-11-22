@@ -132,11 +132,18 @@ describe("chatLinks (web)", () => {
 
     expect(await alice.web.chatLinks.list()).toEqual({
       items: [{ id: aliceIdentity, channel: "telegram", username: "tg_user", linkedAt: LINKED_AT.toISOString(), readOnly: false }],
+      botUsernames: {},
     });
 
     expect(await alice.web.chatLinks.unlink({ id: aliceIdentity })).toEqual({ id: aliceIdentity });
-    expect(await alice.web.chatLinks.list()).toEqual({ items: [] });
+    expect(await alice.web.chatLinks.list()).toEqual({ items: [], botUsernames: {} });
     expect((await bob.web.chatLinks.list()).items).toHaveLength(1);
+  });
+
+  it("names the configured bot, so the web can link to it", async () => {
+    const { app } = testApp({ telegramBotUsername: "dalva_test_bot" });
+    const { web } = await newUser(app);
+    expect(await web.chatLinks.list()).toEqual({ items: [], botUsernames: { telegram: "dalva_test_bot" } });
   });
 
   it("toggles read-only by switching scopes", async () => {

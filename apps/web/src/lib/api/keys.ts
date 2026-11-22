@@ -20,9 +20,23 @@ export const queryKeys = {
     all: () => ["api", "subcategories"] as const,
     list: (input: RouteInput<UserRoutes["subcategories"]["list"]>) => ["api", "subcategories", "list", input] as const,
   },
-  // Read by pages that move in PRs 10-11; listed now so writes here already invalidate them.
+  goals: {
+    all: () => ["api", "goals"] as const,
+    list: (input: RouteInput<UserRoutes["goals"]["list"]>) => ["api", "goals", "list", input] as const,
+    contributions: (goalId: string) => ["api", "goals", "contributions", goalId] as const,
+  },
+  debts: {
+    all: () => ["api", "debts"] as const,
+    list: (input: RouteInput<UserRoutes["debts"]["list"]>) => ["api", "debts", "list", input] as const,
+    payments: (debtId: string) => ["api", "debts", "payments", debtId] as const,
+  },
+  reports: {
+    all: () => ["api", "reports"] as const,
+    debtSummary: () => ["api", "reports", "debtSummary"] as const,
+  },
+  chatLinks: {
+    all: () => ["api", "chatLinks"] as const,
+  },
+  // Read by pages that move in PR 10; listed now so writes here already invalidate them.
   transactions: { all: () => ["api", "transactions"] as const },
-  reports: { all: () => ["api", "reports"] as const },
-  goals: { all: () => ["api", "goals"] as const },
-  debts: { all: () => ["api", "debts"] as const },
 };

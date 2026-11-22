@@ -16,6 +16,7 @@ import { useApiMutation } from "@/lib/api/mutations";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { formatMinor, fractionDigits, maskPlaceholder } from "@/lib/money";
 import { getCurrencySymbol } from "@/lib/currencies";
+import { localToday } from "@/lib/dates";
 
 interface AdjustBalanceDialogProps {
   open: boolean;
@@ -190,11 +191,4 @@ export function AdjustBalanceDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-/** Today in the user's time zone, `YYYY-MM-DD` (toISOString would give the UTC date). */
-function localToday(): string {
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

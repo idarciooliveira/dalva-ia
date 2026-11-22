@@ -1,10 +1,9 @@
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { convexQuery, useConvexAction, useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Id } from "@mpf/backend/convex/_generated/dataModel";
+import { useQuery } from "@tanstack/react-query";
+import type { ChatLink } from "@mpf/finance-contract";
 import { Check, Copy, ExternalLink, Link2Off, MessageCircle, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { ErrorState, FormError } from "@/components/error-state";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,20 +19,26 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { apiErrorMessage, isApiError } from "@/lib/api/errors";
+import { useApiMutation } from "@/lib/api/mutations";
+import { chatLinksQuery } from "@/lib/api/queries";
+
+/** How often the page checks whether the bot redeemed the code (no live updates until SSE). */
+const LINK_POLL_MS = 3_000;
 
 /** Telegram bot usernames: 5-32 chars of [A-Za-z0-9_]. Anything else is treated as not configured. */
-function botUsername(): string | null {
-  const env = (import.meta as unknown as { env: Record<string, string | undefined> }).env;
-  const value = env.VITE_TELEGRAM_BOT_USERNAME?.replace(/^@/, "").trim();
-  return value && /^[A-Za-z0-9_]{5,32}$/.test(value) ? value : null;
+function validBotUsername(value: string | undefined): string | null {
+  const name = value?.replace(/^@/, "").trim();
+  return name && /^[A-Za-z0-9_]{5,32}$/.test(name) ? name : null;
 }
 
-const linkedDate = (ms: number) =>
-  new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const linkedDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 export function TelegramSection() {
-  const { data: links, isLoading } = useQuery(convexQuery(api.channelLinks.listMine, {}));
-  const telegram = links?.find((link) => link.channel === "telegram");
+  const links = useQuery(chatLinksQuery());
+  const telegram = links.data?.items.find((link) => link.channel === "telegram");
+  const bot = validBotUsername(links.data?.botUsernames?.telegram);
 
   return (
     <section aria-labelledby="telegram-heading" className="rounded-xl border border-border">
@@ -52,16 +57,23 @@ export function TelegramSection() {
       </div>
 
       <div className="px-4 py-4 sm:px-5">
-        {isLoading ? (
+        {links.isPending ? (
           <div className="space-y-3">
             <Skeleton className="h-4 w-2/3" />
             <Skeleton className="h-4 w-1/2" />
             <Skeleton className="h-9 w-40" />
           </div>
+        ) : links.isError && !links.data ? (
+          <ErrorState
+            error={links.error}
+            fallback="Couldn't load your Telegram connection."
+            onRetry={() => void links.refetch()}
+            className="py-8 sm:py-8"
+          />
         ) : telegram ? (
           <LinkedTelegram link={telegram} />
         ) : (
-          <ConnectTelegram />
+          <ConnectTelegram bot={bot} />
         )}
       </div>
     </section>
@@ -72,21 +84,35 @@ export function TelegramSection() {
 /*  Not linked: consent, then a single-use link                               */
 /* -------------------------------------------------------------------------- */
 
-function ConnectTelegram() {
+function ConnectTelegram({ bot }: { bot: string | null }) {
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<{ code: string; expiresAt: number } | null>(null);
+  const [waiting, setWaiting] = useState(false);
 
-  const { mutateAsync: createLinkCode, isPending } = useMutation({
-    mutationFn: useConvexAction(api.channelLinks.createLinkCode),
-  });
+  // While the code is valid: the linked view replaces this one once the list has the link.
+  useQuery({ ...chatLinksQuery(), refetchInterval: waiting ? LINK_POLL_MS : false });
+  useEffect(() => {
+    if (!pending) return;
+    setWaiting(true);
+    const timer = setTimeout(() => setWaiting(false), Math.max(0, pending.expiresAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [pending]);
+
+  const { mutateAsync: createLinkCode, isPending } = useApiMutation("chatLinks", "createCode");
 
   const connect = async () => {
+    if (!consent || isPending) return;
     setError("");
     try {
-      setPending(await createLinkCode({ channel: "telegram", consent }));
-    } catch {
-      setError("Couldn't create a link. Please try again.");
+      const { code, expiresAt } = await createLinkCode({ channel: "telegram", consent: true });
+      setPending({ code, expiresAt: Date.parse(expiresAt) });
+    } catch (err) {
+      setError(
+        isApiError(err, "conflict")
+          ? "Telegram is already connected. Reload the page to see it."
+          : apiErrorMessage(err, "Couldn't create a link. Please try again."),
+      );
     }
   };
 
@@ -119,6 +145,7 @@ function ConnectTelegram() {
 
       {pending ? (
         <PendingLink
+          bot={bot}
           code={pending.code}
           expiresAt={pending.expiresAt}
           onRegenerate={() => void connect()}
@@ -132,7 +159,7 @@ function ConnectTelegram() {
         </div>
       )}
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      <FormError message={error} className="mt-0" />
     </div>
   );
 }
@@ -148,17 +175,18 @@ function useSecondsLeft(expiresAt: number) {
 }
 
 function PendingLink({
+  bot,
   code,
   expiresAt,
   onRegenerate,
   regenerating,
 }: {
+  bot: string | null;
   code: string;
   expiresAt: number;
   onRegenerate: () => void;
   regenerating: boolean;
 }) {
-  const bot = botUsername();
   const secondsLeft = useSecondsLeft(expiresAt);
   const [copied, setCopied] = useState(false);
   const command = `/start ${code}`;
@@ -245,36 +273,22 @@ function PendingLink({
 /*  Linked: status, read-only, unlink                                         */
 /* -------------------------------------------------------------------------- */
 
-interface TelegramLink {
-  _id: Id<"channelIdentities">;
-  username?: string;
-  linkedAt: number;
-  readOnly: boolean;
-}
-
-function LinkedTelegram({ link }: { link: TelegramLink }) {
+function LinkedTelegram({ link }: { link: ChatLink }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyDeleted, setHistoryDeleted] = useState(false);
   const [error, setError] = useState("");
 
-  const { mutateAsync: setReadOnly, isPending: savingReadOnly } = useMutation({
-    mutationFn: useConvexMutation(api.channelLinks.setReadOnly),
-  });
-  const { mutateAsync: unlink, isPending: unlinking } = useMutation({
-    mutationFn: useConvexMutation(api.channelLinks.unlink),
-  });
-
-  const { mutateAsync: deleteHistory, isPending: deletingHistory } = useMutation({
-    mutationFn: useConvexMutation(api.agentStore.deleteMyHistory),
-  });
+  const { mutateAsync: setReadOnly, isPending: savingReadOnly } = useApiMutation("chatLinks", "setReadOnly");
+  const { mutateAsync: unlink, isPending: unlinking } = useApiMutation("chatLinks", "unlink");
+  const { mutateAsync: deleteHistory, isPending: deletingHistory } = useApiMutation("chatHistory", "delete");
 
   const toggleReadOnly = async (readOnly: boolean) => {
     setError("");
     try {
-      await setReadOnly({ identityId: link._id, readOnly });
-    } catch {
-      setError("Couldn't update the setting. Please try again.");
+      await setReadOnly({ id: link.id, readOnly });
+    } catch (err) {
+      setError(apiErrorMessage(err, "Couldn't update the setting. Please try again."));
     }
   };
 
@@ -284,17 +298,17 @@ function LinkedTelegram({ link }: { link: TelegramLink }) {
     try {
       await deleteHistory({});
       setHistoryDeleted(true);
-    } catch {
-      setError("Couldn't delete chat history. Please try again.");
+    } catch (err) {
+      setError(apiErrorMessage(err, "Couldn't delete chat history. Please try again."));
     }
   };
 
   const confirmUnlink = async () => {
     setError("");
     try {
-      await unlink({ identityId: link._id });
-    } catch {
-      setError("Couldn't unlink Telegram. Please try again.");
+      await unlink({ id: link.id });
+    } catch (err) {
+      setError(apiErrorMessage(err, "Couldn't unlink Telegram. Please try again."));
     }
   };
 
@@ -343,7 +357,7 @@ function LinkedTelegram({ link }: { link: TelegramLink }) {
           Chat history deleted.
         </p>
       )}
-      {error && <p className="text-sm text-destructive">{error}</p>}
+      <FormError message={error} className="mt-0" />
 
       <div className="flex justify-end">
         <Button variant="outline" size="default" disabled={unlinking} onClick={() => setConfirmOpen(true)}>

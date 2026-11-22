@@ -907,7 +907,15 @@ export const chatLinkSchema = z.object({
 
 /** The user's active links, at most one per channel. */
 export const chatLinksListRequestSchema = z.strictObject({});
-export const chatLinksListResponseSchema = z.object({ items: z.array(chatLinkSchema) });
+export const chatLinksListResponseSchema = z.object({
+  items: z.array(chatLinkSchema),
+  /**
+   * The bot to message, per channel, without `@` (for a `t.me/<bot>?start=<code>`
+   * link). A channel is absent when the server has no bot username configured:
+   * show only the `/start <code>` fallback then.
+   */
+  botUsernames: z.partialRecord(channelSchema, z.string()).optional(),
+});
 
 /**
  * A single-use code for `/start <code>`, valid 10 minutes. Creating one

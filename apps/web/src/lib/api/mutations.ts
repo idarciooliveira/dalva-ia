@@ -17,7 +17,7 @@ type MutationName = { [G in Group]: `${G}.${WriteOp<G> & string}` }[Group];
 /**
  * What each write makes stale. A write invalidates these prefixes on success and
  * waits for the active queries to refetch, so a dialog closes on fresh data.
- * Writes not listed invalidate nothing (their pages move in PRs 10-11).
+ * Writes not listed invalidate nothing (their pages move in PR 10).
  */
 const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> = {
   "profile.create": [queryKeys.profile],
@@ -47,6 +47,28 @@ const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> 
   "subcategories.archive": [queryKeys.subcategories.all],
   "subcategories.restore": [queryKeys.subcategories.all],
   "subcategories.delete": [queryKeys.subcategories.all, queryKeys.transactions.all],
+  // Goals feed the dashboard's goals card; their contributions list is under the goals prefix.
+  "goals.create": [queryKeys.goals.all],
+  "goals.update": [queryKeys.goals.all],
+  "goals.archive": [queryKeys.goals.all],
+  "goals.restore": [queryKeys.goals.all],
+  // Its contribution transfers stay, as plain transfers.
+  "goals.delete": [queryKeys.goals.all, queryKeys.transactions.all],
+  // A contribution to an account-linked goal is a transfer: balances, transactions and reports move.
+  "goalContributions.add": [queryKeys.goals.all, queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
+  "goalContributions.remove": [queryKeys.goals.all, queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
+  // The debt summary is a report.
+  "debts.create": [queryKeys.debts.all, queryKeys.reports.all],
+  "debts.update": [queryKeys.debts.all, queryKeys.reports.all],
+  "debts.archive": [queryKeys.debts.all, queryKeys.reports.all],
+  "debts.restore": [queryKeys.debts.all, queryKeys.reports.all],
+  // Deletes its payments' transactions and reverses their balance effects.
+  "debts.delete": [queryKeys.debts.all, queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
+  "debtPayments.record": [queryKeys.debts.all, queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
+  "debtPayments.remove": [queryKeys.debts.all, queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
+  // A new code changes no link; the page polls the list until the bot redeems it.
+  "chatLinks.unlink": [queryKeys.chatLinks.all],
+  "chatLinks.setReadOnly": [queryKeys.chatLinks.all],
 };
 
 async function invalidateAfter(queryClient: QueryClient, name: MutationName): Promise<void> {

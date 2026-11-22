@@ -5,7 +5,7 @@ export const OFFLINE_ERROR = "Can't reach DALVA right now. Check your connection
 
 /**
  * Thrown for reads and writes of the pages still on Convex (transactions,
- * transfers, dashboard, goals, debts, settings) until PRs 10-11 move them.
+ * transfers, dashboard) until PR 10 moves them.
  */
 export class LegacyBackendError extends Error {
   override name = "LegacyBackendError";

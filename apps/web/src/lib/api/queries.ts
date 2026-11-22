@@ -35,3 +35,39 @@ export const defaultCategoriesQuery = () =>
     // A constant list served by the API.
     staleTime: Infinity,
   });
+
+export const goalsQuery = (input: RouteInput<UserRoutes["goals"]["list"]> = {}) =>
+  queryOptions({
+    queryKey: queryKeys.goals.list(input),
+    queryFn: ({ signal }) => api.goals.list(input, { signal }),
+  });
+
+export const goalContributionsQuery = (goalId: string) =>
+  queryOptions({
+    queryKey: queryKeys.goals.contributions(goalId),
+    queryFn: ({ signal }) => api.goalContributions.list({ goalId }, { signal }),
+  });
+
+export const debtsQuery = (input: RouteInput<UserRoutes["debts"]["list"]> = {}) =>
+  queryOptions({
+    queryKey: queryKeys.debts.list(input),
+    queryFn: ({ signal }) => api.debts.list(input, { signal }),
+  });
+
+export const debtPaymentsQuery = (debtId: string) =>
+  queryOptions({
+    queryKey: queryKeys.debts.payments(debtId),
+    queryFn: ({ signal }) => api.debtPayments.list({ debtId }, { signal }),
+  });
+
+export const debtSummaryQuery = () =>
+  queryOptions({
+    queryKey: queryKeys.reports.debtSummary(),
+    queryFn: ({ signal }) => api.reports.debtSummary({}, { signal }),
+  });
+
+export const chatLinksQuery = () =>
+  queryOptions({
+    queryKey: queryKeys.chatLinks.all(),
+    queryFn: ({ signal }) => api.chatLinks.list({}, { signal }),
+  });
