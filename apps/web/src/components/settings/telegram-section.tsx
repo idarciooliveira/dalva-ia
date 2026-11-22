@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ChatLink } from "@mpf/finance-contract";
 import { Check, Copy, ExternalLink, Link2Off, MessageCircle, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { apiErrorMessage, isApiError } from "@/lib/api/errors";
 import { useApiMutation } from "@/lib/api/mutations";
+import { queryKeys } from "@/lib/api/keys";
 import { chatLinksQuery } from "@/lib/api/queries";
 
 /** How often the page checks whether the bot redeemed the code (no live updates until SSE). */
@@ -99,6 +100,7 @@ function ConnectTelegram({ bot }: { bot: string | null }) {
     return () => clearTimeout(timer);
   }, [pending]);
 
+  const queryClient = useQueryClient();
   const { mutateAsync: createLinkCode, isPending } = useApiMutation("chatLinks", "createCode");
 
   const connect = async () => {
@@ -108,11 +110,9 @@ function ConnectTelegram({ bot }: { bot: string | null }) {
       const { code, expiresAt } = await createLinkCode({ channel: "telegram", consent: true });
       setPending({ code, expiresAt: Date.parse(expiresAt) });
     } catch (err) {
-      setError(
-        isApiError(err, "conflict")
-          ? "Telegram is already connected. Reload the page to see it."
-          : apiErrorMessage(err, "Couldn't create a link. Please try again."),
-      );
+      // `conflict`: linked meanwhile (e.g. in another tab); the refetch shows the linked view.
+      if (isApiError(err, "conflict")) void queryClient.invalidateQueries({ queryKey: queryKeys.chatLinks.all() });
+      else setError(apiErrorMessage(err, "Couldn't create a link. Please try again."));
     }
   };
 
@@ -274,6 +274,7 @@ function PendingLink({
 /* -------------------------------------------------------------------------- */
 
 function LinkedTelegram({ link }: { link: ChatLink }) {
+  const queryClient = useQueryClient();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [historyDeleted, setHistoryDeleted] = useState(false);
@@ -288,7 +289,9 @@ function LinkedTelegram({ link }: { link: ChatLink }) {
     try {
       await setReadOnly({ id: link.id, readOnly });
     } catch (err) {
-      setError(apiErrorMessage(err, "Couldn't update the setting. Please try again."));
+      // Unlinked meanwhile (from the bot, another tab): the refetch shows the connect view.
+      if (isApiError(err, "not_found")) void queryClient.invalidateQueries({ queryKey: queryKeys.chatLinks.all() });
+      else setError(apiErrorMessage(err, "Couldn't update the setting. Please try again."));
     }
   };
 
@@ -308,7 +311,9 @@ function LinkedTelegram({ link }: { link: ChatLink }) {
     try {
       await unlink({ id: link.id });
     } catch (err) {
-      setError(apiErrorMessage(err, "Couldn't unlink Telegram. Please try again."));
+      // Unlinked meanwhile (from the bot, another tab): the refetch shows the connect view.
+      if (isApiError(err, "not_found")) void queryClient.invalidateQueries({ queryKey: queryKeys.chatLinks.all() });
+      else setError(apiErrorMessage(err, "Couldn't unlink Telegram. Please try again."));
     }
   };
 

@@ -912,9 +912,10 @@ export const chatLinksListResponseSchema = z.object({
   /**
    * The bot to message, per channel, without `@` (for a `t.me/<bot>?start=<code>`
    * link). A channel is absent when the server has no bot username configured:
-   * show only the `/start <code>` fallback then.
+   * show only the `/start <code>` fallback then. Keyed by channel; any string
+   * key is accepted so a channel added later doesn't break deployed clients.
    */
-  botUsernames: z.partialRecord(channelSchema, z.string()).optional(),
+  botUsernames: z.record(z.string(), z.string()).optional(),
 });
 
 /**

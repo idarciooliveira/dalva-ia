@@ -9,6 +9,7 @@ import { GoalCard } from "@/components/goals/goal-card";
 import { GoalDetailDialog } from "@/components/goals/goal-detail-dialog";
 import { GoalFormDialog } from "@/components/goals/goal-form-dialog";
 import { Button } from "@/components/ui/button";
+import { useRetained } from "@/hooks/use-retained";
 import { goalsQuery } from "@/lib/api/queries";
 
 export const Route = createFileRoute("/_authenticated/goals")({
@@ -38,15 +39,17 @@ function GoalsContent() {
     placeholderData: keepPreviousData,
   });
 
-  if (goalsResult.isPending) {
-    return <GoalsListSkeleton />;
-  }
-
   const goals = goalsResult.data?.items ?? [];
   const find = (id: string | null) => (id ? (goals.find((g) => g.id === id) ?? null) : null);
   const detailGoal = find(detailGoalId);
   const editGoal = find(editGoalId);
+  const editGoalShown = useRetained(editGoal);
   const contributeGoal = find(contributeGoalId);
+  const contributeGoalShown = useRetained(contributeGoal);
+
+  if (goalsResult.isPending) {
+    return <GoalsListSkeleton />;
+  }
 
   return (
     <>
@@ -116,7 +119,7 @@ function GoalsContent() {
         onOpenChange={(open) => {
           if (!open) setEditGoalId(null);
         }}
-        goal={editGoal}
+        goal={editGoalShown}
       />
 
       <ContributionDialog
@@ -124,7 +127,7 @@ function GoalsContent() {
         onOpenChange={(open) => {
           if (!open) setContributeGoalId(null);
         }}
-        goal={contributeGoal}
+        goal={contributeGoalShown}
       />
     </>
   );

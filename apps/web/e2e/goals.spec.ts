@@ -36,6 +36,7 @@ test.describe("Goals page (apps/api)", () => {
     // Virtual goals take no account.
     await card.click();
     await page.getByRole("button", { name: "Contribute" }).click();
+    await expect(page.getByRole("heading", { name: "Add contribution" })).toBeVisible();
     await expect(page.getByLabel("Source account")).toHaveCount(0);
     await page.getByLabel("Contribution amount").fill("25000");
     await page.getByLabel("Note").fill("First deposit");
@@ -57,9 +58,15 @@ test.describe("Goals page (apps/api)", () => {
     await expect(page.getByLabel("Goal name")).toHaveValue("Vacation");
     await page.getByLabel("Goal name").fill("Summer trip");
     await page.getByLabel("Target amount").fill("200000");
+    // The API can't clear the date: refused in the dialog instead of silently kept.
+    await page.getByLabel("Target date").fill("");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("dialog").getByRole("alert")).toContainText("can be changed but not removed");
+    await page.getByLabel("Target date").fill("2027-08-01");
     await page.getByRole("button", { name: "Save changes" }).click();
     const renamed = page.getByRole("button", { name: /summer trip/i });
     await expect(renamed).toContainText("$2,000.00 target");
+    await expect(renamed).toContainText("Due Aug 2027");
 
     // Archive hides it; the Archived toggle shows it again; restore.
     await renamed.click();
@@ -97,6 +104,7 @@ test.describe("Goals page (apps/api)", () => {
     await page.getByRole("combobox", { name: "Tracking mode" }).click();
     await page.getByRole("option", { name: "Link to account" }).click();
     await page.getByRole("combobox", { name: "Linked account" }).click();
+    await expect(page.getByRole("option", { name: "Rainy Day" })).toBeVisible();
     await expect(page.getByRole("option", { name: "Euro Savings" })).toHaveCount(0);
     await page.getByRole("option", { name: "Rainy Day" }).click();
     await expect(page.getByText(/only accounts in USD/i)).toBeVisible();
@@ -111,6 +119,7 @@ test.describe("Goals page (apps/api)", () => {
     await page.getByRole("button", { name: "Add contribution" }).click();
     await expect(page.getByRole("dialog").getByRole("alert")).toContainText("select a source account");
     await page.getByRole("combobox", { name: "Source account" }).click();
+    await expect(page.getByRole("option", { name: "Main Checking" })).toBeVisible();
     await expect(page.getByRole("option", { name: "Rainy Day" })).toHaveCount(0);
     await expect(page.getByRole("option", { name: "Euro Savings" })).toHaveCount(0);
     await page.getByRole("option", { name: "Main Checking" }).click();

@@ -41,8 +41,9 @@ const ERROR_ID = "goal-form-error";
 
 export function GoalFormDialog({ open, onOpenChange, goal }: GoalFormDialogProps) {
   const isEdit = goal !== null;
-  // Goals are in the base currency; the API labels their amounts with it.
-  const currency = useAuthProfile().baseCurrency ?? "USD";
+  // Goals are in the base currency; an edited goal keeps the currency the API labels it with.
+  const baseCurrency = useAuthProfile().baseCurrency ?? "USD";
+  const currency = goal?.targetAmount.currency ?? baseCurrency;
   const digits = fractionDigits(currency);
 
   const [name, setName] = useState("");
@@ -94,6 +95,11 @@ export function GoalFormDialog({ open, onOpenChange, goal }: GoalFormDialogProps
       setError("Please enter a valid target amount");
       return;
     }
+    // The API can change the date, not clear it: say so instead of closing as if it were saved.
+    if (isEdit && goal.targetDate && !targetDate) {
+      setError("The target date can be changed but not removed");
+      return;
+    }
     if (!isEdit && !isVirtual && !linkedAccountId) {
       setError("Please select an account to link to");
       return;
@@ -102,8 +108,14 @@ export function GoalFormDialog({ open, onOpenChange, goal }: GoalFormDialogProps
     const target = { amountMinor, currency };
     try {
       if (isEdit) {
-        // The date can be changed, not cleared (the API keeps the stored one when it's left out).
-        await updateGoal({ id: goal.id, name: name.trim(), targetAmount: target, targetDate: targetDate || undefined, color });
+        // Only what changed, so a concurrent edit elsewhere isn't overwritten with what this dialog opened with.
+        const changes = {
+          name: name.trim() !== goal.name ? name.trim() : undefined,
+          targetAmount: amountMinor !== goal.targetAmount.amountMinor ? target : undefined,
+          targetDate: targetDate && targetDate !== goal.targetDate ? targetDate : undefined,
+          color: color !== (goal.color ?? DEFAULT_GOAL_COLOR) ? color : undefined,
+        };
+        if (Object.values(changes).some((value) => value !== undefined)) await updateGoal({ id: goal.id, ...changes });
         onOpenChange(false);
         return;
       }

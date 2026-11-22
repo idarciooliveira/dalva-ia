@@ -9,6 +9,7 @@ import { DebtFormDialog } from "@/components/debts/debt-form-dialog";
 import { DebtPaymentDialog } from "@/components/debts/debt-payment-dialog";
 import { ErrorState } from "@/components/error-state";
 import { Button } from "@/components/ui/button";
+import { useRetained } from "@/hooks/use-retained";
 import { debtSummaryQuery, debtsQuery } from "@/lib/api/queries";
 import { formatMinor } from "@/lib/money";
 
@@ -39,15 +40,17 @@ function DebtsContent() {
     placeholderData: keepPreviousData,
   });
 
-  if (debtsResult.isPending) {
-    return <DebtsListSkeleton />;
-  }
-
   const debts = debtsResult.data?.items ?? [];
   const find = (id: string | null) => (id ? (debts.find((d) => d.id === id) ?? null) : null);
   const detailDebt = find(detailDebtId);
   const editDebt = find(editDebtId);
+  const editDebtShown = useRetained(editDebt);
   const paymentDebt = find(paymentDebtId);
+  const paymentDebtShown = useRetained(paymentDebt);
+
+  if (debtsResult.isPending) {
+    return <DebtsListSkeleton />;
+  }
 
   return (
     <>
@@ -118,14 +121,14 @@ function DebtsContent() {
         onOpenChange={(open) => {
           if (!open) setEditDebtId(null);
         }}
-        debt={editDebt}
+        debt={editDebtShown}
       />
       <DebtPaymentDialog
         open={paymentDebt !== null}
         onOpenChange={(open) => {
           if (!open) setPaymentDebtId(null);
         }}
-        debt={paymentDebt}
+        debt={paymentDebtShown}
       />
     </>
   );

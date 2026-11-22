@@ -29,6 +29,7 @@ test.describe("Debts page", () => {
     await page.getByLabel("Due date").fill("2026-05-15");
     await expect(page.getByRole("combobox", { name: "Debt type" })).toHaveText(/credit card/i);
     await page.getByRole("combobox", { name: "Linked liability account" }).click();
+    await expect(page.getByRole("option", { name: "Visa Liability" })).toBeVisible();
     await expect(page.getByRole("option", { name: "Euro Card" })).toHaveCount(0);
     await page.getByRole("option", { name: "Visa Liability" }).click();
     await expect(page.getByText(/only accounts in USD/i)).toBeVisible();
@@ -54,6 +55,7 @@ test.describe("Debts page", () => {
     await page.getByLabel("Payment amount").fill("15000");
     await page.getByRole("combobox", { name: "Source account" }).click();
     // Never the liability the payment pays down, never another currency.
+    await expect(page.getByRole("option", { name: "Main Checking" })).toBeVisible();
     await expect(page.getByRole("option", { name: "Visa Liability" })).toHaveCount(0);
     await expect(page.getByRole("option", { name: "Euro Card" })).toHaveCount(0);
     await page.getByRole("option", { name: "Main Checking" }).click();

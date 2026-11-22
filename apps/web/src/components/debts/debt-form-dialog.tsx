@@ -31,8 +31,9 @@ const ERROR_ID = "debt-form-error";
 
 export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps) {
   const isEdit = debt !== null;
-  // Debts are in the base currency; the API labels their amounts with it.
-  const currency = useAuthProfile().baseCurrency ?? "USD";
+  // Debts are in the base currency; an edited debt keeps the currency the API labels it with.
+  const baseCurrency = useAuthProfile().baseCurrency ?? "USD";
+  const currency = debt?.originalAmount.currency ?? baseCurrency;
   const digits = fractionDigits(currency);
 
   const [name, setName] = useState("");
@@ -55,6 +56,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
   // An edited debt may point at an account no longer listed (archived): keep it selectable.
   const keepsUnlistedAccount =
     debt?.linkedAccountId !== undefined && !liabilityAccounts.some((a) => a.id === debt.linkedAccountId);
+  const unlistedAccountLabel = accountsResult.isSuccess ? "Current account (archived)" : "Current account";
 
   const debtId = debt?.id;
   useEffect(() => {
@@ -109,8 +111,21 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
       return;
     }
 
+    // The API can change these, not clear them: say so instead of closing as if they were saved.
+    if (isEdit) {
+      const cleared = [
+        debt.lender !== undefined && !lender.trim() && "lender",
+        debt.interestRate !== undefined && rate === null && "interest rate",
+        debt.minimumPayment !== undefined && minimum === null && "minimum payment",
+        debt.dueDate !== undefined && !dueDate && "due date",
+      ].filter((field): field is string => typeof field === "string");
+      if (cleared.length > 0) {
+        setError(`The ${cleared.join(", ")} can be changed but not removed`);
+        return;
+      }
+    }
+
     const money = (amountMinor: number) => ({ amountMinor, currency });
-    // Optional fields can be changed, not cleared: a blank one is left out and the stored value stays.
     const fields = {
       name: name.trim(),
       debtType,
@@ -125,12 +140,22 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
 
     try {
       if (isEdit) {
-        await updateDebt({
-          id: debt.id,
-          ...fields,
+        // Only what changed: a payment recorded meanwhile (another tab, the bot) lowered the stored
+        // balance, and sending the balance this dialog opened with would undo it.
+        const changed = <T,>(next: T | undefined, stored: T | undefined) => (next !== stored ? next : undefined);
+        const changes = {
+          name: changed(fields.name, debt.name),
+          debtType: changed(fields.debtType, debt.debtType),
+          originalAmount: original !== debt.originalAmount.amountMinor ? fields.originalAmount : undefined,
+          currentBalance: current !== debt.currentBalance.amountMinor ? fields.currentBalance : undefined,
+          lender: changed(fields.lender, debt.lender),
+          interestRate: changed(fields.interestRate, debt.interestRate),
+          minimumPayment: minimum !== null && minimum !== debt.minimumPayment?.amountMinor ? fields.minimumPayment : undefined,
+          dueDate: changed(fields.dueDate, debt.dueDate),
           // Unchanged: not re-checked, so an archived linked account doesn't block other edits.
-          linkedAccountId: fields.linkedAccountId === debt.linkedAccountId ? undefined : fields.linkedAccountId,
-        });
+          linkedAccountId: changed(fields.linkedAccountId, debt.linkedAccountId),
+        };
+        if (Object.values(changes).some((value) => value !== undefined)) await updateDebt({ id: debt.id, ...changes });
       } else {
         await createDebt(fields);
       }
@@ -291,7 +316,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
                     {/* Once linked, a debt can switch accounts but not unlink (the API can't clear the field). */}
                     {!debt?.linkedAccountId && <SelectItem value={NO_ACCOUNT}>No linked liability account</SelectItem>}
                     {keepsUnlistedAccount && debt?.linkedAccountId && (
-                      <SelectItem value={debt.linkedAccountId}>Current account (archived)</SelectItem>
+                      <SelectItem value={debt.linkedAccountId}>{unlistedAccountLabel}</SelectItem>
                     )}
                     {liabilityAccounts.map((account) => (
                       <SelectItem key={account.id} value={account.id}>

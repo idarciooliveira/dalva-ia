@@ -83,12 +83,13 @@ describe("resolve and unlink", () => {
 });
 
 describe("chatLinksListResponseSchema", () => {
-  it("takes bot usernames per channel, optional and partial", () => {
+  it("takes bot usernames per channel, optional, partial and open to new channels", () => {
     expect(chatLinksListResponseSchema.safeParse({ items: [] }).success).toBe(true);
     expect(chatLinksListResponseSchema.safeParse({ items: [], botUsernames: {} }).success).toBe(true);
     expect(chatLinksListResponseSchema.parse({ items: [], botUsernames: { telegram: "dalva_bot" } }).botUsernames).toEqual({
       telegram: "dalva_bot",
     });
-    expect(chatLinksListResponseSchema.safeParse({ items: [], botUsernames: { whatsapp: "x" } }).success).toBe(false);
+    expect(chatLinksListResponseSchema.safeParse({ items: [], botUsernames: { whatsapp: "x" } }).success).toBe(true);
+    expect(chatLinksListResponseSchema.safeParse({ items: [], botUsernames: { telegram: 1 } }).success).toBe(false);
   });
 });

@@ -32,7 +32,8 @@ export function ContributionDialog({ open, onOpenChange, goal }: ContributionDia
   const [fromAccountId, setFromAccountId] = useState("");
   const [error, setError] = useState("");
 
-  const linked = goal !== null && !goal.isVirtual;
+  // As the API decides: a non-virtual goal whose account was deleted (legacy data) is tracked virtually.
+  const linked = goal !== null && !goal.isVirtual && goal.linkedAccountId !== undefined;
   const currency = goal?.targetAmount.currency ?? "USD";
   const digits = fractionDigits(currency);
 

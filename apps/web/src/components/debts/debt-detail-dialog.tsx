@@ -29,7 +29,6 @@ export function DebtDetailDialog({ debt, open, onOpenChange, onEdit, onRecordPay
 
   const percentPaid = debtPercentPaid(debt);
   const currency = debt.originalAmount.currency;
-  const payments = useQuery({ ...debtPaymentsQuery(debt.id), enabled: open });
 
   const close = () => onOpenChange(false);
   const { mutate: archiveDebt, isPending: archiving } = useApiMutation("debts", "archive", {
@@ -48,6 +47,8 @@ export function DebtDetailDialog({ debt, open, onOpenChange, onEdit, onRecordPay
     onError: (err) => setError(apiErrorMessage(err, "Couldn't delete the debt. Try again.")),
   });
   const busy = archiving || restoring || deleting;
+  // Not while deleting: the delete invalidates the debts prefix, and this list would refetch a 404.
+  const payments = useQuery({ ...debtPaymentsQuery(debt.id), enabled: open && !deleting });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

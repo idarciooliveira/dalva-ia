@@ -32,7 +32,6 @@ export function GoalDetailDialog({ goal, open, onOpenChange, onEdit, onContribut
   const currency = goal.targetAmount.currency;
   const remaining = Math.max(0, goal.targetAmount.amountMinor - goal.currentAmount.amountMinor);
 
-  const contributions = useQuery({ ...goalContributionsQuery(goal.id), enabled: open });
 
   const close = () => onOpenChange(false);
   const { mutate: archiveGoal, isPending: archiving } = useApiMutation("goals", "archive", {
@@ -51,6 +50,8 @@ export function GoalDetailDialog({ goal, open, onOpenChange, onEdit, onContribut
     onError: (err) => setError(apiErrorMessage(err, "Couldn't delete the goal. Try again.")),
   });
   const busy = archiving || restoring || deleting;
+  // Not while deleting: the delete invalidates the goals prefix, and this list would refetch a 404.
+  const contributions = useQuery({ ...goalContributionsQuery(goal.id), enabled: open && !deleting });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -72,14 +73,15 @@ export function GoalDetailDialog({ goal, open, onOpenChange, onEdit, onContribut
             <span className="tabular-nums">{formatMinor(remaining, currency)} to go</span>
           </div>
 
-          <div className="mb-4 flex items-center gap-2 border-b border-border pb-4">
+          {/* Wraps on narrow phones: the icon buttons go to a second line instead of being clipped. */}
+          <div className="mb-4 flex flex-wrap items-center gap-2 border-b border-border pb-4">
             {!goal.archived && (
-              <Button variant="accent" className="flex-1" onClick={onContribute} disabled={busy}>
+              <Button variant="accent" className="min-w-32 flex-1" onClick={onContribute} disabled={busy}>
                 <PlusCircle className="mr-1.5 size-4" aria-hidden="true" />
                 Contribute
               </Button>
             )}
-            <Button variant="outline" className="flex-1" onClick={onEdit} disabled={busy}>
+            <Button variant="outline" className="min-w-32 flex-1" onClick={onEdit} disabled={busy}>
               <Edit className="mr-1.5 size-4" aria-hidden="true" />
               Edit
             </Button>
