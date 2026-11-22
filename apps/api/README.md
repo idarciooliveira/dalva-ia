@@ -37,7 +37,7 @@ Password hashes from Convex Auth (Lucia `Scrypt`) use the same format as Better 
 
 ## Convex import
 
-`bun run migrate:convex <export.zip> [--dry-run] [--drop-invalid]` (`scripts/migrate-from-convex.ts`, logic in `src/import/`) loads a `npx convex export` into an empty, migrated database in one transaction and verifies it. Rules, report and the cutover runbook: `docs/deploy.md`, "Cutover".
+`bun run migrate:convex <export.zip> [--dry-run] [--drop-invalid] [--accept-lone-legs] [--report <file>]` (`scripts/migrate-from-convex.ts`, logic in `src/import/`) loads a `npx convex export` into an empty, migrated database in one transaction and verifies it. Rules, report and the cutover runbook: `docs/deploy.md`, "Cutover".
 
 ## Contract routes (`/api/v1`)
 

@@ -316,6 +316,8 @@ describe("plan", () => {
     const fixture = variant((f) => {
       find(f, "authAccounts", "aa_bob").secret = HASHES.staple.hash.toUpperCase();
       delete find(f, "users", "u_carl").email;
+      // Owns a row: can't be skipped.
+      f.categories!.push({ _id: "c_carl", _creationTime: 1_767_225_700_000, userId: "u_carl", name: "Misc", type: "expense", isDefault: false });
       find(f, "accounts", "a_savings").type = "crypto";
       find(f, "categories", "c_food").name = "Fo\u0000od";
       find(f, "channelIdentities", "ci_ana").scopes = ["finance:admin"];
@@ -334,9 +336,31 @@ describe("plan", () => {
     ]);
   });
 
-  it("reports tables it doesn't know", () => {
+  it("fails on tables it doesn't know", () => {
     const { report } = plan(asExport({ ...convexFixture(), legacyNotes: [{ _id: "n", _creationTime: 1 }] }));
-    expect(issues(report.warnings, "unknown_table")).toEqual([{ code: "unknown_table", table: "legacyNotes", detail: "1 documents not migrated" }]);
+    expect(report.errors).toEqual([
+      { code: "unknown_table", table: "legacyNotes", detail: "1 documents; map the table in the import or drop it in Convex" },
+    ]);
+  });
+
+  it("skips a user without an email that owns nothing, and ignores malformed sessions", () => {
+    const fixture = variant((f) => {
+      f.users!.push({ _id: "u_abandoned", _creationTime: 1_767_225_600_000 });
+      f.authSessions!.push({ userId: "u_abandoned" }, null as never);
+    });
+    const { report } = plan(asExport(fixture));
+    expect(report.errors).toEqual([]);
+    expect(issues(report.warnings, "skipped_user_without_email").map((issue) => issue.id)).toEqual(["u_abandoned"]);
+  });
+
+  it("keeps the profile that completed onboarding when merging", () => {
+    const fixture = variant((f) => {
+      find(f, "userProfiles", "p_ana2").onboardingCompleted = false;
+    });
+    const { report, rows } = plan(asExport(fixture));
+    const ana2 = id("users", fixture, "u_ana2");
+    expect(rows.userProfiles.filter((row) => row.userId === ana2)).toEqual([expect.objectContaining({ baseCurrency: "USD", onboardingCompleted: true })]);
+    expect(issues(report.warnings, "duplicate_profile_dropped")).toEqual([expect.objectContaining({ id: "p_ana2", detail: "kept p_ana" })]);
   });
 });
 

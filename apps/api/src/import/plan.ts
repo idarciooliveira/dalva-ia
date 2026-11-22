@@ -4,9 +4,11 @@
  * PR 13):
  *
  * - Users: one per email, lowercased; Convex users whose emails differ only by
- *   case become one user (the one with a password that signed in last keeps
- *   its password, profile and active chat link; every finance row moves to it). The name
- *   comes from the Convex user, else the profile, else the email's local part.
+ *   case become one user: the one with a password that signed in last keeps
+ *   its password and active chat link, the profile with completed onboarding
+ *   is kept, every finance row moves to it. The name comes from the Convex
+ *   user, else the profile, else the email's local part. A user without an
+ *   email fails the run if it owns rows, else is skipped.
  * - Passwords: the Lucia Scrypt hash of the `password` auth account, copied
  *   as-is when it is `<32 hex>:<128 hex>` (Better Auth verifies it unchanged).
  * - Ids: UUIDv7 from `_creationTime` and the Convex id ({@link importId}).
@@ -19,6 +21,7 @@
  * - A lone outgoing transfer leg whose destination is gone fails the run (the
  *   new code would read it as incoming), unless `acceptLoneLegs`.
  * - Rows whose owner doesn't exist are skipped (nobody could see them).
+ * - A table the import doesn't know fails the run.
  * - Agent chat state, sessions, link codes and idempotency keys are not
  *   migrated: users sign in once, chats start fresh. Linked chats are.
  */
@@ -61,6 +64,7 @@ export type IssueCode =
   | "dangling_required_ref"
   | "cross_user_required_ref"
   | "lone_outgoing_leg_without_destination"
+  | "unknown_table"
   // Warnings: reported, the run goes on.
   | "dropped_dangling_required_ref"
   | "dropped_cross_user_required_ref"
@@ -76,7 +80,7 @@ export type IssueCode =
   | "duplicate_profile_dropped"
   | "identity_unlinked"
   | "transfer_group_id_rewritten"
-  | "unknown_table";
+  | "skipped_user_without_email";
 
 /** One finding. Ids are Convex ids; no emails, names or amounts. */
 export interface Issue {
@@ -172,6 +176,7 @@ const ERROR_CODES = new Set<IssueCode>([
   "dangling_required_ref",
   "cross_user_required_ref",
   "lone_outgoing_leg_without_destination",
+  "unknown_table",
 ]);
 
 const ACCOUNT_TYPES = ["bank", "savings", "credit_card", "cash", "e_wallet", "loan", "investment"] as const;
@@ -394,7 +399,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   for (const [table, docs] of source) {
     report.source[table] = docs.length;
     if (NOT_MIGRATED.has(table)) report.notMigrated[table] = docs.length;
-    else if (!(table in MIGRATED)) issues.add({ code: "unknown_table", table, detail: `${docs.length} documents not migrated` });
+    else if (!(table in MIGRATED)) issues.add({ code: "unknown_table", table, detail: `${docs.length} documents; map the table in the import or drop it in Convex` });
   }
 
   /** Valid documents of a table; malformed or repeated ones are errors. */
@@ -435,9 +440,10 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   const userDocs = docsOf("users");
   const profileDocs = docsOf("userProfiles");
   const lastSignIn = new Map<string, number>();
-  for (const session of docsOf("authSessions")) {
-    const userId = session.userId;
-    if (typeof userId === "string") lastSignIn.set(userId, Math.max(lastSignIn.get(userId) ?? 0, session._creationTime));
+  // Sessions are not migrated, only read for the merge: a malformed one is ignored, not an error.
+  for (const session of source.get("authSessions") ?? []) {
+    const { userId, _creationTime: at } = (session ?? {}) as Partial<ConvexDoc>;
+    if (typeof userId === "string" && typeof at === "number") lastSignIn.set(userId, Math.max(lastSignIn.get(userId) ?? 0, at));
   }
 
   const userIds = new Set(userDocs.map((doc) => doc._id));
@@ -463,13 +469,29 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     }
   }
 
+  /** Convex users that own at least one row of a migrated table. */
+  const owning = new Set<string>();
+  for (const table of Object.keys(MIGRATED)) {
+    if (table === "users" || table === "authAccounts") continue;
+    for (const doc of source.get(table) ?? []) {
+      const userId = (doc as { userId?: unknown } | null)?.userId;
+      if (typeof userId === "string") owning.add(userId);
+    }
+  }
+
   // Valid users grouped by lowercase email.
   const byEmail = new Map<string, ConvexDoc[]>();
   for (const user of userDocs) {
     const account = passwordAccounts.get(user._id);
     const raw = typeof account?.providerAccountId === "string" ? account.providerAccountId : user.email;
     if (typeof raw !== "string" || !/^[^\s@]+@[^\s@]+$/.test(raw.trim()) || raw.includes("\u0000")) {
-      issues.add({ code: "missing_email", table: "users", id: user._id, detail: "no usable email on the user or its password account" });
+      // Nobody can sign in as it; harmless to skip when it owns nothing (an abandoned sign-up).
+      issues.add({
+        code: owning.has(user._id) ? "missing_email" : "skipped_user_without_email",
+        table: "users",
+        id: user._id,
+        detail: "no usable email on the user or its password account",
+      });
       continue;
     }
     const email = raw.trim().toLowerCase();
@@ -606,10 +628,14 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
       onboardingCompleted: fields.boolean("onboardingCompleted"),
       createdAt: createdAt(doc),
     };
-    // One profile per user: the merge survivor's own, else the oldest.
+    // One profile per user: a completed onboarding first (an incomplete one would send a merged user back through
+    // onboarding, which seeds categories again), then the merge survivor's own, then the oldest.
     const current = profileByOwner.get(owner);
     if (current) {
-      const replace = (ownedByPrimary(doc) && !ownedByPrimary(current.doc)) || (ownedByPrimary(doc) === ownedByPrimary(current.doc) && doc._creationTime < current.doc._creationTime);
+      const rank = (profile: ConvexDoc) => [profile.onboardingCompleted === true ? 1 : 0, ownedByPrimary(profile) ? 1 : 0, -profile._creationTime];
+      const [a, b] = [rank(doc), rank(current.doc)];
+      const i = a.findIndex((value, index) => value !== b[index]);
+      const replace = i >= 0 && a[i]! > b[i]!;
       const [kept, dropped] = replace ? [doc, current.doc] : [current.doc, doc];
       issues.add({ code: "duplicate_profile_dropped", table: "userProfiles", id: dropped._id, detail: `kept ${kept._id}` });
       if (!replace) continue;

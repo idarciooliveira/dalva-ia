@@ -48,15 +48,17 @@ Production is the Convex deployment Vercel production's `VITE_CONVEX_URL` points
 git checkout <release sha>                       # the SHA the stack will run (API_IMAGE_TAG)
 bun install --frozen-lockfile
 export CONVEX_PROD=dev:<production deployment>   # Convex dashboard → production deployment → its name
+mkdir -p -m 700 ~/dalva-cutover
 (cd packages/backend && CONVEX_DEPLOYMENT=$CONVEX_PROD bunx convex export --path ~/dalva-cutover/rehearsal.zip)
 
 docker run -d --rm --name dalva-import -e POSTGRES_USER=dalva -e POSTGRES_PASSWORD=dalva -e POSTGRES_DB=dalva \
   -p 127.0.0.1:55432:5432 postgres:18.7-alpine
+until docker exec dalva-import pg_isready -q -h 127.0.0.1 -U dalva -d dalva; do sleep 1; done   # TCP is up only after initdb
 export DATABASE_URL=postgres://dalva:dalva@127.0.0.1:55432/dalva
 (cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/rehearsal.zip --dry-run --report ~/dalva-cutover/rehearsal.json)
 ```
 
-Check that `source.users` in the report matches the user count in the dashboard: a wrong deployment still passes every check. Every error must be fixed in Convex, or accepted with `--drop-invalid` / `--accept-lone-legs`, before the real run. Read `changedByImport`. Also check that `convex export` works while the deployment is paused (step 2); if it doesn't, plan to export right after unpausing with web and agent still down. Then `docker stop dalva-import`.
+Check that `source.users` in the report matches the user count in the dashboard: a wrong deployment still passes every check. Every error must be fixed in Convex, or accepted with `--drop-invalid` / `--accept-lone-legs`, before the real run. Read `changedByImport`. List the `email_case_merge` users: they keep one password (the other duplicate's stops working) and, with `identity_unlinked`, one Telegram chat; tell them before cutover. Also check that `convex export` works while the deployment is paused (step 2); if it doesn't, plan to export right after unpausing with web and agent still down. Then rehearse step 3 end to end once (real run, dump, restore) against the staging stack, and `docker stop dalva-import`.
 
 Bring up the production stack beforehand with an empty database (the deploy steps in this file, production hostname and bot) but without routing traffic to it. The `backup restore` command and `dalva_backups` volume used below come from it.
 
@@ -72,12 +74,12 @@ Same as the rehearsal from the repo root, with a fresh scratch database and no `
 
 ```bash
 (cd packages/backend && CONVEX_DEPLOYMENT=$CONVEX_PROD bunx convex export --path ~/dalva-cutover/cutover.zip)
-# fresh dalva-import container, as in step 1
+# fresh dalva-import container and pg_isready wait, as in step 1
 (cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/cutover.zip --report ~/dalva-cutover/cutover.json)   # exit 0, "committed"
 docker exec dalva-import pg_dump -U dalva -d dalva --format=custom --no-owner > ~/dalva-cutover/cutover.dump
 ```
 
-Compare `cutover.json` with the rehearsal: same issue codes, counts grown only by what users did since. Then load the dump on the VPS:
+Go on only if `cutover.json` matches the rehearsal: the same issue codes, no new `changedByImport` account or accepted lone leg, counts grown only by what users did since. Then load the dump on the VPS:
 
 ```bash
 scp ~/dalva-cutover/cutover.dump vps:/tmp/ && ssh vps
@@ -102,6 +104,7 @@ The counts must equal `verification.rowCounts` in `cutover.json`.
    export AGENT_PUBLIC_URL="$PUBLIC_URL"
    cd apps/agent && bun run telegram:webhook:set && bun run telegram:webhook:info
    ```
+   Without `DROP_PENDING_UPDATES`, messages sent during the freeze are delivered now, against the new database.
 
 ### 5. Smoke test
 

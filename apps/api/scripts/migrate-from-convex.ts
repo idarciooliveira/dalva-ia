@@ -57,16 +57,26 @@ if (!dryRun && !url) {
 const handle = url ? createDatabase({ url, max: 1 }) : undefined;
 let exitCode = 1;
 try {
-  const report = await runImport({ source: args.positionals[0]!, db: handle?.db, dryRun, dropInvalid: args.values["drop-invalid"],
+  const report = await runImport({
+    source: args.positionals[0]!,
+    db: handle?.db,
+    dryRun,
+    dropInvalid: args.values["drop-invalid"],
     acceptLoneLegs: args.values["accept-lone-legs"],
   });
   process.stderr.write(`${formatSummary(report)}\n`);
-  const json = `${JSON.stringify(report, null, 2)}\n`;
-  if (args.values.report) await writeFile(args.values.report, json, { mode: 0o600 });
-  else process.stdout.write(json);
   exitCode = importSucceeded(report) ? 0 : 1;
+  const json = `${JSON.stringify(report, null, 2)}\n`;
+  try {
+    if (args.values.report) await writeFile(args.values.report, json, { mode: 0o600 });
+    else process.stdout.write(json);
+  } catch (error) {
+    // The import's outcome stands (see the summary); only the report is missing.
+    process.stderr.write(`report not written: ${(error as Error).message}\n`);
+    exitCode = 1;
+  }
 } catch (error) {
-  process.stderr.write(`import failed: ${describeError(error)}\n`);
+  process.stderr.write(`import failed, nothing committed: ${describeError(error)}\n`);
 } finally {
   await handle?.close();
 }
