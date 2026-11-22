@@ -78,6 +78,51 @@ export async function ownedByContribution(tx: Tx, userId: string, row: Transacti
   return contribution !== undefined;
 }
 
+/**
+ * `ownedByContribution` and `managedTransactionKind` for a page of rows in two
+ * queries: which flow owns each row, the goal contribution first (it is a
+ * transfer too). Rows no flow owns are absent.
+ */
+export async function managedKinds(
+  tx: Tx,
+  userId: string,
+  rows: Transaction[],
+): Promise<Map<string, "transfer" | "goal_contribution" | "debt_payment">> {
+  const kinds = new Map<string, "transfer" | "goal_contribution" | "debt_payment">();
+  if (rows.length === 0) return kinds;
+  const legs = rows.filter(isTransferLeg);
+  const legIds = [...new Set(legs.flatMap((r) => (r.linkedTransactionId ? [r.id, r.linkedTransactionId] : [r.id])))];
+  const others = rows.filter((r) => !isTransferLeg(r)).map((r) => r.id);
+
+  const contributions =
+    legIds.length === 0
+      ? []
+      : await tx
+          .select({ transactionId: goalContributions.transactionId })
+          .from(goalContributions)
+          .where(and(eq(goalContributions.userId, userId), inArray(goalContributions.transactionId, legIds)));
+  const payments =
+    others.length === 0
+      ? []
+      : await tx
+          .select({ source: debtPayments.sourceTransactionId, liability: debtPayments.liabilityTransactionId })
+          .from(debtPayments)
+          .where(
+            and(
+              eq(debtPayments.userId, userId),
+              or(inArray(debtPayments.sourceTransactionId, others), inArray(debtPayments.liabilityTransactionId, others)),
+            ),
+          );
+  const contributed = new Set(contributions.map((c) => c.transactionId));
+  for (const leg of legs) {
+    const owned = contributed.has(leg.id) || (leg.linkedTransactionId !== null && contributed.has(leg.linkedTransactionId));
+    kinds.set(leg.id, owned ? "goal_contribution" : "transfer");
+  }
+  const paid = new Set(payments.flatMap((p) => [p.source, p.liability]));
+  for (const id of others) if (paid.has(id)) kinds.set(id, "debt_payment");
+  return kinds;
+}
+
 /** The user's transaction, unless another flow owns it (`conflict`). */
 export async function getEditableTransaction(tx: Tx, userId: string, id: string): Promise<Transaction> {
   const row = await getTransaction(tx, userId, id);

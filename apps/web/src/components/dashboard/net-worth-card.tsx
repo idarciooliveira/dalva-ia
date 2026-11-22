@@ -5,13 +5,35 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { type NetWorthData, formatCurrency } from "@/lib/mock-dashboard-data";
+import type { NetWorthData } from "@/lib/mock-dashboard-data";
+import { formatMinor as formatCurrency } from "@/lib/money";
+import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 interface NetWorthCardProps {
+  /** Amounts in minor units of `currency`. */
   data: NetWorthData;
+  status?: CardStatus;
 }
 
-export function NetWorthCard({ data }: NetWorthCardProps) {
+export function NetWorthCard({ data, status }: NetWorthCardProps) {
+  if (showsStatus(status)) {
+    return (
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Wallet className="size-4" />
+            <CardTitle className="text-sm font-medium text-muted-foreground">
+              Net Worth
+            </CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <CardStatusBody status={status} />
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (!data.hasData) {
     return (
       <Card>

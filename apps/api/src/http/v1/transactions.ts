@@ -26,7 +26,15 @@ export const transactionOperations = {
       cursor: input.cursor,
       limit: input.limit,
     });
-    return { items: await transactionDtos(tx, user.userId, page.items), nextCursor: page.nextCursor };
+    const items = await transactionDtos(tx, user.userId, page.items);
+    const kinds = await transactions.managedKinds(tx, user.userId, page.items);
+    return {
+      items: items.map((item) => {
+        const managedBy = kinds.get(item.id);
+        return managedBy ? { ...item, managedBy } : item;
+      }),
+      nextCursor: page.nextCursor,
+    };
   }),
 
   get: operation(routes.transactions.get, async (tx, user, input) => {

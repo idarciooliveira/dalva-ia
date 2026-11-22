@@ -1,6 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
 import { Cell, Pie, PieChart, Tooltip } from "recharts";
 import {
   Card,
@@ -9,8 +7,10 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart";
-import { formatCurrency } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
+import { spendingByCategoryQuery } from "@/lib/api/dashboard";
+import { formatMinor, fractionDigits } from "@/lib/money";
+import { CardError } from "./card-error";
 
 /* -------------------------------------------------------------------------- */
 /*  Chart color palette                                                       */
@@ -36,19 +36,12 @@ function getColor(index: number): string {
 interface SpendingCategoryCardProps {
   /** Month to display, e.g. "2026-04". */
   month: string;
-  /** Currency code for formatting. */
-  currency?: string;
 }
 
-export function SpendingCategoryCard({
-  month,
-  currency = "USD",
-}: SpendingCategoryCardProps) {
-  const { data, isLoading } = useQuery(
-    convexQuery(api.transactions.getSpendingByCategory, { month }),
-  );
+export function SpendingCategoryCard({ month }: SpendingCategoryCardProps) {
+  const { data, isPending, isError, error, refetch } = useQuery(spendingByCategoryQuery(month));
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <Card>
         <CardHeader>
@@ -68,8 +61,29 @@ export function SpendingCategoryCard({
     );
   }
 
-  const categories = data?.categories ?? [];
-  const total = data?.total ?? 0;
+  if (isError) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            Spending by Category
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CardError error={error} onRetry={() => void refetch()} />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const currency = data.total.currency;
+  const scale = 10 ** fractionDigits(currency);
+  const total = data.total.amountMinor;
+  const categories = data.categories.map((cat) => ({
+    key: cat.categoryId ?? "uncategorized",
+    name: cat.name,
+    amount: cat.amount.amountMinor,
+  }));
 
   if (categories.length === 0) {
     return (
@@ -103,10 +117,11 @@ export function SpendingCategoryCard({
     };
   }
 
-  // Convert cents to dollars for chart display
+  // The chart plots major units.
   const chartData = coloredCategories.map((cat) => ({
+    key: cat.key,
     name: cat.name,
-    value: cat.amount / 100,
+    value: cat.amount / scale,
     fill: cat.fill,
   }));
 
@@ -136,7 +151,7 @@ export function SpendingCategoryCard({
               stroke="var(--color-card)"
             >
               {chartData.map((entry) => (
-                <Cell key={entry.name} fill={entry.fill} />
+                <Cell key={entry.key} fill={entry.fill} />
               ))}
             </Pie>
             <Tooltip
@@ -154,10 +169,7 @@ export function SpendingCategoryCard({
                         {item.name}
                       </span>
                       <span className="font-medium tabular-nums">
-                        {formatCurrency(
-                          (item.value as number) * 100,
-                          currency,
-                        )}
+                        {formatMinor(Math.round((item.value as number) * scale), currency)}
                       </span>
                     </div>
                   </div>
@@ -173,7 +185,7 @@ export function SpendingCategoryCard({
             const pct = total > 0 ? Math.round((cat.amount / total) * 100) : 0;
             return (
               <div
-                key={cat.name}
+                key={cat.key}
                 className="flex items-center justify-between gap-3 text-sm"
               >
                 <div className="flex items-center gap-2">
@@ -185,7 +197,7 @@ export function SpendingCategoryCard({
                 </div>
                 <div className="flex shrink-0 items-center gap-2 sm:gap-3">
                   <span className="text-sm font-medium tabular-nums text-foreground">
-                    {formatCurrency(cat.amount, currency)}
+                    {formatMinor(cat.amount, currency)}
                   </span>
                   <span className="w-8 text-right text-xs tabular-nums text-muted-foreground">
                     {pct}%

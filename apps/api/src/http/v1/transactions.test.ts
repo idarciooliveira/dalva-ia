@@ -327,6 +327,29 @@ describe("api/v1 transactions: search", () => {
     expect(second).toMatchObject({ items: [{ id: old }], nextCursor: null });
   });
 
+  it("flags managed rows on the page as transactions.get does", async () => {
+    const { alice, aliceAccount, asAlice } = await twoUsers();
+    const savings = await seedAccount(alice, { name: "Savings" });
+    const plain = await seedTransaction(alice, aliceAccount, { date: "2026-01-05" });
+    const { transfer } = await asAlice.transfers.create({ amount: usd(1_000), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-01" });
+    const goal = await asAlice.transfers.create({ amount: usd(500), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-02" });
+    await seedContribution(alice, goal.transfer.outgoingId, savings);
+    const payment = await seedDebtPayment(alice, { debtId: await seedDebt(alice), fromAccountId: aliceAccount, liabilityAccountId: savings });
+
+    const { items } = await asAlice.transactions.search({ limit: 100 });
+    const flags = Object.fromEntries(items.map((t) => [t.id, t.managedBy]));
+    expect(flags).toEqual({
+      [plain]: undefined,
+      [transfer.outgoingId]: "transfer",
+      [transfer.incomingId]: "transfer",
+      [goal.transfer.outgoingId]: "goal_contribution",
+      [goal.transfer.incomingId]: "goal_contribution",
+      [payment.sourceTransactionId]: "debt_payment",
+      [payment.liabilityTransactionId!]: "debt_payment",
+    });
+    expect(items.find((t) => t.id === plain)).not.toHaveProperty("managedBy");
+  });
+
   it("rejects a malformed cursor and isolates users", async () => {
     const { alice, aliceAccount, asAlice, asBob } = await twoUsers();
     await seedTransaction(alice, aliceAccount);

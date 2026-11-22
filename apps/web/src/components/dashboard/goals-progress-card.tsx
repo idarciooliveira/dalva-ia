@@ -1,16 +1,32 @@
 import { Target } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
-import {
-  type GoalsProgressData,
-  formatCurrency,
-} from "@/lib/mock-dashboard-data";
+import type { GoalsProgressData } from "@/lib/mock-dashboard-data";
+import { formatMinor as formatCurrency } from "@/lib/money";
+import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 interface GoalsProgressCardProps {
+  /** Amounts in minor units of `currency`. */
   data: GoalsProgressData;
+  status?: CardStatus;
 }
 
-export function GoalsProgressCard({ data }: GoalsProgressCardProps) {
+export function GoalsProgressCard({ data, status }: GoalsProgressCardProps) {
+  if (showsStatus(status)) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            Savings Goals
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CardStatusBody status={status} />
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (data.goals.length === 0) {
     return (
       <Card>
@@ -60,7 +76,7 @@ export function GoalsProgressCard({ data }: GoalsProgressCardProps) {
                     {goal.targetDate && (
                       <p className="text-xs text-muted-foreground">
                         Due{" "}
-                        {new Date(goal.targetDate).toLocaleDateString("en-US", {
+                        {new Date(`${goal.targetDate}T00:00:00`).toLocaleDateString("en-US", {
                           month: "short",
                           year: "numeric",
                         })}

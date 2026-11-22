@@ -1,8 +1,8 @@
 import { Wifi, Eye, EyeOff, TrendingUp, TrendingDown } from "lucide-react";
 import { useState } from "react";
-import { formatCurrency } from "@/lib/format";
+import type { Account } from "@mpf/finance-contract";
+import { formatMinor } from "@/lib/money";
 import { ACCOUNT_THEMES } from "@/lib/accounts";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
 
 /* -------------------------------------------------------------------------- */
 /*  Helpers                                                                   */
@@ -26,14 +26,14 @@ function deriveCardNumber(id: string): string {
 /* -------------------------------------------------------------------------- */
 
 interface AccountCardProps {
-  account: Doc<"accounts">;
+  account: Account;
   holderName?: string;
 }
 
 function AccountCard({ account, holderName = "DALVA USER" }: AccountCardProps) {
   const [showBalance, setShowBalance] = useState(true);
   const theme = resolveTheme(account.theme);
-  const cardNumber = deriveCardNumber(account._id);
+  const cardNumber = deriveCardNumber(account.id);
 
   return (
     <div
@@ -59,10 +59,10 @@ function AccountCard({ account, holderName = "DALVA USER" }: AccountCardProps) {
       <div className="flex items-center gap-2">
         <p className="min-w-0 truncate text-2xl font-semibold tabular-nums tracking-tight sm:text-4xl lg:text-5xl">
           {showBalance
-            ? formatCurrency(account.balance, account.currency)
+            ? formatMinor(account.balance.amountMinor, account.balance.currency)
             : "****"}
         </p>
-        {account.balance < 0 && showBalance && (
+        {account.balance.amountMinor < 0 && showBalance && (
             <span className="shrink-0 rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-medium">
               owing
             </span>
@@ -101,10 +101,11 @@ function AccountCard({ account, holderName = "DALVA USER" }: AccountCardProps) {
 /* -------------------------------------------------------------------------- */
 
 interface AccountCardsSectionProps {
-  accounts: Doc<"accounts">[];
-  income: number; // cents
-  expenses: number; // cents
-  currency?: string;
+  accounts: Account[];
+  /** This month's totals in the base currency (minor units); null while loading or when unavailable. */
+  income: number | null;
+  expenses: number | null;
+  currency: string;
   holderName?: string;
 }
 
@@ -112,10 +113,13 @@ export function AccountCardsSection({
   accounts,
   income,
   expenses,
-  currency = "USD",
+  currency,
   holderName,
 }: AccountCardsSectionProps) {
   const [activeIndex, setActiveIndex] = useState(0);
+  // An account can disappear (archived elsewhere) while its dot was selected.
+  const shownIndex = Math.min(activeIndex, accounts.length - 1);
+  const active = accounts[shownIndex];
 
   // Empty state when no accounts exist yet
   if (accounts.length === 0) {
@@ -171,7 +175,7 @@ export function AccountCardsSection({
               key={i}
               onClick={() => setActiveIndex(i)}
               className={`size-2 rounded-full transition-colors ${
-                i === activeIndex ? "bg-primary" : "bg-muted-foreground/30"
+                i === shownIndex ? "bg-primary" : "bg-muted-foreground/30"
               }`}
               aria-label={`View account ${i + 1}`}
             />
@@ -182,7 +186,7 @@ export function AccountCardsSection({
       <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
         {/* Account card — full width on mobile, 75% on sm+ */}
         <div className="w-full sm:w-3/4">
-          <AccountCard account={accounts[activeIndex]} holderName={holderName} />
+          {active && <AccountCard account={active} holderName={holderName} />}
         </div>
 
         {/* Income & Expenses summary — row on mobile, column on sm+ */}
@@ -194,7 +198,7 @@ export function AccountCardsSection({
               <span className="text-xs font-medium">Total Income</span>
             </div>
             <p className="mt-1.5 text-base font-semibold tabular-nums text-foreground sm:mt-2 sm:text-lg">
-              {formatCurrency(income, currency)}
+              {income === null ? "—" : formatMinor(income, currency)}
             </p>
           </div>
 
@@ -205,7 +209,7 @@ export function AccountCardsSection({
               <span className="text-xs font-medium">Total Expenses</span>
             </div>
             <p className="mt-1.5 text-base font-semibold tabular-nums text-foreground sm:mt-2 sm:text-lg">
-              {formatCurrency(expenses, currency)}
+              {expenses === null ? "—" : formatMinor(expenses, currency)}
             </p>
           </div>
         </div>

@@ -6,16 +6,32 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
-import {
-  type DebtPaydownData,
-  formatCurrency,
-} from "@/lib/mock-dashboard-data";
+import type { DebtPaydownData } from "@/lib/mock-dashboard-data";
+import { formatMinor as formatCurrency } from "@/lib/money";
+import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 interface DebtPaydownCardProps {
+  /** Amounts in minor units of `currency`. */
   data: DebtPaydownData;
+  status?: CardStatus;
 }
 
-export function DebtPaydownCard({ data }: DebtPaydownCardProps) {
+export function DebtPaydownCard({ data, status }: DebtPaydownCardProps) {
+  if (showsStatus(status)) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            Debt Paydown
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CardStatusBody status={status} />
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (data.debts.length === 0 || data.totalOriginal === 0) {
     return (
       <Card>

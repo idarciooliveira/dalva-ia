@@ -7,8 +7,6 @@ import { newUser, registerAndCompleteOnboarding } from "./helpers/auth";
  * inside the shell without crashing. Delete each entry when its page moves.
  */
 const LEGACY_PAGES = [
-  { path: "/dashboard", heading: /, Legacy$/ }, // PR 10
-  { path: "/transactions", heading: "Transactions" }, // PR 10
   { path: "/goals", heading: "Savings Goals" }, // PR 11
   { path: "/debts", heading: "Debts" }, // PR 11
   { path: "/settings", heading: "Settings" }, // PR 11

@@ -1,27 +1,28 @@
-import type { RecentTransactionsData } from "./mock-dashboard-data";
+import type { Transaction } from "@mpf/finance-contract";
 
-export function buildRecentTransactionsData(
-  transactions: Array<{
-    _id: string;
-    type: "income" | "expense" | "adjustment" | "transfer";
-    amount: number;
-    date: string;
-    description?: string;
-    payee?: string;
-    accountId: string;
-    categoryId?: string;
-  }>,
-  accounts: Array<{ _id: string; name: string }>,
-  categories: Array<{ _id: string; name: string }>,
-): RecentTransactionsData {
-  const accountMap = new Map(accounts.map((account) => [account._id, account.name]));
-  const categoryMap = new Map(
-    categories.map((category) => [category._id, category.name]),
-  );
+export interface RecentTransactionItem {
+  id: string;
+  date: string;
+  description: string;
+  category: string;
+  /** Signed minor units: negative for expenses and outgoing transfers. */
+  amountMinor: number;
+  currency: string;
+  type: Transaction["type"];
+  account: string;
+}
 
-  return {
-    transactions: transactions.map((tx) => ({
-      id: tx._id,
+/** Rows for the recent-transactions card, each in its account's currency. */
+export function buildRecentTransactions(
+  transactions: Transaction[],
+  accountNames: ReadonlyMap<string, string>,
+  categoryNames: ReadonlyMap<string, string>,
+): RecentTransactionItem[] {
+  return transactions.map((tx) => {
+    const amount = tx.amount.amountMinor;
+    const outgoing = tx.type === "expense" || (tx.type === "transfer" && tx.destinationAccountId !== undefined);
+    return {
+      id: tx.id,
       date: tx.date,
       description: tx.description || tx.payee || "Untitled",
       category:
@@ -29,11 +30,11 @@ export function buildRecentTransactionsData(
           ? "Adjustment"
           : tx.type === "transfer"
             ? "Transfer"
-            : categoryMap.get(tx.categoryId ?? "") ?? "Uncategorized",
-      amount: tx.type === "expense" ? -Math.abs(tx.amount) : tx.amount,
+            : (categoryNames.get(tx.categoryId ?? "") ?? "Uncategorized"),
+      amountMinor: outgoing ? -Math.abs(amount) : amount,
+      currency: tx.amount.currency,
       type: tx.type,
-      account: accountMap.get(tx.accountId) ?? "Unknown",
-    })),
-    currency: "USD",
-  };
+      account: accountNames.get(tx.accountId) ?? "Unknown account",
+    };
+  });
 }

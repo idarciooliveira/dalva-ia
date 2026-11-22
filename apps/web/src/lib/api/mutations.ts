@@ -14,6 +14,8 @@ type WriteOp<G extends Group> = {
 type Def<G extends Group, O extends keyof UserRoutes[G]> = UserRoutes[G][O] extends RouteDef ? UserRoutes[G][O] : never;
 type MutationName = { [G in Group]: `${G}.${WriteOp<G> & string}` }[Group];
 
+const LEDGER_WRITE = [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all];
+
 /**
  * What each write makes stale. A write invalidates these prefixes on success and
  * waits for the active queries to refetch, so a dialog closes on fresh data.
@@ -29,6 +31,14 @@ const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> 
   "accounts.archive": [queryKeys.accounts.all, queryKeys.reports.all],
   "accounts.restore": [queryKeys.accounts.all, queryKeys.reports.all],
   "accounts.delete": [queryKeys.accounts.all, queryKeys.reports.all],
+  // Transactions and transfers move account balances, so net worth, the monthly
+  // reports and every list (and open transfer) change with them.
+  "transactions.create": LEDGER_WRITE,
+  "transactions.update": LEDGER_WRITE,
+  "transactions.delete": LEDGER_WRITE,
+  "transfers.create": LEDGER_WRITE,
+  "transfers.update": LEDGER_WRITE,
+  "transfers.delete": LEDGER_WRITE,
   "categories.seedDefaults": [queryKeys.categories.all],
   "categories.create": [queryKeys.categories.all],
   "categories.update": [queryKeys.categories.all, queryKeys.transactions.all, queryKeys.reports.all],
