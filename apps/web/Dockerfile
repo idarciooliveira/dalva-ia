@@ -24,11 +24,11 @@ COPY apps/web apps/web
 # Build-time: Vite inlines VITE_* into the bundle. Changing one means a new image.
 ARG VITE_TELEGRAM_BOT_USERNAME=""
 # Legacy: the web app reads VITE_CONVEX_URL until it moves to apps/api, and the shell prerender
-# fails without one. A placeholder keeps the build working; the image never talks to Convex.
+# fails without one. A non-routable placeholder keeps the build working; the image never reaches Convex.
 # Drop this arg once the web app no longer reads it.
 ARG VITE_CONVEX_URL=""
 WORKDIR /repo/apps/web
-RUN VITE_CONVEX_URL="${VITE_CONVEX_URL:-https://unset.convex.cloud}" \
+RUN VITE_CONVEX_URL="${VITE_CONVEX_URL:-https://convex.invalid}" \
     VITE_TELEGRAM_BOT_USERNAME="${VITE_TELEGRAM_BOT_USERNAME}" \
     bun --bun run build
 

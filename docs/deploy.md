@@ -16,7 +16,7 @@ Only the agent and cloudflared reach the internet. Postgres, API, web and backup
 
 ## Images
 
-`.github/workflows/images.yml` builds each image when its inputs change. Pull requests build only. Pushes to `main` publish `:<short-sha>` and `:latest`. A manual run (Actions → Images → Run workflow) builds all three; from another branch it publishes only `:<short-sha>`.
+`.github/workflows/images.yml` builds each image when its inputs changed since the last successful run. After the first merge, run it once by hand (Actions → Images → Run workflow on `main`) so all three images exist. Pull requests build only. Pushes to `main` publish `:<short-sha>` and `:latest`. A manual run (Actions → Images → Run workflow) builds all three; from another branch it publishes only `:<short-sha>`.
 
 - `dalva-api`: bundled server plus the migration runner and `apps/api/drizzle`. `bun main.js` serves; `bun src/db/migrate.js` migrates and exits.
 - `dalva-web`: the SPA built with Bun, served by Caddy (`apps/web/Caddyfile`). `VITE_TELEGRAM_BOT_USERNAME` is build-time: set the repo variable `TELEGRAM_BOT_USERNAME` (Settings → Secrets and variables → Actions → Variables) and re-run the workflow after changing it.

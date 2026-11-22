@@ -16,9 +16,12 @@ on:
       # Code the images bundle: a broken bundle, migration path or route fails here.
       - apps/api/src/**
       - apps/agent/src/**
-      - packages/finance-contract/src/**
+      - apps/web/**
+      - packages/**
+      - apps/*/package.json
       - package.json
       - bun.lock
+      - tsconfig.json
       - .dockerignore
       - .github/workflows/images.yml
       - .github/workflows/stack.yml

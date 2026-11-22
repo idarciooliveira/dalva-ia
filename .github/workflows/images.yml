@@ -57,7 +57,10 @@ jobs:
         run: |
           sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/images.yml/runs?branch=$GITHUB_REF_NAME&event=push&status=success&per_page=1" \
             --jq '.workflow_runs[0].head_sha // empty' || true)
-          if [ -z "$sha" ] || ! git cat-file -e "$sha^{commit}" 2>/dev/null; then sha=$BEFORE; fi
+          if [ -z "$sha" ] || ! git cat-file -e "$sha^{commit}" 2>/dev/null; then
+            echo "::warning::No successful push run found; diffing against this push only. Run the workflow by hand if an earlier image build failed."
+            sha=$BEFORE
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - id: filter
         if: github.event_name != 'workflow_dispatch'
