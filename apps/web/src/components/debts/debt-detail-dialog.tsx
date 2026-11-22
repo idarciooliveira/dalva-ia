@@ -12,6 +12,7 @@ import { apiErrorMessage } from "@/lib/api/errors";
 import { useApiMutation } from "@/lib/api/mutations";
 import { debtPaymentsQuery } from "@/lib/api/queries";
 import { debtPercentPaid, debtTypeLabel } from "@/lib/debts";
+import { formatFullDate } from "@/lib/dates";
 import { formatDate } from "@/lib/format";
 import { formatMinor } from "@/lib/money";
 
@@ -57,7 +58,7 @@ export function DebtDetailDialog({ debt, open, onOpenChange, onEdit, onRecordPay
           <DialogTitle className="text-lg font-semibold">{debt.name}</DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
             {debt.lender ?? "No lender"}
-            {debt.dueDate ? ` - due ${formatDate(debt.dueDate)}` : ""}
+            {debt.dueDate ? ` - due ${formatFullDate(debt.dueDate)}` : ""}
             {debt.archived ? " - archived" : ""}
           </DialogDescription>
         </DialogHeader>

@@ -46,6 +46,8 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
   const [dueDate, setDueDate] = useState("");
   const [linkedAccountId, setLinkedAccountId] = useState(NO_ACCOUNT);
   const [error, setError] = useState("");
+  // The debt as the dialog opened with it: edits are diffed against this, not the live row (see handleSubmit).
+  const [opened, setOpened] = useState<Debt | null>(null);
 
   const accountsResult = useQuery({ ...accountsQuery(), enabled: open });
   const { usable: liabilityAccounts, otherCurrency } = accountsForBaseCurrency(
@@ -71,6 +73,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
     setDueDate(debt?.dueDate ?? "");
     setLinkedAccountId(debt?.linkedAccountId ?? NO_ACCOUNT);
     setError("");
+    setOpened(debt);
   }, [open, debtId]);
 
   const { mutateAsync: createDebt, isPending: isCreating } = useApiMutation("debts", "create");
@@ -98,7 +101,11 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
       setError("Please enter a valid current balance");
       return;
     }
-    if (current > original) {
+    // Only when either changed: a legacy debt can hold more than its original amount and must stay editable.
+    const stored = isEdit ? (opened ?? debt) : null;
+    const amountsChanged =
+      !stored || original !== stored.originalAmount.amountMinor || current !== stored.currentBalance.amountMinor;
+    if (amountsChanged && current > original) {
       setError("Current balance cannot exceed the original amount");
       return;
     }
@@ -112,12 +119,15 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
     }
 
     // The API can change these, not clear them: say so instead of closing as if they were saved.
-    if (isEdit) {
+    // Diffed against what the dialog opened with: the live row may already show a payment made
+    // meanwhile (another tab, the bot), and its old balance must not be sent back.
+    const base = opened ?? debt;
+    if (isEdit && base) {
       const cleared = [
-        debt.lender !== undefined && !lender.trim() && "lender",
-        debt.interestRate !== undefined && rate === null && "interest rate",
-        debt.minimumPayment !== undefined && minimum === null && "minimum payment",
-        debt.dueDate !== undefined && !dueDate && "due date",
+        base.lender !== undefined && !lender.trim() && "lender",
+        base.interestRate !== undefined && rate === null && "interest rate",
+        base.minimumPayment !== undefined && minimum === null && "minimum payment",
+        base.dueDate !== undefined && !dueDate && "due date",
       ].filter((field): field is string => typeof field === "string");
       if (cleared.length > 0) {
         setError(`The ${cleared.join(", ")} can be changed but not removed`);
@@ -140,20 +150,20 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
 
     try {
       if (isEdit) {
-        // Only what changed: a payment recorded meanwhile (another tab, the bot) lowered the stored
-        // balance, and sending the balance this dialog opened with would undo it.
+        const from = opened ?? debt;
+        // Only what the user changed, so a payment recorded meanwhile isn't undone.
         const changed = <T,>(next: T | undefined, stored: T | undefined) => (next !== stored ? next : undefined);
         const changes = {
-          name: changed(fields.name, debt.name),
-          debtType: changed(fields.debtType, debt.debtType),
-          originalAmount: original !== debt.originalAmount.amountMinor ? fields.originalAmount : undefined,
-          currentBalance: current !== debt.currentBalance.amountMinor ? fields.currentBalance : undefined,
-          lender: changed(fields.lender, debt.lender),
-          interestRate: changed(fields.interestRate, debt.interestRate),
-          minimumPayment: minimum !== null && minimum !== debt.minimumPayment?.amountMinor ? fields.minimumPayment : undefined,
-          dueDate: changed(fields.dueDate, debt.dueDate),
+          name: changed(fields.name, from.name),
+          debtType: changed(fields.debtType, from.debtType),
+          originalAmount: original !== from.originalAmount.amountMinor ? fields.originalAmount : undefined,
+          currentBalance: current !== from.currentBalance.amountMinor ? fields.currentBalance : undefined,
+          lender: changed(fields.lender, from.lender),
+          interestRate: changed(fields.interestRate, from.interestRate),
+          minimumPayment: minimum !== null && minimum !== from.minimumPayment?.amountMinor ? fields.minimumPayment : undefined,
+          dueDate: changed(fields.dueDate, from.dueDate),
           // Unchanged: not re-checked, so an archived linked account doesn't block other edits.
-          linkedAccountId: changed(fields.linkedAccountId, debt.linkedAccountId),
+          linkedAccountId: changed(fields.linkedAccountId, from.linkedAccountId),
         };
         if (Object.values(changes).some((value) => value !== undefined)) await updateDebt({ id: debt.id, ...changes });
       } else {

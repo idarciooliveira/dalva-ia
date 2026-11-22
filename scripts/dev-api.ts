@@ -22,7 +22,9 @@ await ensurePostgres(env.DATABASE_URL, "dev:api");
 migrate("dev:api");
 const agentDir = join(root, "apps/agent");
 const agentEnv = { ...readEnvFile(join(agentDir, ".env")), ...readEnvFile(join(agentDir, ".env.local")) };
-const botUsername = env.TELEGRAM_BOT_USERNAME || agentEnv.TELEGRAM_BOT_USERNAME;
+// Only a valid one (the API refuses to boot on a bad value); the agent's own config strips the @ too.
+const agentBot = agentEnv.TELEGRAM_BOT_USERNAME?.replace(/^@/, "").trim();
+const botUsername = env.TELEGRAM_BOT_USERNAME || (agentBot && /^[A-Za-z0-9_]{5,32}$/.test(agentBot) ? agentBot : undefined);
 const api = Bun.spawn(["bun", "run", "dev"], {
   cwd: apiDir,
   stdio: ["inherit", "inherit", "inherit"],

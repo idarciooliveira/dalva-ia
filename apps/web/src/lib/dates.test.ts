@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatMonthYear, localToday } from "./dates";
+import { formatFullDate, formatMonthYear, localToday } from "./dates";
 
 describe("localToday", () => {
   it("uses the local calendar day, not the UTC one", () => {
@@ -13,5 +13,6 @@ describe("localToday", () => {
 describe("formatMonthYear", () => {
   it("formats a calendar date without shifting it", () => {
     expect(formatMonthYear("2026-05-01")).toBe("May 2026");
+    expect(formatFullDate("2027-05-15")).toBe("May 15, 2027");
   });
 });
