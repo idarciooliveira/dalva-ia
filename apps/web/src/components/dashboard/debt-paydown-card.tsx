@@ -7,7 +7,7 @@ import {
 } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import type { DebtPaydownData } from "@/lib/mock-dashboard-data";
-import { formatMinor as formatCurrency } from "@/lib/money";
+import { formatMinor } from "@/lib/money";
 import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 interface DebtPaydownCardProps {
@@ -63,14 +63,14 @@ export function DebtPaydownCard({ data, status }: DebtPaydownCardProps) {
         <div>
           <div className="flex items-baseline justify-between">
             <span className="text-xl font-semibold tabular-nums text-foreground sm:text-2xl">
-              {formatCurrency(data.totalRemaining, data.currency)}
+              {formatMinor(data.totalRemaining, data.currency)}
             </span>
             <span className="text-xs text-muted-foreground">
               {overallPercent}% paid off
             </span>
           </div>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            remaining of {formatCurrency(data.totalOriginal, data.currency)}
+            remaining of {formatMinor(data.totalOriginal, data.currency)}
           </p>
           <ProgressBar percent={overallPercent} barColor="bg-wise-positive" className="mt-2" />
         </div>
@@ -97,7 +97,7 @@ export function DebtPaydownCard({ data, status }: DebtPaydownCardProps) {
               </div>
               <div className="shrink-0 text-right">
                 <p className="text-sm font-medium tabular-nums text-foreground">
-                  {formatCurrency(debt.currentBalance, data.currency)}
+                  {formatMinor(debt.currentBalance, data.currency)}
                 </p>
                 <p className="text-xs text-muted-foreground">
                   {debt.percentPaid}% paid
@@ -112,7 +112,7 @@ export function DebtPaydownCard({ data, status }: DebtPaydownCardProps) {
           <p className="text-xs text-muted-foreground">
             Last payment:{" "}
             <span className="font-medium text-foreground">
-              {formatCurrency(data.recentPayment, data.currency)}
+              {formatMinor(data.recentPayment, data.currency)}
             </span>
           </p>
         </div>

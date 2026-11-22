@@ -6,7 +6,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import type { NetWorthData } from "@/lib/mock-dashboard-data";
-import { formatMinor as formatCurrency } from "@/lib/money";
+import { formatMinor } from "@/lib/money";
 import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 interface NetWorthCardProps {
@@ -69,20 +69,20 @@ export function NetWorthCard({ data, status }: NetWorthCardProps) {
       <CardContent className="flex flex-col gap-3">
         <div className="flex items-baseline gap-3">
           <span className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            {formatCurrency(data.netWorth, data.currency)}
+            {formatMinor(data.netWorth, data.currency)}
           </span>
         </div>
         <div className="flex gap-4 text-sm sm:gap-6">
           <div>
             <span className="text-muted-foreground">Assets</span>
             <p className="font-medium text-foreground">
-              {formatCurrency(data.totalAssets, data.currency)}
+              {formatMinor(data.totalAssets, data.currency)}
             </p>
           </div>
           <div>
             <span className="text-muted-foreground">Debts</span>
             <p className="font-medium text-destructive">
-              {formatCurrency(data.totalDebts, data.currency)}
+              {formatMinor(data.totalDebts, data.currency)}
             </p>
           </div>
         </div>

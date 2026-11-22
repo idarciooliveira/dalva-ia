@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { accountId, apiWrite, createAccount, usd } from "./helpers/api";
+import { accountId, accountRow, apiWrite, createAccount, usd } from "./helpers/api";
 import { registerAndCompleteOnboarding } from "./helpers/auth";
 
 test.describe("Transactions page - unauthenticated", () => {
@@ -77,10 +77,6 @@ async function fillTransaction(
 async function openRowAction(page: Page, title: string, action: string | RegExp) {
   await page.getByRole("button", { name: `Open ${title} actions` }).click();
   await page.getByRole("menuitem", { name: action }).click();
-}
-
-function accountRow(page: Page, name: string) {
-  return page.getByRole("listitem", { name, exact: true });
 }
 
 test.describe("Transactions page - edit flow", () => {

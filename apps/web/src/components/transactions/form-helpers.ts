@@ -1,4 +1,4 @@
-import type { Account, Transaction } from "@mpf/finance-contract";
+import type { Account, RouteInput, Transaction, UserRoutes } from "@mpf/finance-contract";
 
 import { ACCOUNT_THEMES } from "@/lib/accounts";
 
@@ -9,7 +9,7 @@ export function localISODate(daysAgo = 0): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-export type DatePreset = "today" | "yesterday" | "other";
+type DatePreset = "today" | "yesterday" | "other";
 
 export function getDatePreset(date: string): DatePreset {
   if (date === localISODate(0)) return "today";
@@ -46,17 +46,7 @@ interface TransactionDraft {
  * category is refused before this runs.
  */
 export function transactionChanges(original: Transaction, draft: TransactionDraft) {
-  const changes: {
-    type?: "income" | "expense";
-    amount?: { amountMinor: number; currency: string };
-    accountId?: string;
-    date?: string;
-    categoryId?: string;
-    subcategoryId?: string | null;
-    description?: string | null;
-    note?: string | null;
-    payee?: string | null;
-  } = {};
+  const changes: Omit<RouteInput<UserRoutes["transactions"]["update"]>, "id"> = {};
   if (draft.type !== original.type) changes.type = draft.type;
   // A move to another account always carries the amount: it may be in another currency.
   if (
@@ -76,10 +66,17 @@ export function transactionChanges(original: Transaction, draft: TransactionDraf
     else if (!categoryChanged) changes.subcategoryId = null;
   }
   for (const field of ["description", "note", "payee"] as const) {
-    const next = draft[field].trim();
-    if (next !== (original[field] ?? "").trim()) changes[field] = next === "" ? null : next;
+    const value = clearedOrChanged(draft[field], original[field]);
+    if (value !== undefined) changes[field] = value;
   }
   return changes;
+}
+
+/** A text field's update: undefined when unchanged, `null` when emptied (clears it), else the trimmed text. */
+function clearedOrChanged(draft: string, original: string | undefined): string | null | undefined {
+  const next = draft.trim();
+  if (next === (original ?? "").trim()) return undefined;
+  return next === "" ? null : next;
 }
 
 /** The same for a transfer: only changed fields, emptied description or note as `null`. */
@@ -87,14 +84,7 @@ export function transferChanges(
   original: { amount: { amountMinor: number; currency: string }; fromAccountId: string; toAccountId: string; date: string; description?: string; note?: string },
   draft: { amount: { amountMinor: number; currency: string }; fromAccountId: string; toAccountId: string; date: string; description: string; note: string },
 ) {
-  const changes: {
-    amount?: { amountMinor: number; currency: string };
-    fromAccountId?: string;
-    toAccountId?: string;
-    date?: string;
-    description?: string | null;
-    note?: string | null;
-  } = {};
+  const changes: Omit<RouteInput<UserRoutes["transfers"]["update"]>, "id"> = {};
   const accountsChanged = draft.fromAccountId !== original.fromAccountId || draft.toAccountId !== original.toAccountId;
   if (
     accountsChanged ||
@@ -107,8 +97,8 @@ export function transferChanges(
   if (draft.toAccountId !== original.toAccountId) changes.toAccountId = draft.toAccountId;
   if (draft.date !== original.date) changes.date = draft.date;
   for (const field of ["description", "note"] as const) {
-    const next = draft[field].trim();
-    if (next !== (original[field] ?? "").trim()) changes[field] = next === "" ? null : next;
+    const value = clearedOrChanged(draft[field], original[field]);
+    if (value !== undefined) changes[field] = value;
   }
   return changes;
 }

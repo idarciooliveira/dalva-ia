@@ -66,22 +66,25 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
   // Stale at once, so enabling it on open refetches: the form and the diff of the update start from the server's current copy.
   const transferResult = useQuery({
     ...transferQuery(transferId ?? ""),
-    enabled: open && isEdit,
+    // Inactive once the form is filled, so a save's invalidation doesn't refetch it before the dialog closes.
+    enabled: open && isEdit && filled?.id !== transferId,
     staleTime: 0,
   });
   const transfer = transferResult.data?.transfer;
 
+  function resetFields() {
+    setAmount("");
+    setFromAccountId("");
+    setToAccountId("");
+    setDate(localISODate());
+    setDescription("");
+    setNote("");
+  }
+
   // Reset on open (an edit refills below). Closing keeps the fields, so the dialog doesn't flash empty while it animates out.
   useEffect(() => {
     if (!open) return;
-    if (!isEdit) {
-      setAmount("");
-      setFromAccountId("");
-      setToAccountId("");
-      setDate(localISODate());
-      setDescription("");
-      setNote("");
-    }
+    if (!isEdit) resetFields();
     setFilled(null);
     setShowDatePicker(false);
     setError("");
@@ -121,7 +124,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
   }
 
   async function handleSubmit(andCreateNew = false) {
-    if (isPending || loadingTransfer) return;
+    if (isPending) return;
     setError("");
 
     const amountMinor = parseCurrencyInput(amount);
@@ -160,10 +163,10 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
     };
 
     try {
-      if (transferId && filled) {
+      if (filled) {
         // Only what changed since the form was filled; an emptied description or note is cleared (`null`).
         const changes = transferChanges(filled.transfer, { ...fields, description, note });
-        if (Object.keys(changes).length > 0) await updateTransfer({ id: transferId, ...changes });
+        if (Object.keys(changes).length > 0) await updateTransfer({ id: filled.id, ...changes });
         onOpenChange(false);
         return;
       }
@@ -173,12 +176,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
         ...(note.trim() ? { note: note.trim() } : {}),
       });
       if (andCreateNew) {
-        setAmount("");
-        setFromAccountId("");
-        setToAccountId("");
-        setDate(localISODate());
-        setDescription("");
-        setNote("");
+        resetFields();
         setShowDatePicker(false);
         amountRef.current?.focus();
       } else {

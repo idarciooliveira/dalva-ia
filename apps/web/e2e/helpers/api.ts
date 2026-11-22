@@ -1,5 +1,16 @@
 import { expect, type Page } from "@playwright/test";
 
+/** Local "YYYY-MM-DD", as the app's date pickers default to. */
+export function today(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/** An account row on /accounts, by its exact name. */
+export function accountRow(page: Page, name: string) {
+  return page.getByRole("listitem", { name, exact: true });
+}
+
 /**
  * Seeds data straight through `/api/v1` with the page's session cookie, for
  * records whose own pages are out of scope of a test (goals, debts, extra accounts).
@@ -27,7 +38,7 @@ export async function apiGet<T = Record<string, unknown>>(page: Page, path: stri
   return json.data;
 }
 
-const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
+export const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
 export async function createAccount(page: Page, name: string, amountMinor = 0): Promise<string> {
   const { account } = await apiWrite<{ account: { id: string } }>(page, "POST", "/accounts", {
@@ -46,4 +57,3 @@ export async function accountId(page: Page, name: string): Promise<string> {
   return found!.id;
 }
 
-export { usd };

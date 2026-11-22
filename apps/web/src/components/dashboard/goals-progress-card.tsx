@@ -2,7 +2,7 @@ import { Target } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import type { GoalsProgressData } from "@/lib/mock-dashboard-data";
-import { formatMinor as formatCurrency } from "@/lib/money";
+import { formatMinor } from "@/lib/money";
 import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 interface GoalsProgressCardProps {
@@ -95,10 +95,10 @@ export function GoalsProgressCard({ data, status }: GoalsProgressCardProps) {
               />
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>
-                  {formatCurrency(goal.currentAmount, data.currency)} saved
+                  {formatMinor(goal.currentAmount, data.currency)} saved
                 </span>
                 <span>
-                  {formatCurrency(goal.targetAmount, data.currency)} target
+                  {formatMinor(goal.targetAmount, data.currency)} target
                 </span>
               </div>
             </div>

@@ -1,5 +1,19 @@
 import type { Transaction } from "@mpf/finance-contract";
 
+/** Expenses and the outgoing leg of a transfer (it carries the destination) take money out. */
+export function isOutgoing(tx: Pick<Transaction, "type" | "destinationAccountId">): boolean {
+  return tx.type === "expense" || (tx.type === "transfer" && tx.destinationAccountId !== undefined);
+}
+
+export function transactionTitle(tx: Pick<Transaction, "description" | "payee">): string {
+  return tx.description || tx.payee || "Untitled";
+}
+
+/** id → name, for labelling rows with account and category names. */
+export function namesById(items: ReadonlyArray<{ id: string; name: string }> | undefined): Map<string, string> {
+  return new Map((items ?? []).map((item) => [item.id, item.name]));
+}
+
 export interface RecentTransactionItem {
   id: string;
   date: string;
@@ -20,18 +34,17 @@ export function buildRecentTransactions(
 ): RecentTransactionItem[] {
   return transactions.map((tx) => {
     const amount = tx.amount.amountMinor;
-    const outgoing = tx.type === "expense" || (tx.type === "transfer" && tx.destinationAccountId !== undefined);
     return {
       id: tx.id,
       date: tx.date,
-      description: tx.description || tx.payee || "Untitled",
+      description: transactionTitle(tx),
       category:
         tx.type === "adjustment"
           ? "Adjustment"
           : tx.type === "transfer"
             ? "Transfer"
             : (categoryNames.get(tx.categoryId ?? "") ?? "Uncategorized"),
-      amountMinor: outgoing ? -Math.abs(amount) : amount,
+      amountMinor: isOutgoing(tx) ? -Math.abs(amount) : amount,
       currency: tx.amount.currency,
       type: tx.type,
       account: accountNames.get(tx.accountId) ?? "Unknown account",

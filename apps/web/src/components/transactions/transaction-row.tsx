@@ -22,11 +22,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import { useQueryClient } from "@tanstack/react-query";
-
+import { FormError } from "@/components/error-state";
 import { useApiMutation } from "@/lib/api/mutations";
-import { apiErrorMessage, isApiError } from "@/lib/api/errors";
-import { queryKeys } from "@/lib/api/keys";
+import { apiErrorMessage } from "@/lib/api/errors";
+import { isOutgoing, transactionTitle } from "@/lib/dashboard-data";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import { formatMinor } from "@/lib/money";
@@ -34,8 +33,8 @@ import { formatMinor } from "@/lib/money";
 interface TransactionRowProps {
   transaction: TransactionListItem;
   /** Account and category names by id (archived ones included). */
-  accountName: (id: string | undefined) => string | undefined;
-  categoryName: (id: string | undefined) => string | undefined;
+  accountNames: ReadonlyMap<string, string>;
+  categoryNames: ReadonlyMap<string, string>;
   /** Edit an income or expense row. */
   onEdit: () => void;
   /** Edit the transfer this row is a leg of. */
@@ -56,11 +55,11 @@ const OWNED_ELSEWHERE: Record<Exclude<TransactionManagedBy, "transfer">, { label
 };
 
 /** Which flow owns the row. Older servers don't send `managedBy`: a transfer leg is still a transfer. */
-export function managedByOf(transaction: TransactionListItem): TransactionManagedBy | undefined {
+function managedByOf(transaction: TransactionListItem): TransactionManagedBy | undefined {
   return transaction.managedBy ?? (transaction.type === "transfer" ? "transfer" : undefined);
 }
 
-export function TransactionRow({ transaction, accountName, categoryName, onEdit, onEditTransfer }: TransactionRowProps) {
+export function TransactionRow({ transaction, accountNames, categoryNames, onEdit, onEditTransfer }: TransactionRowProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const ownerNoteId = useId();
@@ -71,18 +70,10 @@ export function TransactionRow({ transaction, accountName, categoryName, onEdit,
   const isTransfer = managedBy === "transfer";
   const ownedElsewhere = managedBy && managedBy !== "transfer" ? OWNED_ELSEWHERE[managedBy] : null;
   const isAdjustment = transaction.type === "adjustment";
-  const title = transaction.description || transaction.payee || "Untitled";
+  const title = transactionTitle(transaction);
 
-  const queryClient = useQueryClient();
-  const onError = (fallback: string) => (error: Error) => {
-    setDeleteError(apiErrorMessage(error, fallback));
-    // Already gone (deleted elsewhere): drop the stale row and balances.
-    if (isApiError(error, "not_found")) {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.reports.all() });
-    }
-  };
+  // A row already deleted elsewhere (`not_found`) refreshes the list through useApiMutation.
+  const onError = (fallback: string) => (error: Error) => setDeleteError(apiErrorMessage(error, fallback));
   const deleteTransaction = useApiMutation("transactions", "delete", {
     onMutate: () => setDeleteError(null),
     onError: onError("Couldn't delete the transaction. Try again."),
@@ -93,33 +84,22 @@ export function TransactionRow({ transaction, accountName, categoryName, onEdit,
   });
   const isDeleting = deleteTransaction.isPending || deleteTransfer.isPending;
 
-  const account = accountName(transaction.accountId) ?? "Unknown account";
-  // The outgoing leg carries the destination; the incoming leg sits on it.
-  const isOutgoing = transaction.type === "transfer" && transaction.destinationAccountId !== undefined;
+  const account = accountNames.get(transaction.accountId) ?? "Unknown account";
+  const outgoing = isOutgoing(transaction);
   let subtitle: string;
   if (transaction.type === "transfer") {
-    subtitle = isOutgoing
-      ? `${account}  →  ${accountName(transaction.destinationAccountId) ?? "Unknown account"}`
+    subtitle = outgoing
+      ? `${account}  →  ${accountNames.get(transaction.destinationAccountId ?? "") ?? "Unknown account"}`
       : `Transfer to ${account}`;
   } else if (isAdjustment) {
     subtitle = `Adjustment · ${account}`;
   } else {
-    subtitle = `${categoryName(transaction.categoryId) ?? "Uncategorized"} · ${account}`;
+    subtitle = `${categoryNames.get(transaction.categoryId ?? "") ?? "Uncategorized"} · ${account}`;
   }
 
   const amountMinor = transaction.amount.amountMinor;
-  const sign =
-    transaction.type === "transfer"
-      ? isOutgoing
-        ? "-"
-        : "+"
-      : transaction.type === "expense"
-        ? "-"
-        : amountMinor > 0
-          ? "+"
-          : amountMinor < 0
-            ? "-"
-            : "";
+  // Adjustments carry their own sign; the rest are positive amounts in a direction.
+  const sign = outgoing || amountMinor < 0 ? "-" : amountMinor > 0 ? "+" : "";
   const amountColor = isAdjustment ? (amountMinor >= 0 ? "text-emerald-500" : "text-destructive") : config.amountColor;
 
   function handleDelete() {
@@ -213,11 +193,7 @@ export function TransactionRow({ transaction, accountName, categoryName, onEdit,
           onConfirm={handleDelete}
         />
       </div>
-      {deleteError && (
-        <p role="alert" className="mt-2 px-3 text-sm text-destructive sm:px-5">
-          {deleteError}
-        </p>
-      )}
+      <FormError message={deleteError} className="mt-2 px-3 sm:px-5" />
     </div>
   );
 }

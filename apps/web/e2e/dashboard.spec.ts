@@ -1,12 +1,7 @@
 import { expect, test } from "@playwright/test";
 
-import { accountId, apiWrite, createAccount, usd } from "./helpers/api";
+import { accountId, apiWrite, createAccount, today, usd } from "./helpers/api";
 import { registerAndCompleteOnboarding } from "./helpers/auth";
-
-function today(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
 
 test.describe("Dashboard (apps/api)", () => {
   test("shows empty states for a new user", async ({ page }) => {

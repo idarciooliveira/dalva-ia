@@ -4,6 +4,7 @@ import type { CallOptions, RouteDef, RouteInput, RouteOutput, UserRoutes } from 
 import { useState } from "react";
 
 import { api } from "./client";
+import { isApiError } from "./errors";
 import { createIdempotencyKeys } from "./idempotency";
 import { queryKeys } from "./keys";
 
@@ -76,6 +77,8 @@ type Options<G extends Group, O extends WriteOp<G>> = Omit<
  *   again before a success (React Query retries, a second click), so the server
  *   replays the first write instead of applying it twice.
  * - On success, invalidates `INVALIDATES[group.op]` before the caller's `onSuccess`.
+ *   So does `not_found`: the record is already gone (changed elsewhere), and the
+ *   lists still showing it are stale.
  */
 export function useApiMutation<G extends Group, O extends WriteOp<G>>(group: G, op: O, options: Options<G, O> = {}) {
   const queryClient = useQueryClient();
@@ -96,6 +99,10 @@ export function useApiMutation<G extends Group, O extends WriteOp<G>>(group: G, 
     onSuccess: async (...args) => {
       await invalidateAfter(queryClient, name);
       await options.onSuccess?.(...args);
+    },
+    onError: async (...args) => {
+      if (isApiError(args[0], "not_found")) void invalidateAfter(queryClient, name);
+      await options.onError?.(...args);
     },
   });
 }

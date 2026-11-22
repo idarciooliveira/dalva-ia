@@ -1,11 +1,7 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
 
-import { accountId, apiWrite, createAccount, usd } from "./helpers/api";
+import { accountId, accountRow, apiWrite, createAccount, usd } from "./helpers/api";
 import { registerAndCompleteOnboarding } from "./helpers/auth";
-
-function accountRow(page: Page, name: string) {
-  return page.getByRole("listitem", { name, exact: true });
-}
 
 test.describe("Transfers — unauthenticated", () => {
   test("transfers require authentication (transactions page redirects to /login)", async ({

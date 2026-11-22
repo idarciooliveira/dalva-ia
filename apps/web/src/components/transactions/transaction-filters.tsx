@@ -19,6 +19,7 @@ import {
   SheetFooter,
   SheetDescription,
 } from "@/components/ui/sheet";
+import { FormError } from "@/components/error-state";
 import { accountsQuery, categoriesQuery } from "@/lib/api/queries";
 
 export interface TransactionFilters {
@@ -161,9 +162,7 @@ export function TransactionFiltersSheet({
                 />
               </div>
               {hasInvalidDateRange(filters) && (
-                <p id="filter-date-error" role="alert" className="text-xs text-destructive">
-                  The start date is after the end date.
-                </p>
+                <FormError id="filter-date-error" className="mt-0 text-xs" message="The start date is after the end date." />
               )}
             </div>
           </div>

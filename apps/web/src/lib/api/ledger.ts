@@ -13,7 +13,7 @@ import { queryKeys } from "./keys";
 export type TransactionSearch = Omit<RouteInput<UserRoutes["transactions"]["search"]>, "cursor" | "limit">;
 
 /** Rows per page of the transactions list. */
-export const TRANSACTIONS_PAGE_SIZE = 25;
+const TRANSACTIONS_PAGE_SIZE = 25;
 
 export const ledgerKeys = {
   search: (input: TransactionSearch) => [...queryKeys.transactions.all(), "search", input] as const,

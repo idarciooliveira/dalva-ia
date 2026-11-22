@@ -16,7 +16,7 @@
  * missing account.
  */
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
-import { isoDateSchema } from "@mpf/finance-contract";
+import { isoDateSchema, type TransactionManagedBy } from "@mpf/finance-contract";
 
 import { isUuid } from "../db/ids";
 import { debtPayments, goalContributions, transactions } from "../db/schema";
@@ -87,8 +87,8 @@ export async function managedKinds(
   tx: Tx,
   userId: string,
   rows: Transaction[],
-): Promise<Map<string, "transfer" | "goal_contribution" | "debt_payment">> {
-  const kinds = new Map<string, "transfer" | "goal_contribution" | "debt_payment">();
+): Promise<Map<string, TransactionManagedBy>> {
+  const kinds = new Map<string, TransactionManagedBy>();
   if (rows.length === 0) return kinds;
   const legs = rows.filter(isTransferLeg);
   const legIds = [...new Set(legs.flatMap((r) => (r.linkedTransactionId ? [r.id, r.linkedTransactionId] : [r.id])))];

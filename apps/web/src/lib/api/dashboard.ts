@@ -25,7 +25,7 @@ export const dashboardKeys = {
   debtSummary: () => [...queryKeys.debts.all(), "summary"] as const,
 };
 
-/** Income, expenses and adjustments of a month ("YYYY-MM"). */
+/** Income, expenses, adjustments and the latest rows of a month ("YYYY-MM"). */
 export const transactionSummaryQuery = (month: string) =>
   queryOptions({
     queryKey: dashboardKeys.summary(month),
@@ -33,9 +33,9 @@ export const transactionSummaryQuery = (month: string) =>
   });
 
 /**
- * The month's latest rows, each in its account's currency. Read from the search,
- * not the summary report: the report refuses (`conflict`) when accounts in
- * another currency are involved, and these rows need no common currency.
+ * The month's latest rows, each in its account's currency, as the summary report
+ * lists them. For when that report refuses (`conflict`: accounts in another
+ * currency): these rows need no common currency.
  */
 export const recentTransactionsQuery = (month: string) =>
   queryOptions({

@@ -20,7 +20,7 @@ import {
   recentTransactionsQuery,
   transactionSummaryQuery,
 } from "@/lib/api/dashboard";
-import { buildRecentTransactions } from "@/lib/dashboard-data";
+import { buildRecentTransactions, namesById } from "@/lib/dashboard-data";
 import { apiErrorMessage } from "@/lib/api/errors";
 import type { DebtPaydownData, GoalsProgressData, NetWorthData } from "@/lib/mock-dashboard-data";
 
@@ -51,7 +51,11 @@ function DashboardPage() {
   );
   const categoriesResult = useQuery(categoriesQuery({ includeArchived: true }));
   const summaryResult = useQuery(transactionSummaryQuery(currentMonth));
-  const recentResult = useQuery(recentTransactionsQuery(currentMonth));
+  // The summary carries the month's latest rows. When it is refused (accounts in
+  // another currency), the search serves them: they need no common currency.
+  const summaryFailed = summaryResult.isError && summaryResult.data === undefined;
+  const recentResult = useQuery({ ...recentTransactionsQuery(currentMonth), enabled: summaryFailed });
+  const recentSource = summaryFailed ? recentResult : summaryResult;
   const netWorthResult = useQuery(netWorthQuery());
   const goalsResult = useQuery(dashboardGoalsQuery());
   const debtsResult = useQuery(debtSummaryQuery());
@@ -60,11 +64,11 @@ function DashboardPage() {
   const recentTransactions = useMemo(
     () =>
       buildRecentTransactions(
-        recentResult.data?.items ?? [],
-        new Map<string, string>((accountsResult.data?.items ?? []).map((a) => [a.id, a.name])),
-        new Map<string, string>((categoriesResult.data?.items ?? []).map((c) => [c.id, c.name])),
+        summaryResult.data?.recentTransactions ?? recentResult.data?.items ?? [],
+        namesById(accountsResult.data?.items),
+        namesById(categoriesResult.data?.items),
       ),
-    [recentResult.data, accountsResult.data, categoriesResult.data],
+    [summaryResult.data, recentResult.data, accountsResult.data, categoriesResult.data],
   );
 
   const netWorth: NetWorthData = netWorthResult.data
@@ -142,7 +146,7 @@ function DashboardPage() {
               }
               holderName={profile.name?.toUpperCase() ?? "DALVA USER"}
             />
-            <RecentTransactionsCard transactions={recentTransactions} status={cardStatus(recentResult)} />
+            <RecentTransactionsCard transactions={recentTransactions} status={cardStatus(recentSource)} />
           </div>
 
           {/* --- Right column --- */}
