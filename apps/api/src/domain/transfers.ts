@@ -144,16 +144,16 @@ export async function createTransfer(tx: Tx, userId: string, args: TransferField
   return outgoing!.id;
 }
 
-/**
- * Change the fields given on both legs (none can be cleared), reversing the
- * old balance effects and applying the new ones. Returns the outgoing leg's id.
- */
 /** What a transfer update may change: `null` clears the description or note on both legs. */
 export type TransferChanges = Partial<Omit<TransferFields, "description" | "note">> & {
   description?: string | null;
   note?: string | null;
 };
 
+/**
+ * Change the fields given on both legs, reversing the old balance effects and
+ * applying the new ones. Returns the outgoing leg's id.
+ */
 export async function updateTransfer(tx: Tx, userId: string, id: string, changes: TransferChanges): Promise<string> {
   return await updateLoadedTransfer(tx, userId, await getTransfer(tx, userId, id, { editable: true }), changes);
 }

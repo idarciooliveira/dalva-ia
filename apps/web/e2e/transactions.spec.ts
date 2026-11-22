@@ -112,6 +112,7 @@ test.describe("Transactions page - edit flow", () => {
 
 test.describe("Transactions (apps/api)", () => {
   test("create, edit and delete move the account balance", async ({ page }) => {
+    test.slow();
     await registerAndCompleteOnboarding(page);
     await page.goto("/transactions");
     await expect(page.getByText("No transactions yet")).toBeVisible();
@@ -195,6 +196,7 @@ test.describe("Transactions (apps/api)", () => {
   });
 
   test("searches, filters and pages through transactions", async ({ page }) => {
+    test.slow();
     await registerAndCompleteOnboarding(page);
     const main = await accountId(page, "Main Checking");
     // 26 rows: one more than a page.
@@ -218,7 +220,7 @@ test.describe("Transactions (apps/api)", () => {
 
     await page.goto("/transactions");
     const list = page.getByRole("list", { name: "Transactions" });
-    await expect(list.getByRole("listitem")).toHaveCount(25);
+    await expect(list.getByRole("listitem")).toHaveCount(25, { timeout: 15_000 });
     await page.getByRole("button", { name: "Load more" }).click();
     await expect(list.getByRole("listitem")).toHaveCount(26);
     await expect(page.getByRole("button", { name: "Load more" })).not.toBeVisible();

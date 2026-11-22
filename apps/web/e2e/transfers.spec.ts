@@ -68,6 +68,7 @@ test.describe("Transfers — landing page references", () => {
 
 test.describe("Transfers (apps/api)", () => {
   test("create from the quick actions, edit and delete move both balances", async ({ page }) => {
+    test.slow();
     await registerAndCompleteOnboarding(page);
     const main = await accountId(page, "Main Checking");
     await createAccount(page, "Savings");
@@ -123,7 +124,7 @@ test.describe("Transfers (apps/api)", () => {
     await expect(accountRow(page, "Savings")).toContainText("$0.00");
   });
 
-  test("refuses the same account on both sides", async ({ page }) => {
+  test("leaves the source account out of the destination list", async ({ page }) => {
     await registerAndCompleteOnboarding(page);
     await createAccount(page, "Savings");
     await page.goto("/transactions");

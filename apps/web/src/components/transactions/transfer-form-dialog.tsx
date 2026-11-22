@@ -63,7 +63,12 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
   const amountRef = useRef<HTMLInputElement>(null);
 
   const accountsResult = useQuery({ ...accountsQuery({ includeArchived: true }), enabled: open });
-  const transferResult = useQuery({ ...transferQuery(transferId ?? ""), enabled: open && isEdit });
+  // Stale at once, so enabling it on open refetches: the form and the diff of the update start from the server's current copy.
+  const transferResult = useQuery({
+    ...transferQuery(transferId ?? ""),
+    enabled: open && isEdit,
+    staleTime: 0,
+  });
   const transfer = transferResult.data?.transfer;
 
   // Reset on open (an edit refills below). Closing keeps the fields, so the dialog doesn't flash empty while it animates out.
@@ -84,7 +89,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
 
   // Fill the fields once the transfer being edited has loaded.
   useEffect(() => {
-    if (!open || !transfer || filledFrom === transferId) return;
+    if (!open || !transfer || transferResult.isFetching || filledFrom === transferId) return;
     setAmount(String(transfer.amount.amountMinor));
     setFromAccountId(transfer.fromAccountId);
     setToAccountId(transfer.toAccountId);
@@ -92,7 +97,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
     setDescription(transfer.description ?? "");
     setNote(transfer.note ?? "");
     setFilled({ id: transferId!, transfer });
-  }, [open, transfer, transferId, filledFrom]);
+  }, [open, transfer, transferResult.isFetching, transferId, filledFrom]);
 
   const { mutateAsync: createTransfer, isPending: isCreating } = useApiMutation("transfers", "create");
   const { mutateAsync: updateTransfer, isPending: isUpdating } = useApiMutation("transfers", "update");
