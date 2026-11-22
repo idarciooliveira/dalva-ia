@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 
+import { logIn, newUser, register, registerAndCompleteOnboarding } from "./helpers/auth";
+
 test.describe("Login page", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/login");
@@ -115,5 +117,98 @@ test.describe("Register page", () => {
     await expect(
       page.getByRole("button", { name: /google/i })
     ).toBeVisible();
+  });
+});
+
+test.describe("Auth flows (apps/api)", () => {
+  test("register, sign out, then log back in", async ({ page }) => {
+    const user = await registerAndCompleteOnboarding(page, newUser("Flow Tester"));
+    // The shell renders the greeting from the session and profile (dashboard data stays on Convex until PR 10).
+    await expect(page.getByRole("heading", { name: /, Flow$/ })).toBeVisible();
+
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(page.getByRole("link", { name: "Log in" })).toBeVisible();
+
+    await page.goto("/accounts");
+    await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
+
+    await logIn(page, user);
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+    await expect(page.getByRole("heading", { name: /, Flow$/ })).toBeVisible();
+  });
+
+  test("a wrong password shows an error and stays on /login", async ({ page }) => {
+    const user = await registerAndCompleteOnboarding(page);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await logIn(page, { ...user, password: "wrong-password" });
+    await expect(page.getByRole("alert")).toContainText("Invalid email or password");
+    await expect(page).toHaveURL(/\/login/);
+  });
+
+  test("an email already registered shows an error", async ({ page, browser }) => {
+    const user = await register(page);
+
+    const other = await browser.newPage();
+    await other.goto("/register");
+    await other.getByLabel("Name").fill("Someone Else");
+    await other.getByLabel("Email").fill(user.email);
+    await other.locator("#password").fill("password456");
+    await other.getByRole("button", { name: /create account/i }).click();
+    await expect(other.getByRole("alert")).toContainText("already exists");
+    await expect(other).toHaveURL(/\/register/);
+    await other.close();
+  });
+
+  test("logging in before onboarding is done resumes onboarding", async ({ page, browser }) => {
+    const user = await register(page);
+
+    const other = await browser.newPage();
+    await logIn(other, user);
+    await expect(other).toHaveURL(/\/onboarding/, { timeout: 20_000 });
+    await other.close();
+  });
+
+  test("signing in as someone else in the same tab never shows the previous user's data", async ({ page }) => {
+    await registerAndCompleteOnboarding(page, newUser("First User"));
+    await page.goto("/accounts");
+    await page.getByRole("button", { name: /add account/i }).click();
+    await page.getByLabel("Account name").fill("First-only account");
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect(page.getByText("First-only account")).toBeVisible();
+
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    // Client-side navigation keeps the React Query cache: it must hold nothing of the first user.
+    await page.getByRole("link", { name: "Get Started", exact: true }).click();
+    await page.getByLabel("Name").fill("Second User");
+    await page.getByLabel("Email").fill(newUser().email);
+    await page.locator("#password").fill("password123");
+    await page.getByRole("button", { name: /create account/i }).click();
+    await expect(page).toHaveURL(/\/onboarding/, { timeout: 20_000 });
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await page.getByLabel(/account name/i).fill("Second Checking");
+    await page.getByRole("button", { name: /^continue$/i }).click();
+    await page.getByRole("button", { name: /get started/i }).click();
+    await expect(page).toHaveURL(/\/dashboard/, { timeout: 20_000 });
+
+    await page.getByRole("link", { name: "Accounts" }).click();
+    await expect(page.getByText("Second Checking")).toBeVisible();
+    await expect(page.getByText("First-only account")).toHaveCount(0);
+  });
+
+  test("an expired session sends the next write to /login", async ({ page }) => {
+    await registerAndCompleteOnboarding(page);
+    await page.getByRole("link", { name: "Accounts" }).click();
+    await expect(page.getByText("Main Checking")).toBeVisible();
+
+    await page.context().clearCookies();
+    await page.getByRole("button", { name: /add account/i }).click();
+    await page.getByLabel("Account name").fill("Too late");
+    await page.getByRole("button", { name: "Create account" }).click();
+    await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
   });
 });

@@ -2,6 +2,14 @@
   "buildCommand": "cd ../.. && bun run build:web",
   "outputDirectory": "dist/client",
   "rewrites": [
-    { "source": "/(.*)", "destination": "/_shell.html" }
-  ]
+    {
+      "source": "/(.*)",
+      "destination": "/_shell.html"
+    }
+  ],
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  }
 }

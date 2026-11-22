@@ -1,6 +1,4 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Authenticated, Unauthenticated, AuthLoading } from "convex/react";
-import { useAuthActions } from "@convex-dev/auth/react";
 import {
   Wallet,
   ArrowLeftRight,
@@ -18,6 +16,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { useDarkMode } from "@/hooks/use-dark-mode";
+import { useSession, useSignOut } from "@/hooks/use-session";
 
 export const Route = createFileRoute("/")({ component: LandingPage });
 
@@ -43,7 +42,10 @@ function LandingPage() {
 
 function Nav() {
   const { isDark: dark, toggle } = useDarkMode();
-  const { signOut } = useAuthActions();
+  const session = useSession();
+  const signOut = useSignOut();
+  // A session check that failed (API down) shows the signed-out actions.
+  const authState = session.isPending ? "loading" : session.data ? "authenticated" : "unauthenticated";
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/80 backdrop-blur-md">
@@ -65,12 +67,13 @@ function Nav() {
             {dark ? <Sun className="size-4 sm:size-5" /> : <Moon className="size-4 sm:size-5" />}
           </Button>
 
-          <AuthLoading>
-            {/* Skeleton placeholders while auth state loads */}
+          {authState === "loading" && (
+            /* Skeleton placeholders while auth state loads */
             <div className="h-10 w-24 animate-pulse rounded-xl bg-muted sm:h-11 sm:w-28" />
-          </AuthLoading>
+          )}
 
-          <Unauthenticated>
+          {authState === "unauthenticated" && (
+          <>
             <Link to="/login">
               <Button variant="ghost" size="default" className="px-3 sm:px-4">
                 Log in
@@ -81,9 +84,11 @@ function Nav() {
                 Get Started
               </Button>
             </Link>
-          </Unauthenticated>
+          </>
+          )}
 
-          <Authenticated>
+          {authState === "authenticated" && (
+          <>
             <Link to="/dashboard">
               <Button variant="accent" size="default" className="px-3.5 sm:px-4 lg:px-5">
                 Dashboard
@@ -98,7 +103,8 @@ function Nav() {
             >
               <LogOut className="size-4 sm:size-5" />
             </Button>
-          </Authenticated>
+          </>
+          )}
         </div>
       </div>
     </header>

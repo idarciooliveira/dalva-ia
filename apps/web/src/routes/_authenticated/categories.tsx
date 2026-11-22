@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { Category, Subcategory } from "@mpf/finance-contract";
 import { useState } from "react";
 import { Archive } from "lucide-react";
 
@@ -11,6 +9,8 @@ import { CategoryFormDialog } from "@/components/categories/category-form-dialog
 import { SubcategoryFormDialog } from "@/components/categories/subcategory-form-dialog";
 import { CategoriesListSkeleton } from "@/components/categories/categories-list-skeleton";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/error-state";
+import { categoriesQuery, subcategoriesQuery } from "@/lib/api/queries";
 
 export const Route = createFileRoute("/_authenticated/categories")({
   component: CategoriesPage,
@@ -38,29 +38,28 @@ function CategoriesContent() {
   const [showArchived, setShowArchived] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [createType, setCreateType] = useState<"income" | "expense">("expense");
-  const [editCategory, setEditCategory] = useState<Doc<"categories"> | null>(
-    null,
-  );
-  const [addSubcategoryFor, setAddSubcategoryFor] =
-    useState<Doc<"categories"> | null>(null);
-  const [editSubcategory, setEditSubcategory] =
-    useState<Doc<"subcategories"> | null>(null);
+  const [editCategory, setEditCategory] = useState<Category | null>(null);
+  const [addSubcategoryFor, setAddSubcategoryFor] = useState<Category | null>(null);
+  const [editSubcategory, setEditSubcategory] = useState<Subcategory | null>(null);
 
-  const { data: categories, isLoading } = useQuery(
-    convexQuery(api.categories.listCategories, {
-      includeArchived: showArchived,
-    }),
-  );
+  const categoriesResult = useQuery({
+    ...categoriesQuery({ includeArchived: showArchived }),
+    placeholderData: keepPreviousData,
+  });
+  const subcategoriesResult = useQuery({
+    ...subcategoriesQuery({ includeArchived: showArchived }),
+    placeholderData: keepPreviousData,
+  });
 
-  const { data: allSubcategories } = useQuery(
-    convexQuery(api.categories.listAllSubcategories, {
-      includeArchived: showArchived,
-    }),
-  );
-
-  if (isLoading) {
+  if (categoriesResult.isPending || subcategoriesResult.isPending) {
     return <CategoriesListSkeleton />;
   }
+
+  const categories = categoriesResult.data?.items;
+  const allSubcategories = subcategoriesResult.data?.items;
+  // A failed background refetch keeps showing the cached lists.
+  const loadError =
+    (!categoriesResult.data && categoriesResult.error) || (!subcategoriesResult.data && subcategoriesResult.error);
 
   const incomeCategories = (categories ?? [])
     .filter((c) => c.type === "income")
@@ -70,7 +69,7 @@ function CategoriesContent() {
     .filter((c) => c.type === "expense")
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
 
-  const subcategoriesByParent = new Map<string, Doc<"subcategories">[]>();
+  const subcategoriesByParent = new Map<string, Subcategory[]>();
   for (const sub of allSubcategories ?? []) {
     const existing = subcategoriesByParent.get(sub.categoryId) ?? [];
     existing.push(sub);
@@ -82,12 +81,12 @@ function CategoriesContent() {
     setCreateDialogOpen(true);
   }
 
-  function handleAddSubcategory(category: Doc<"categories">) {
+  function handleAddSubcategory(category: Category) {
     setEditSubcategory(null);
     setAddSubcategoryFor(category);
   }
 
-  function handleEditSubcategory(subcategory: Doc<"subcategories">) {
+  function handleEditSubcategory(subcategory: Subcategory) {
     setAddSubcategoryFor(null);
     setEditSubcategory(subcategory);
   }
@@ -95,7 +94,7 @@ function CategoriesContent() {
   const activeSubcategoryParent =
     addSubcategoryFor ??
     (editSubcategory
-      ? (categories ?? []).find((category) => category._id === editSubcategory.categoryId) ??
+      ? (categories ?? []).find((category) => category.id === editSubcategory.categoryId) ??
         null
       : null);
 
@@ -115,18 +114,30 @@ function CategoriesContent() {
           variant={showArchived ? "secondary" : "outline"}
           size="default"
           onClick={() => setShowArchived(!showArchived)}
+          aria-pressed={showArchived}
           className="relative w-full sm:w-auto"
         >
           <Archive className="mr-1.5 size-4" />
           Archived
           {showArchived && (
-            <span className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
+            <span aria-hidden="true" className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
               1
             </span>
           )}
         </Button>
       </div>
 
+      {loadError ? (
+        <ErrorState
+          error={loadError}
+          fallback="Couldn't load your categories."
+          onRetry={() => {
+            void categoriesResult.refetch();
+            void subcategoriesResult.refetch();
+          }}
+        />
+      ) : (
+      <>
       {/* Expense Categories */}
       <CategoryGroup
         title="Expenses"
@@ -152,6 +163,8 @@ function CategoriesContent() {
           onEditSubcategory={handleEditSubcategory}
         />
       </div>
+      </>
+      )}
 
       {/* Create Category Dialog */}
       <CategoryFormDialog

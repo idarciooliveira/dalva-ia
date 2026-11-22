@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import type { Category } from "@mpf/finance-contract";
 import { Palette, Check, Image } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -18,6 +16,9 @@ import {
   CATEGORY_ICON_MAP,
 } from "@/lib/category-icons";
 import { cn } from "@/lib/utils";
+import { FormError } from "@/components/error-state";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage } from "@/lib/api/errors";
 
 /** How many color swatches / icons to show before the "Others" toggle. */
 const COLORS_PREVIEW_COUNT = 4;
@@ -27,7 +28,7 @@ interface CategoryFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   type: "income" | "expense";
-  category: Doc<"categories"> | null;
+  category: Category | null;
 }
 
 export function CategoryFormDialog({
@@ -61,12 +62,8 @@ export function CategoryFormDialog({
     setShowAllIcons(false);
   }, [category, type, open]);
 
-  const { mutateAsync: createCategory, isPending: isCreating } = useMutation({
-    mutationFn: useConvexMutation(api.categories.createCategory),
-  });
-  const { mutateAsync: updateCategory, isPending: isUpdating } = useMutation({
-    mutationFn: useConvexMutation(api.categories.updateCategory),
-  });
+  const { mutateAsync: createCategory, isPending: isCreating } = useApiMutation("categories", "create");
+  const { mutateAsync: updateCategory, isPending: isUpdating } = useApiMutation("categories", "update");
 
   const isPending = isCreating || isUpdating;
 
@@ -78,15 +75,18 @@ export function CategoryFormDialog({
       return;
     }
 
-    if (isEdit && category) {
-      await updateCategory({
-        id: category._id,
-        name: name.trim(),
-        icon,
-        color,
-      });
-      onOpenChange(false);
-    } else {
+    try {
+      if (isEdit && category) {
+        await updateCategory({
+          id: category.id,
+          name: name.trim(),
+          icon,
+          color,
+        });
+        onOpenChange(false);
+        return;
+      }
+
       await createCategory({ name: name.trim(), type, icon, color });
 
       if (andCreateNew) {
@@ -99,6 +99,8 @@ export function CategoryFormDialog({
       } else {
         onOpenChange(false);
       }
+    } catch (err) {
+      setError(apiErrorMessage(err, isEdit ? "Couldn't save the category. Try again." : "Couldn't create the category. Try again."));
     }
   }
 
@@ -124,6 +126,9 @@ export function CategoryFormDialog({
           <DialogTitle className="text-lg font-semibold">
             {isEdit ? "Edit category" : `New ${type} category`}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Choose a name, a color and an icon for the category.
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 pt-4 pb-2">
@@ -162,6 +167,7 @@ export function CategoryFormDialog({
                     )}
                     style={{ backgroundColor: c }}
                     aria-label={`Color ${c}`}
+                    aria-pressed={color === c}
                   >
                     {color === c && (
                       <Check className="absolute inset-0 m-auto size-4.5 text-white drop-shadow-md" />
@@ -213,6 +219,7 @@ export function CategoryFormDialog({
                       )}
                       title={iconName}
                       aria-label={`Icon: ${iconName}`}
+                      aria-pressed={icon === iconName}
                     >
                       <IconComp className="size-5" />
                     </button>
@@ -242,7 +249,7 @@ export function CategoryFormDialog({
           </div>
 
           {/* ── Error ── */}
-          {error && <p className="mt-4 text-sm text-destructive">{error}</p>}
+          <FormError message={error} className="mt-4" />
         </div>
 
         {/* ── Footer ── */}

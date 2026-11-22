@@ -1,25 +1,26 @@
-import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import { useEffect, useState } from "react";
+import type { Account } from "@mpf/finance-contract";
 import { Landmark } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CurrencyInput, parseCurrencyInputToCents } from "@/components/ui/currency-input";
-import { formatCurrency } from "@/lib/format";
+import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
+import { FormError } from "@/components/error-state";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage } from "@/lib/api/errors";
+import { formatMinor, fractionDigits, maskPlaceholder } from "@/lib/money";
 import { getCurrencySymbol } from "@/lib/currencies";
 
 interface AdjustBalanceDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  account: Doc<"accounts"> | null;
+  account: Account | null;
 }
 
 export function AdjustBalanceDialog({
@@ -32,58 +33,66 @@ export function AdjustBalanceDialog({
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
-  const { mutateAsync: adjustBalance, isPending } = useMutation({
-    mutationFn: useConvexMutation(api.accounts.adjustBalance),
-  });
+  const { mutateAsync: adjustBalance, isPending } = useApiMutation("accounts", "adjust");
 
-  // Reset when dialog opens
-  function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen) {
-      setNewBalance(account ? String(account.balance) : "");
-      setAdjustmentDate(new Date().toISOString().slice(0, 10));
-      setNote("");
-      setError("");
-    }
-    onOpenChange(nextOpen);
-  }
+  // Reset each time the dialog opens for an account (the parent opens it through `open`).
+  // Keyed on the id: a refetch of the same account while open keeps what was typed.
+  const accountId = account?.id;
+  const openingBalance = account?.balance.amountMinor;
+  useEffect(() => {
+    if (!open) return;
+    setNewBalance(openingBalance === undefined ? "" : String(openingBalance));
+    setAdjustmentDate(localToday());
+    setNote("");
+    setError("");
+  }, [open, accountId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!account) return;
+    if (!account || isPending) return;
 
     setError("");
-    const newCents = parseCurrencyInputToCents(newBalance);
-    if (isNaN(newCents)) {
+    const newMinor = parseCurrencyInput(newBalance);
+    if (Number.isNaN(newMinor)) {
       setError("Please enter a valid amount");
       return;
     }
 
-    const delta = newCents - account.balance;
+    // The API takes a delta: from the balance as it is now, so the result is what was typed.
+    const delta = newMinor - account.balance.amountMinor;
     if (delta === 0) {
       onOpenChange(false);
       return;
     }
 
-    await adjustBalance({
-      id: account._id,
-      amount: delta,
-      date: adjustmentDate || undefined,
-      note: note.trim() || undefined,
-    });
-    onOpenChange(false);
+    try {
+      await adjustBalance({
+        id: account.id,
+        amount: { amountMinor: delta, currency: account.balance.currency },
+        date: adjustmentDate || undefined,
+        note: note.trim() || undefined,
+      });
+      onOpenChange(false);
+    } catch (err) {
+      setError(apiErrorMessage(err, "Couldn't adjust the balance. Try again."));
+    }
   }
 
   if (!account) return null;
 
-  const currencySymbol = getCurrencySymbol(account.currency);
+  const currency = account.balance.currency;
+  const currencySymbol = getCurrencySymbol(currency);
 
   return (
-    <Dialog open={open} onOpenChange={handleOpenChange}>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md gap-0 overflow-hidden p-0">
         <DialogHeader className="px-5 pt-5 pb-0">
           <DialogTitle className="text-lg font-semibold">
             Adjust balance
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            Set the new balance; the difference is recorded as an adjustment.
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={(e) => void handleSubmit(e)}>
@@ -97,16 +106,20 @@ export function AdjustBalanceDialog({
                   id="new-balance"
                   value={newBalance}
                   onValueChange={setNewBalance}
-                  placeholder="0,00"
+                  fractionDigits={fractionDigits(currency)}
+                  allowNegative
+                  placeholder={maskPlaceholder(fractionDigits(currency))}
                   autoFocus
                   className="flex-1 bg-transparent text-2xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/50"
                   aria-label="New balance"
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? "adjust-balance-error" : undefined}
                 />
               </div>
               <p className="mt-1 text-xs text-muted-foreground">
                 Current balance:{" "}
                 <span className="font-medium tabular-nums text-foreground">
-                  {formatCurrency(account.balance, account.currency)}
+                  {formatMinor(account.balance.amountMinor, currency)}
                 </span>
               </p>
             </div>
@@ -150,7 +163,7 @@ export function AdjustBalanceDialog({
               />
             </div>
 
-            {error && <p className="mt-3 text-sm text-destructive">{error}</p>}
+            <FormError id="adjust-balance-error" message={error} />
           </div>
 
           <div className="mt-2 flex items-center justify-end gap-3 px-5 py-4">
@@ -177,4 +190,11 @@ export function AdjustBalanceDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Today in the user's time zone, `YYYY-MM-DD` (toISOString would give the UTC date). */
+function localToday(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }

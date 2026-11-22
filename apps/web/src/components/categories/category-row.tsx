@@ -1,8 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import type { Category, Subcategory } from "@mpf/finance-contract";
 import {
   Plus,
   MoreVertical,
@@ -24,16 +21,19 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { FormError } from "@/components/error-state";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage } from "@/lib/api/errors";
 import { getCategoryIcon } from "@/lib/category-icons";
 import { cn } from "@/lib/utils";
 import { SubcategoryRow } from "./subcategory-row";
 
 interface CategoryRowProps {
-  category: Doc<"categories">;
-  subcategories: Doc<"subcategories">[];
+  category: Category;
+  subcategories: Subcategory[];
   onEdit: () => void;
   onAddSubcategory: () => void;
-  onEditSubcategory: (subcategory: Doc<"subcategories">) => void;
+  onEditSubcategory: (subcategory: Subcategory) => void;
 }
 
 export function CategoryRow({
@@ -48,15 +48,27 @@ export function CategoryRow({
 
   const Icon = getCategoryIcon(category.icon ?? "circle");
 
-  const { mutate: archiveCategory } = useMutation({
-    mutationFn: useConvexMutation(api.categories.archiveCategory),
+  const [actionError, setActionError] = useState<string | null>(null);
+  const handlers = (failure: string) => ({
+    onMutate: () => setActionError(null),
+    onError: (error: Error) => setActionError(apiErrorMessage(error, failure)),
   });
-  const { mutate: restoreCategory } = useMutation({
-    mutationFn: useConvexMutation(api.categories.restoreCategory),
-  });
-  const { mutate: deleteCategory } = useMutation({
-    mutationFn: useConvexMutation(api.categories.deleteCategory),
-  });
+  const { mutate: archiveCategory, isPending: isArchiving } = useApiMutation(
+    "categories",
+    "archive",
+    handlers("Couldn't archive the category. Try again."),
+  );
+  const { mutate: restoreCategory, isPending: isRestoring } = useApiMutation(
+    "categories",
+    "restore",
+    handlers("Couldn't restore the category. Try again."),
+  );
+  const { mutate: deleteCategory, isPending: isDeleting } = useApiMutation(
+    "categories",
+    "delete",
+    handlers("Couldn't delete the category. Try again."),
+  );
+  const isBusy = isArchiving || isRestoring || isDeleting;
 
   const sortedSubs = [...subcategories].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
   const hasSubcategories = sortedSubs.length > 0;
@@ -74,6 +86,7 @@ export function CategoryRow({
         <button
           type="button"
           onClick={() => setExpanded(!expanded)}
+          aria-expanded={expanded}
           className="flex size-6 items-center justify-center text-muted-foreground hover:text-foreground"
           aria-label={`${expanded ? "Collapse" : "Expand"} ${category.name} subcategories`}
         >
@@ -147,20 +160,23 @@ export function CategoryRow({
             <DropdownMenuSeparator />
             {category.archived ? (
               <DropdownMenuItem
-                onClick={() => restoreCategory({ id: category._id })}
+                disabled={isBusy}
+                onClick={() => restoreCategory({ id: category.id })}
               >
                 <ArchiveRestore className="mr-2 size-4" />
                 Restore
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem
-                onClick={() => archiveCategory({ id: category._id })}
+                disabled={isBusy}
+                onClick={() => archiveCategory({ id: category.id })}
               >
                 <Archive className="mr-2 size-4" />
                 Archive
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
+              disabled={isBusy}
               className="text-destructive focus:text-destructive"
               onClick={() => setDeleteDialogOpen(true)}
             >
@@ -175,9 +191,11 @@ export function CategoryRow({
           onOpenChange={setDeleteDialogOpen}
           title="Delete category"
           description="Delete this category and all its subcategories? This cannot be undone."
-          onConfirm={() => deleteCategory({ id: category._id })}
+          onConfirm={() => deleteCategory({ id: category.id })}
         />
       </div>
+
+      <FormError message={actionError} className="mt-0 px-3 pb-3 sm:px-5" />
 
       {/* Subcategories (expanded) */}
       {expanded && (
@@ -197,7 +215,7 @@ export function CategoryRow({
             <div className="space-y-0.5 sm:space-y-1">
               {sortedSubs.map((sub) => (
                 <SubcategoryRow
-                  key={sub._id}
+                  key={sub.id}
                   subcategory={sub}
                   parentColor={category.color ?? "#6B7280"}
                   onEdit={() => onEditSubcategory(sub)}
