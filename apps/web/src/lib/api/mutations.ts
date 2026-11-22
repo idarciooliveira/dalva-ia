@@ -67,6 +67,7 @@ const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> 
   "debtPayments.record": [queryKeys.debts.all, queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
   "debtPayments.remove": [queryKeys.debts.all, queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
   // A new code changes no link; the page polls the list until the bot redeems it.
+  // `chatHistory.delete` changes nothing the web reads, so it has no entry.
   "chatLinks.unlink": [queryKeys.chatLinks.all],
   "chatLinks.setReadOnly": [queryKeys.chatLinks.all],
 };

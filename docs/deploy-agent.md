@@ -33,7 +33,7 @@ The service key must be identical in Convex and in the agent.
 
 | Var | |
 | --- | --- |
-| `VITE_TELEGRAM_BOT_USERNAME` | Bot username, no `@`. Build-time: redeploy after changing it. Without it Settings shows only the `/start` fallback. |
+| `VITE_TELEGRAM_BOT_USERNAME` | Bot username, no `@`. Build-time: redeploy after changing it. Without it Settings shows only the `/start` fallback. Production web on `legacy-convex` only: on `main` the web reads it from the API's `TELEGRAM_BOT_USERNAME`. |
 
 ### Agent (stack env, see `deploy/agent/.env.example`)
 

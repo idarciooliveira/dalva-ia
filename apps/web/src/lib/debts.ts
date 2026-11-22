@@ -46,3 +46,67 @@ export function parseInterestRate(input: string): number | null {
   if (!/^\d+(\.\d+)?$/.test(value)) return Number.NaN;
   return Number(value);
 }
+
+type Money = { amountMinor: number; currency: string };
+
+/** A debt as the form builds it: blank optional fields are `undefined`. */
+export interface DebtFormFields {
+  name: string;
+  debtType: Debt["debtType"];
+  originalAmount: Money;
+  currentBalance: Money;
+  lender?: string;
+  interestRate?: number;
+  minimumPayment?: Money;
+  dueDate?: string;
+  linkedAccountId?: string;
+}
+
+/**
+ * Fields the form left blank that the debt has: the API can change them, not
+ * clear them, so the form refuses rather than closing as if they were saved.
+ */
+export function clearedDebtFields(opened: Debt, fields: DebtFormFields): string[] {
+  return [
+    opened.lender !== undefined && fields.lender === undefined && "lender",
+    opened.interestRate !== undefined && fields.interestRate === undefined && "interest rate",
+    opened.minimumPayment !== undefined && fields.minimumPayment === undefined && "minimum payment",
+    opened.dueDate !== undefined && fields.dueDate === undefined && "due date",
+  ].filter((field): field is string => typeof field === "string");
+}
+
+/**
+ * Current balance above the original amount: refused, except on an edit that
+ * changes neither (a legacy debt can hold more and must stay editable).
+ */
+export function exceedsOriginal(opened: Debt | null, fields: DebtFormFields): boolean {
+  const unchanged =
+    opened !== null &&
+    fields.originalAmount.amountMinor === opened.originalAmount.amountMinor &&
+    fields.currentBalance.amountMinor === opened.currentBalance.amountMinor;
+  return !unchanged && fields.currentBalance.amountMinor > fields.originalAmount.amountMinor;
+}
+
+/**
+ * The update for an edit: only the fields that differ from the debt as the
+ * dialog opened with it, so a payment recorded meanwhile (another tab, the bot)
+ * isn't undone by sending the old balance back. `null` when nothing changed.
+ */
+export function debtChanges(opened: Debt, fields: DebtFormFields): Partial<DebtFormFields> | null {
+  const value = <T>(next: T | undefined, stored: T | undefined) => (next !== stored ? next : undefined);
+  const money = (next: Money | undefined, stored: Money | undefined) =>
+    next !== undefined && next.amountMinor !== stored?.amountMinor ? next : undefined;
+  const changes: Partial<DebtFormFields> = {
+    name: value(fields.name, opened.name),
+    debtType: value(fields.debtType, opened.debtType),
+    originalAmount: money(fields.originalAmount, opened.originalAmount),
+    currentBalance: money(fields.currentBalance, opened.currentBalance),
+    lender: value(fields.lender, opened.lender),
+    interestRate: value(fields.interestRate, opened.interestRate),
+    minimumPayment: money(fields.minimumPayment, opened.minimumPayment),
+    dueDate: value(fields.dueDate, opened.dueDate),
+    // Unchanged: not re-checked by the API, so an archived linked account doesn't block other edits.
+    linkedAccountId: value(fields.linkedAccountId, opened.linkedAccountId),
+  };
+  return Object.values(changes).some((v) => v !== undefined) ? changes : null;
+}

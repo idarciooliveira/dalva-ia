@@ -4,10 +4,9 @@ import { Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { formatMonthYear } from "@/lib/dates";
+import { DEFAULT_GOAL_COLOR } from "@/lib/goals";
 import { formatMinor } from "@/lib/money";
 import { cn } from "@/lib/utils";
-
-export const DEFAULT_GOAL_COLOR = "#a3e635";
 
 /** Saved / target as a whole percentage, at most 100. */
 export function goalPercent(goal: Goal): number {

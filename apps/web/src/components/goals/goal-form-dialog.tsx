@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
 import { AccountPickerHint } from "@/components/account-picker-hint";
 import { FormError } from "@/components/error-state";
-import { DEFAULT_GOAL_COLOR } from "@/components/goals/goal-card";
+
 import { useAuthProfile } from "@/hooks/use-auth-profile";
 import { accountsForBaseCurrency } from "@/lib/accounts";
 import { apiErrorMessage } from "@/lib/api/errors";
@@ -17,6 +17,7 @@ import { useApiMutation } from "@/lib/api/mutations";
 import { accountsQuery } from "@/lib/api/queries";
 import { getCurrencySymbol } from "@/lib/currencies";
 import { fractionDigits, maskPlaceholder } from "@/lib/money";
+import { DEFAULT_GOAL_COLOR, goalChanges } from "@/lib/goals";
 import { cn } from "@/lib/utils";
 
 interface GoalFormDialogProps {
@@ -98,9 +99,8 @@ export function GoalFormDialog({ open, onOpenChange, goal }: GoalFormDialogProps
       setError("Please enter a valid target amount");
       return;
     }
-    const base = opened ?? goal;
     // The API can change the date, not clear it: say so instead of closing as if it were saved.
-    if (isEdit && base?.targetDate && !targetDate) {
+    if (isEdit && (opened ?? goal).targetDate && !targetDate) {
       setError("The target date can be changed but not removed");
       return;
     }
@@ -112,15 +112,14 @@ export function GoalFormDialog({ open, onOpenChange, goal }: GoalFormDialogProps
     const target = { amountMinor, currency };
     try {
       if (isEdit) {
-        const from = opened ?? goal;
-        // Only what changed, so a concurrent edit elsewhere isn't overwritten with what this dialog opened with.
-        const changes = {
-          name: name.trim() !== from.name ? name.trim() : undefined,
-          targetAmount: amountMinor !== from.targetAmount.amountMinor ? target : undefined,
-          targetDate: targetDate && targetDate !== from.targetDate ? targetDate : undefined,
-          color: color !== (from.color ?? DEFAULT_GOAL_COLOR) ? color : undefined,
-        };
-        if (Object.values(changes).some((value) => value !== undefined)) await updateGoal({ id: goal.id, ...changes });
+        // Compared with the goal as the dialog opened with it, not the live (refetched) row.
+        const changes = goalChanges(opened ?? goal, {
+          name: name.trim(),
+          targetAmount: target,
+          targetDate: targetDate || undefined,
+          color,
+        });
+        if (changes) await updateGoal({ id: goal.id, ...changes });
         onOpenChange(false);
         return;
       }

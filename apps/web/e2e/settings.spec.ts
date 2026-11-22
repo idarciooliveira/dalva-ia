@@ -1,3 +1,5 @@
+import { randomInt } from "node:crypto";
+
 import { expect, test } from "@playwright/test";
 
 import { registerAndCompleteOnboarding } from "./helpers/auth";
@@ -43,7 +45,8 @@ test.describe("Settings → Telegram", () => {
     const command = await page.getByTestId("telegram-start-command").textContent();
     const code = command!.replace("/start ", "");
 
-    const externalUserId = String(Date.now());
+    // Unique across parallel workers and browser projects sharing the database.
+    const externalUserId = `${Date.now()}${randomInt(1_000_000)}`;
     const chat = { channel: "telegram", externalUserId, chatId: externalUserId };
     const redeemed = await serviceCall("/channel-links/redeem", { ...chat, code, username: "e2e_user" });
     expect(redeemed.status).toBe(200);
