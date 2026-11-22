@@ -27,7 +27,7 @@ import {
 import { readConvexExport, readZip } from "./convex-export";
 import { importId } from "./ids";
 import { isCalendarDate, planImport, type Issue, type IssueCode } from "./plan";
-import { formatSummary, importSucceeded, runImport } from "./run";
+import { describeError, formatSummary, importSucceeded, runImport } from "./run";
 import { ImportRefusedError, writeImport } from "./write";
 
 type Fixture = ReturnType<typeof convexFixture>;
@@ -47,11 +47,21 @@ function variant(edit: (fixture: Fixture) => void): Fixture {
   return fixture;
 }
 
+/** The fixture's lone outgoing leg is accepted unless a test says otherwise. */
+const plan = (source: ReturnType<typeof asExport>, options: Parameters<typeof planImport>[1] = {}) =>
+  planImport(source, { acceptLoneLegs: true, ...options });
+
 const find = (fixture: Fixture, table: string, convexId: string) => fixture[table]!.find((d) => d._id === convexId)!;
 
-async function importFixture(fixture: Fixture = convexFixture(), options: { dryRun?: boolean; dropInvalid?: boolean } = {}) {
+async function importFixture(fixture: Fixture = convexFixture(), options: { dryRun?: boolean; dropInvalid?: boolean; acceptLoneLegs?: boolean } = {}) {
   const source = await writeExportDir(fixture);
-  return await runImport({ source, db: testDb(), dryRun: options.dryRun ?? false, dropInvalid: options.dropInvalid });
+  return await runImport({
+    source,
+    db: testDb(),
+    dryRun: options.dryRun ?? false,
+    dropInvalid: options.dropInvalid,
+    acceptLoneLegs: options.acceptLoneLegs ?? true,
+  });
 }
 
 /** Every imported row, ordered, for comparing two runs. */
@@ -84,6 +94,18 @@ describe("reading an export", () => {
     expect(fromDir.has("_tables")).toBe(false);
   });
 
+  it("reads streamed zips: data descriptors and zip64 records, with saturated classic fields", async () => {
+    const files: [string, Buffer][] = [
+      ["users/", Buffer.alloc(0)],
+      ["users/documents.jsonl", Buffer.from('{"_id":"u","_creationTime":1}\n')],
+      ["_storage/blob.bin", Buffer.from("not a table")],
+    ];
+    for (const options of [{ dataDescriptor: true }, { zip64: true }, { dataDescriptor: true, zip64: true }]) {
+      expect([...readZip(zip(files, options)).keys()]).toEqual(["users/documents.jsonl", "_storage/blob.bin"]);
+      expect([...readZip(zip(files, options), (name) => name.endsWith(".jsonl")).keys()]).toEqual(["users/documents.jsonl"]);
+    }
+  });
+
   it("refuses a corrupt zip and something that is not an export", async () => {
     const name = "users/documents.jsonl";
     const good = zip([[name, Buffer.from('{"_id":"u","_creationTime":1}\n'.repeat(3))]]);
@@ -100,7 +122,7 @@ describe("reading an export", () => {
 
 describe("plan", () => {
   it("passes the fixture with warnings only, and maps every migrated table", () => {
-    const { report, rows } = planImport(asExport(convexFixture()));
+    const { report, rows } = plan(asExport(convexFixture()));
     expect(report.errors).toEqual([]);
     expect(report.planned).toEqual({
       users: 3,
@@ -129,8 +151,8 @@ describe("plan", () => {
 
   it("builds UUIDv7 ids from _creationTime, the same on every run", () => {
     const fixture = convexFixture();
-    const first = planImport(asExport(fixture));
-    const second = planImport(asExport(convexFixture()));
+    const first = plan(asExport(fixture));
+    const second = plan(asExport(convexFixture()));
     expect(second.rows).toEqual(first.rows);
     const account = first.rows.accounts[0]!;
     expect(account.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
@@ -143,7 +165,7 @@ describe("plan", () => {
 
   it("merges users whose emails differ only by case into the one that signed in last", () => {
     const fixture = convexFixture();
-    const { report, rows } = planImport(asExport(fixture));
+    const { report, rows } = plan(asExport(fixture));
     const ana2 = id("users", fixture, "u_ana2");
     expect(issues(report.warnings, "email_case_merge")).toEqual([{ code: "email_case_merge", table: "users", id: "u_ana2", detail: "merged u_ana" }]);
     expect(rows.users.find((user) => user.email === "ana@example.com")).toMatchObject({ id: ana2, name: "Ana Two", emailVerified: true });
@@ -157,17 +179,31 @@ describe("plan", () => {
     expect(issues(report.warnings, "identity_unlinked").map((issue) => issue.id)).toEqual(["ci_ana"]);
   });
 
+  it("keeps the merged user that has a password, even if another signed in later", () => {
+    const fixture = variant((f) => {
+      f.authAccounts = f.authAccounts!.filter((account) => account._id !== "aa_ana2");
+    });
+    const { report, rows } = plan(asExport(fixture));
+    const ana = id("users", fixture, "u_ana");
+    expect(issues(report.warnings, "email_case_merge")).toEqual([expect.objectContaining({ id: "u_ana", detail: "merged u_ana2" })]);
+    // Name and profile from the survivor; its own password.
+    expect(rows.users.find((user) => user.email === "ana@example.com")).toMatchObject({ id: ana, name: "Ana" });
+    expect(rows.authAccounts.find((row) => row.userId === ana)).toMatchObject({ password: HASHES.staple.hash });
+    expect(rows.userProfiles.filter((row) => row.userId === ana)).toEqual([expect.objectContaining({ baseCurrency: "USD" })]);
+    expect(issues(report.warnings, "user_without_password").map((issue) => issue.id)).toEqual(["u_carl"]);
+  });
+
   it("supplies users.name from the user, else the profile, else the email", () => {
     const fixture = variant((f) => {
       f.userProfiles = f.userProfiles!.filter((p) => p._id !== "p_bob");
     });
-    const names = (f: Fixture) => Object.fromEntries(planImport(asExport(f)).rows.users.map((user) => [user.email, user.name]));
+    const names = (f: Fixture) => Object.fromEntries(plan(asExport(f)).rows.users.map((user) => [user.email, user.name]));
     expect(names(convexFixture())).toMatchObject({ "bob@example.com": "Bob Profile", "carl@example.com": "Carl" });
     expect(names(fixture)).toMatchObject({ "bob@example.com": "bob" });
   });
 
   it("imports a user without a password account, without a credential", () => {
-    const { report, rows } = planImport(asExport(convexFixture()));
+    const { report, rows } = plan(asExport(convexFixture()));
     expect(issues(report.warnings, "user_without_password").map((issue) => issue.id)).toEqual(["u_carl"]);
     expect(issues(report.warnings, "ignored_auth_account").map((issue) => issue.id)).toEqual(["aa_bob_gh"]);
     expect(rows.authAccounts).toHaveLength(2);
@@ -175,7 +211,7 @@ describe("plan", () => {
 
   it("nulls dangling and cross-user references on nullable columns", () => {
     const fixture = convexFixture();
-    const { report, rows } = planImport(asExport(fixture));
+    const { report, rows } = plan(asExport(fixture));
     const tx = (convexId: string) => rows.transactions.find((row) => row.id === id("transactions", fixture, convexId))!;
     expect(tx("t_orphan")).toMatchObject({ accountId: null, categoryId: null });
     expect(tx("t_cross")).toMatchObject({ accountId: null, categoryId: null });
@@ -199,14 +235,20 @@ describe("plan", () => {
   });
 
   it("skips rows whose owner doesn't exist", () => {
-    const { report } = planImport(asExport(convexFixture()));
+    const { report } = plan(asExport(convexFixture()));
     expect(issues(report.warnings, "orphan_owner").map((issue) => `${issue.table} ${issue.id}`)).toEqual(["accounts a_ghost", "transactions t_ghost"]);
   });
 
-  it("flags lone transfer legs, and the outgoing one whose destination was deleted too", () => {
+  it("fails on a lone outgoing leg whose destination was deleted too, unless accepted", () => {
+    const strict = planImport(asExport(convexFixture()));
+    expect(strict.report.errors).toEqual([{ code: "lone_outgoing_leg_without_destination", table: "transactions", id: "t_lone_out" }]);
+    expect(formatSummary({ mode: "dry-run", committed: false, plan: strict.report, verification: null })).toMatch(/--accept-lone-legs/);
+  });
+
+  it("flags lone transfer legs, and the accepted outgoing one whose destination was deleted too", () => {
     const fixture = convexFixture();
-    const { report, rows } = planImport(asExport(fixture));
-    expect(issues(report.warnings, "lone_outgoing_leg_without_destination").map((issue) => issue.id)).toEqual(["t_lone_out"]);
+    const { report, rows } = plan(asExport(fixture));
+    expect(issues(report.warnings, "accepted_lone_outgoing_leg").map((issue) => issue.id)).toEqual(["t_lone_out"]);
     expect(issues(report.warnings, "lone_transfer_leg").map((issue) => issue.id)).toEqual(["t_lone_in"]);
     const loneOut = rows.transactions.find((row) => row.id === id("transactions", fixture, "t_lone_out"))!;
     // Legacy rows keep their account; the group id that is not a UUID gets a stable one.
@@ -222,14 +264,14 @@ describe("plan", () => {
       find(f, "goalContributions", "gc_1").goalId = "g_virtual";
       find(f, "debtPayments", "dp_1").debtId = "d_deleted";
     });
-    const strict = planImport(asExport(fixture));
+    const strict = plan(asExport(fixture));
     expect(strict.report.errors.map((issue) => `${issue.code} ${issue.table}.${issue.field} ${issue.id}`)).toEqual([
       "cross_user_required_ref subcategories.categoryId sc_groceries",
       "cross_user_required_ref goalContributions.goalId gc_1",
       "dangling_required_ref debtPayments.debtId dp_1",
     ]);
 
-    const lenient = planImport(asExport(fixture), { dropInvalid: true });
+    const lenient = plan(asExport(fixture), { dropInvalid: true });
     expect(lenient.report.errors).toEqual([]);
     expect(codes(lenient.report.warnings)).toEqual(expect.arrayContaining(["dropped_cross_user_required_ref", "dropped_dangling_required_ref"]));
     expect(lenient.report.planned).toMatchObject({ subcategories: 1, goalContributions: 1, debtPayments: 0 });
@@ -245,7 +287,7 @@ describe("plan", () => {
       find(f, "debtPayments", "dp_1").interestAmount = null;
       find(f, "savingsGoals", "g_trip").targetAmount = { $float: "NaN" };
     });
-    const { report } = planImport(asExport(fixture));
+    const { report } = plan(asExport(fixture));
     expect(report.errors.map((issue) => `${issue.code} ${issue.id}.${issue.field}`)).toEqual([
       "invalid_amount a_checking.balance",
       "invalid_amount t_food.amount",
@@ -263,7 +305,7 @@ describe("plan", () => {
       find(f, "savingsGoals", "g_trip").targetDate = "2026-06-31";
       find(f, "debts", "d_card").createdAt = "yesterday";
     });
-    expect(planImport(asExport(fixture)).report.errors.map((issue) => `${issue.code} ${issue.id}.${issue.field}`)).toEqual([
+    expect(plan(asExport(fixture)).report.errors.map((issue) => `${issue.code} ${issue.id}.${issue.field}`)).toEqual([
       "invalid_date t_food.date",
       "invalid_date g_trip.targetDate",
       "invalid_date d_card.createdAt",
@@ -280,7 +322,7 @@ describe("plan", () => {
       f.debts!.push({ ...find(f, "debts", "d_card") });
       f.categories!.push({ name: "no id" });
     });
-    const { report } = planImport(asExport(fixture));
+    const { report } = plan(asExport(fixture));
     expect(report.errors.map((issue) => `${issue.code} ${issue.table} ${issue.id ?? "-"}.${issue.field ?? "-"}`).sort()).toEqual([
       "duplicate_id debts d_card.-",
       "invalid_document categories -.-",
@@ -293,7 +335,7 @@ describe("plan", () => {
   });
 
   it("reports tables it doesn't know", () => {
-    const { report } = planImport(asExport({ ...convexFixture(), legacyNotes: [{ _id: "n", _creationTime: 1 }] }));
+    const { report } = plan(asExport({ ...convexFixture(), legacyNotes: [{ _id: "n", _creationTime: 1 }] }));
     expect(issues(report.warnings, "unknown_table")).toEqual([{ code: "unknown_table", table: "legacyNotes", detail: "1 documents not migrated" }]);
   });
 });
@@ -342,6 +384,20 @@ describe("write", () => {
     );
     expect(Number(row!.ts)).toBe(Math.floor(find(fixture, "accounts", "a_checking")._creationTime as number));
     expect(formatSummary(report)).toMatch(/committed/);
+  });
+
+  it("checks balances of a transfer whose destination account was deleted, with both legs left", async () => {
+    const fixture = variant((f) => {
+      f.accounts = f.accounts!.filter((account) => account._id !== "a_savings");
+      f.savingsGoals = f.savingsGoals!.filter((goal) => goal._id !== "g_trip");
+      f.goalContributions = [];
+    });
+    const report = await importFixture(fixture);
+    expect(report.committed).toBe(true);
+    // The outgoing leg lost its destination, the incoming leg its account: still read as outgoing (-2000).
+    const [outgoing] = await testDb().select().from(transactions).where(eq(transactions.id, id("transactions", fixture, "t_out")));
+    expect(outgoing).toMatchObject({ destinationAccountId: null, linkedTransactionId: id("transactions", fixture, "t_in") });
+    expect(report.verification!.balances.changedByImport).toEqual([{ account: "a_checking", convex: 45_300, imported: 47_500 }]);
   });
 
   it("gives the same rows on a re-run into a fresh database", async () => {
@@ -405,14 +461,40 @@ describe("write", () => {
     expect(report.verification).toMatchObject({ ok: true, rowCounts: { users: { planned: 3, written: 3 } } });
     expect(await testDb().select().from(users)).toHaveLength(0);
     // Without a database: only the export is checked.
-    const offline = await runImport({ source: await writeExportDir(convexFixture()), dryRun: true });
+    const offline = await runImport({ source: await writeExportDir(convexFixture()), dryRun: true, acceptLoneLegs: true });
     expect(offline).toMatchObject({ committed: false, verification: null });
     expect(importSucceeded(offline)).toBe(true);
   });
 
   it("refuses to write a plan with errors", async () => {
-    const plan = planImport(asExport(variant((f) => void (find(f, "accounts", "a_bob").balance = 0.1))));
-    await expect(writeImport(testDb(), plan, { dryRun: true })).rejects.toThrow(/plan has errors/);
+    const invalid = plan(asExport(variant((f) => void (find(f, "accounts", "a_bob").balance = 0.1))));
+    await expect(writeImport(testDb(), invalid, { dryRun: true })).rejects.toThrow(/plan has errors/);
+  });
+});
+
+describe("errors", () => {
+  it("never show a database error's message, only its codes", () => {
+    const pg = Object.assign(new Error("insert or update violates foreign key"), {
+      name: "PostgresError",
+      code: "23503",
+      constraint_name: "transactions_account_id_fk",
+      table_name: "transactions",
+    });
+    const wrapped = Object.assign(new Error("Failed query: insert into users ... params: ana@example.com,df9a91:b7b6"), {
+      name: "DrizzleQueryError",
+      query: "insert into users",
+      params: ["ana@example.com"],
+      cause: pg,
+    });
+    expect(describeError(wrapped)).toBe("database error, code 23503, constraint_name transactions_account_id_fk, table_name transactions");
+    const dropped = Object.assign(new Error("Failed query: ... params: ana@example.com"), {
+      name: "DrizzleQueryError",
+      query: "insert into users",
+      cause: Object.assign(new Error("write CONNECTION_CLOSED"), { code: "CONNECTION_CLOSED" }),
+    });
+    expect(describeError(dropped)).toBe("database error, code CONNECTION_CLOSED");
+    expect(describeError(new ImportRefusedError("database is not empty (users)"))).toBe("database is not empty (users)");
+    expect(describeError(new Error("export.zip: not a zip file"))).toBe("export.zip: not a zip file");
   });
 });
 
@@ -447,7 +529,7 @@ describe("CLI", () => {
   it("dry-runs an export zip against a database and prints the report", async () => {
     const source = await writeExportZip(convexFixture());
     const reportFile = join(source, "..", "report.json");
-    const { stderr } = await run("bun", [cli, source, "--dry-run", "--report", reportFile], {
+    const { stderr } = await run("bun", [cli, source, "--dry-run", "--accept-lone-legs", "--report", reportFile], {
       env: { ...process.env, DATABASE_URL: testDatabaseUrl() },
     });
     expect(stderr).toMatch(/Convex import \(dry-run\): nothing committed/);

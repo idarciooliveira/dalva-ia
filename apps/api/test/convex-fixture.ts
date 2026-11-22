@@ -170,45 +170,95 @@ export async function writeExportZip(tables: Record<string, Doc[]>): Promise<str
   return path;
 }
 
-/** A minimal zip writer (deflate, no zip64), enough to feed the reader. */
-export function zip(files: [string, Buffer][]): Buffer {
-  const locals: Buffer[] = [];
+/**
+ * A minimal zip writer (deflate), enough to feed the reader. `dataDescriptor`
+ * writes sizes and CRC after the data, as streaming writers do; `zip64` puts
+ * sizes and offsets in zip64 fields and saturates every classic field.
+ */
+export function zip(files: [string, Buffer][], options: { dataDescriptor?: boolean; zip64?: boolean } = {}): Buffer {
+  const parts: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
+  const U32 = 0xffffffff;
   for (const [name, content] of files) {
     const nameBytes = Buffer.from(name, "utf8");
-    const compressed = name.endsWith("/") ? Buffer.alloc(0) : deflateRawSync(content);
-    const method = name.endsWith("/") ? 0 : 8;
+    const directory = name.endsWith("/");
+    const compressed = directory ? Buffer.alloc(0) : deflateRawSync(content);
+    const method = directory ? 0 : 8;
+    const flags = options.dataDescriptor ? 0x08 : 0;
     const crc = crc32(content);
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(45, 4);
+    local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(method, 8);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(compressed.length, 18);
-    local.writeUInt32LE(content.length, 22);
+    if (!options.dataDescriptor) {
+      local.writeUInt32LE(crc, 14);
+      local.writeUInt32LE(compressed.length, 18);
+      local.writeUInt32LE(content.length, 22);
+    }
     local.writeUInt16LE(nameBytes.length, 26);
-    locals.push(local, nameBytes, compressed);
+    const record = [local, nameBytes, compressed];
+    if (options.dataDescriptor) {
+      const descriptor = Buffer.alloc(16);
+      descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(crc, 4);
+      descriptor.writeUInt32LE(compressed.length, 8);
+      descriptor.writeUInt32LE(content.length, 12);
+      record.push(descriptor);
+    }
+    parts.push(...record);
 
+    const extra = Buffer.alloc(options.zip64 ? 28 : 0);
+    if (options.zip64) {
+      extra.writeUInt16LE(0x0001, 0);
+      extra.writeUInt16LE(24, 2);
+      extra.writeBigUInt64LE(BigInt(content.length), 4);
+      extra.writeBigUInt64LE(BigInt(compressed.length), 12);
+      extra.writeBigUInt64LE(BigInt(offset), 20);
+    }
     const entry = Buffer.alloc(46);
     entry.writeUInt32LE(0x02014b50, 0);
-    entry.writeUInt16LE(20, 4);
-    entry.writeUInt16LE(20, 6);
+    entry.writeUInt16LE(45, 4);
+    entry.writeUInt16LE(45, 6);
+    entry.writeUInt16LE(flags, 8);
     entry.writeUInt16LE(method, 10);
     entry.writeUInt32LE(crc, 16);
-    entry.writeUInt32LE(compressed.length, 20);
-    entry.writeUInt32LE(content.length, 24);
+    entry.writeUInt32LE(options.zip64 ? U32 : compressed.length, 20);
+    entry.writeUInt32LE(options.zip64 ? U32 : content.length, 24);
     entry.writeUInt16LE(nameBytes.length, 28);
-    entry.writeUInt32LE(offset, 42);
-    central.push(entry, nameBytes);
-    offset += 30 + nameBytes.length + compressed.length;
+    entry.writeUInt16LE(extra.length, 30);
+    entry.writeUInt32LE(options.zip64 ? U32 : offset, 42);
+    central.push(entry, nameBytes, extra);
+    offset += record.reduce((sum, part) => sum + part.length, 0);
   }
   const directory = Buffer.concat(central);
+  const tail: Buffer[] = [];
+  if (options.zip64) {
+    const record = Buffer.alloc(56);
+    record.writeUInt32LE(0x06064b50, 0);
+    record.writeBigUInt64LE(44n, 4);
+    record.writeUInt16LE(45, 12);
+    record.writeUInt16LE(45, 14);
+    record.writeBigUInt64LE(BigInt(files.length), 24);
+    record.writeBigUInt64LE(BigInt(files.length), 32);
+    record.writeBigUInt64LE(BigInt(directory.length), 40);
+    record.writeBigUInt64LE(BigInt(offset), 48);
+    const locator = Buffer.alloc(20);
+    locator.writeUInt32LE(0x07064b50, 0);
+    locator.writeBigUInt64LE(BigInt(offset + directory.length), 8);
+    locator.writeUInt32LE(1, 16);
+    tail.push(record, locator);
+  }
   const end = Buffer.alloc(22);
   end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(files.length, 8);
-  end.writeUInt16LE(files.length, 10);
-  end.writeUInt32LE(directory.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return Buffer.concat([...locals, directory, end]);
+  if (options.zip64) {
+    end.writeUInt16LE(0xffff, 4);
+    end.writeUInt16LE(0xffff, 6);
+  }
+  end.writeUInt16LE(options.zip64 ? 0xffff : files.length, 8);
+  end.writeUInt16LE(options.zip64 ? 0xffff : files.length, 10);
+  end.writeUInt32LE(options.zip64 ? U32 : directory.length, 12);
+  end.writeUInt32LE(options.zip64 ? U32 : offset, 16);
+  return Buffer.concat([...parts, directory, ...tail, end]);
 }

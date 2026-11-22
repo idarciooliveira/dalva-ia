@@ -1,7 +1,7 @@
 import type { Database } from "../db/client";
 import { readConvexExport } from "./convex-export";
 import { planImport, type IssueCode, type PlanReport } from "./plan";
-import { writeImport, type Verification } from "./write";
+import { ImportRefusedError, writeImport, type Verification } from "./write";
 
 export interface ImportReport {
   mode: "dry-run" | "import";
@@ -19,6 +19,7 @@ export interface RunImportOptions {
   db?: Database;
   dryRun: boolean;
   dropInvalid?: boolean;
+  acceptLoneLegs?: boolean;
 }
 
 /**
@@ -28,7 +29,7 @@ export interface RunImportOptions {
  */
 export async function runImport(options: RunImportOptions): Promise<ImportReport> {
   if (!options.dryRun && !options.db) throw new Error("a real run needs a database");
-  const plan = planImport(await readConvexExport(options.source), { dropInvalid: options.dropInvalid });
+  const plan = planImport(await readConvexExport(options.source), { dropInvalid: options.dropInvalid, acceptLoneLegs: options.acceptLoneLegs });
   const mode = options.dryRun ? "dry-run" : "import";
   if (plan.report.errors.length > 0 || !options.db) return { mode, committed: false, plan: plan.report, verification: null };
   const verification = await writeImport(options.db, plan, { dryRun: options.dryRun });
@@ -56,7 +57,7 @@ export function formatSummary(report: ImportReport): string {
     lines.push(`  error ${issue.code} ${issue.table}${issue.id ? ` ${issue.id}` : ""}${issue.field ? `.${issue.field}` : ""}${issue.detail ? `: ${issue.detail}` : ""}`);
   }
   if (plan.errors.length > 20) lines.push(`  ... ${plan.errors.length - 20} more errors in the JSON report`);
-  if (plan.errors.length > 0) lines.push("Fix the errors in Convex (or pass --drop-invalid for the required-reference ones) and run again.");
+  if (plan.errors.length > 0) lines.push("Fix the errors in Convex (or pass --drop-invalid for the required-reference ones, --accept-lone-legs for the lone outgoing legs) and run again.");
   if (verification) {
     lines.push(`Verification: ${verification.ok ? "ok" : "FAILED"}`);
     for (const failure of verification.failures) lines.push(`  ${failure}`);
@@ -70,4 +71,27 @@ export function formatSummary(report: ImportReport): string {
     );
   }
   return lines.join("\n");
+}
+
+/**
+ * A failed run, for the terminal. A database error is never shown by its
+ * message: Drizzle's quotes the query and its parameters (emails, password
+ * hashes). Only its codes, constraint and table are.
+ */
+export function describeError(error: unknown): string {
+  if (error instanceof ImportRefusedError) return error.message;
+  const chain: Record<string, unknown>[] = [];
+  for (let current = error, depth = 0; typeof current === "object" && current !== null && depth < 5; depth++) {
+    chain.push(current as Record<string, unknown>);
+    current = (current as { cause?: unknown }).cause;
+  }
+  const fromDatabase = chain.some(
+    (e) => e.name === "DrizzleQueryError" || e.name === "PostgresError" || "query" in e || "parameters" in e,
+  );
+  if (!fromDatabase) return error instanceof Error ? error.message : String(error);
+  const safe = (key: string) => {
+    const value = chain.map((e) => e[key]).find((v) => typeof v === "string" && /^[A-Za-z0-9_.-]{1,63}$/.test(v));
+    return value === undefined ? [] : [`${key} ${value as string}`];
+  };
+  return ["database error", ...safe("code"), ...safe("constraint_name"), ...safe("table_name")].join(", ");
 }

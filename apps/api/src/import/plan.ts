@@ -4,8 +4,8 @@
  * PR 13):
  *
  * - Users: one per email, lowercased; Convex users whose emails differ only by
- *   case become one user (the one that signed in last keeps its password,
- *   profile and active chat link; every finance row moves to it). The name
+ *   case become one user (the one with a password that signed in last keeps
+ *   its password, profile and active chat link; every finance row moves to it). The name
  *   comes from the Convex user, else the profile, else the email's local part.
  * - Passwords: the Lucia Scrypt hash of the `password` auth account, copied
  *   as-is when it is `<32 hex>:<128 hex>` (Better Auth verifies it unchanged).
@@ -16,6 +16,8 @@
  *   nullable column. On the three NOT NULL ones (`subcategories.category_id`,
  *   `goal_contributions.goal_id`, `debt_payments.debt_id`) it fails the run,
  *   or with `dropInvalid` drops the row.
+ * - A lone outgoing transfer leg whose destination is gone fails the run (the
+ *   new code would read it as incoming), unless `acceptLoneLegs`.
  * - Rows whose owner doesn't exist are skipped (nobody could see them).
  * - Agent chat state, sessions, link codes and idempotency keys are not
  *   migrated: users sign in once, chats start fresh. Linked chats are.
@@ -40,6 +42,11 @@ import { importId, nameUuid } from "./ids";
 export interface PlanOptions {
   /** Drop rows whose NOT NULL reference is dangling or another user's, instead of failing. */
   dropInvalid?: boolean;
+  /**
+   * Import lone outgoing transfer legs whose destination is gone (they read as incoming afterwards, so deleting one
+   * reverses the wrong sign) with a warning, instead of failing.
+   */
+  acceptLoneLegs?: boolean;
 }
 
 export type IssueCode =
@@ -53,6 +60,7 @@ export type IssueCode =
   | "missing_email"
   | "dangling_required_ref"
   | "cross_user_required_ref"
+  | "lone_outgoing_leg_without_destination"
   // Warnings: reported, the run goes on.
   | "dropped_dangling_required_ref"
   | "dropped_cross_user_required_ref"
@@ -61,7 +69,7 @@ export type IssueCode =
   | "nulled_dangling_ref"
   | "nulled_cross_user_ref"
   | "lone_transfer_leg"
-  | "lone_outgoing_leg_without_destination"
+  | "accepted_lone_outgoing_leg"
   | "user_without_password"
   | "extra_password_account"
   | "ignored_auth_account"
@@ -163,6 +171,7 @@ const ERROR_CODES = new Set<IssueCode>([
   "missing_email",
   "dangling_required_ref",
   "cross_user_required_ref",
+  "lone_outgoing_leg_without_destination",
 ]);
 
 const ACCOUNT_TYPES = ["bank", "savings", "credit_card", "cash", "e_wallet", "loan", "investment"] as const;
@@ -475,13 +484,20 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   }
   /** Convex id of the user that survives a merge, per Convex user id. */
   const primaryOf = new Map<string, string>();
+  /** The row belongs to a user that survived a merge (or was never merged). */
+  const ownedByPrimary = (doc: ConvexDoc) => primaryOf.get(doc.userId as string) === doc.userId;
 
   for (const [email, group] of byEmail) {
-    // The one that signed in last (else the newest) keeps its credential, profile and active chat link.
-    const rank = (user: ConvexDoc) => [lastSignIn.get(user._id) ?? -1, user._creationTime] as const;
+    // One with a usable password, then the one that signed in last, then the newest, keeps its credential,
+    // profile and active chat link: picking one without a password would lock the person out.
+    const rank = (user: ConvexDoc) => {
+      const secret = passwordAccounts.get(user._id)?.secret;
+      return [typeof secret === "string" && PASSWORD_HASH.test(secret) ? 1 : 0, lastSignIn.get(user._id) ?? -1, user._creationTime];
+    };
     const primary = group.reduce((best, user) => {
       const [a, b] = [rank(user), rank(best)];
-      return a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]) ? user : best;
+      const i = a.findIndex((value, index) => value !== b[index]);
+      return i >= 0 && a[i]! > b[i]! ? user : best;
     });
     if (group.length > 1) {
       issues.add({
@@ -493,7 +509,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     }
 
     const fields = new Fields(issues, "users", primary);
-    const name = (fields.optString("name") ?? "").trim() || group.map((user) => profileNames.get(user._id)).find(Boolean) || email.split("@")[0]!;
+    const name = (fields.optString("name") ?? "").trim() || [primary, ...group].map((user) => profileNames.get(user._id)).find(Boolean) || email.split("@")[0]!;
     const image = fields.optString("image");
     const id = idOf("users", primary);
     rows.users.push({
@@ -592,9 +608,8 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     };
     // One profile per user: the merge survivor's own, else the oldest.
     const current = profileByOwner.get(owner);
-    const isPrimary = (profile: ConvexDoc) => primaryOf.get(profile.userId as string) === profile.userId;
     if (current) {
-      const replace = (isPrimary(doc) && !isPrimary(current.doc)) || (isPrimary(doc) === isPrimary(current.doc) && doc._creationTime < current.doc._creationTime);
+      const replace = (ownedByPrimary(doc) && !ownedByPrimary(current.doc)) || (ownedByPrimary(doc) === ownedByPrimary(current.doc) && doc._creationTime < current.doc._creationTime);
       const [kept, dropped] = replace ? [doc, current.doc] : [current.doc, doc];
       issues.add({ code: "duplicate_profile_dropped", table: "userProfiles", id: dropped._id, detail: `kept ${kept._id}` });
       if (!replace) continue;
@@ -609,8 +624,6 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   /* Accounts --------------------------------------------------------------- */
 
   const balances: ImportPlan["balances"] = new Map();
-  /** Convex account id → imported account id, for Convex's balance effects. */
-  const accountIds = new Map<string, string>();
   for (const doc of docsOf("accounts")) {
     const owner = ownerOf("accounts", doc);
     if (!owner) continue;
@@ -631,7 +644,6 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     };
     rows.accounts.push(row);
     register("accounts", doc._id, { id, userId: owner });
-    accountIds.set(doc._id, id);
     balances.set(id, { convexId: doc._id, balance: row.balance, convexEffect: 0 });
   }
 
@@ -720,14 +732,19 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
       // new code (no destination, no pair), so deleting it would reverse it with the wrong sign.
       const wasOutgoing = typeof doc.destinationAccountId === "string";
       issues.add({
-        code: wasOutgoing && row.destinationAccountId === null ? "lone_outgoing_leg_without_destination" : "lone_transfer_leg",
+        code:
+          wasOutgoing && row.destinationAccountId === null
+            ? options.acceptLoneLegs
+              ? "accepted_lone_outgoing_leg"
+              : "lone_outgoing_leg_without_destination"
+            : "lone_transfer_leg",
         table: "transactions",
         id: doc._id,
       });
     }
 
     // Convex's balance effect, on the account the Convex row pointed at (whatever its owner).
-    const account = typeof doc.accountId === "string" ? accountIds.get(doc.accountId) : undefined;
+    const account = typeof doc.accountId === "string" ? targets.get("accounts")?.get(doc.accountId)?.id : undefined;
     const balance = account ? balances.get(account) : undefined;
     if (balance && fields.ok) balance.convexEffect += convexEffect(type, amount, typeof doc.destinationAccountId === "string");
   }
@@ -854,10 +871,9 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   // At most one active link per (channel, external user) and per (user, channel), as the partial unique indexes
   // require. A case merge can give one user two; keep the survivor's own link, else the newest, and unlink the
   // others at the kept link's time.
-  const fromPrimary = (doc: ConvexDoc) => primaryOf.get(doc.userId as string) === doc.userId;
   const keepOrder = [...identities].sort(
     (a, b) =>
-      Number(fromPrimary(b.doc)) - Number(fromPrimary(a.doc)) ||
+      Number(ownedByPrimary(b.doc)) - Number(ownedByPrimary(a.doc)) ||
       b.row.linkedAt.getTime() - a.row.linkedAt.getTime() ||
       b.doc._creationTime - a.doc._creationTime,
   );

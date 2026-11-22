@@ -22,7 +22,7 @@ const DOCUMENTS_FILE = /^([A-Za-z][A-Za-z0-9_]*)\/documents\.jsonl$/;
 
 export async function readConvexExport(path: string): Promise<ConvexExport> {
   const info = await stat(path);
-  const files = info.isDirectory() ? await readDirectory(path) : readZip(await readFile(path));
+  const files = info.isDirectory() ? await readDirectory(path) : readZip(await readFile(path), (name) => DOCUMENTS_FILE.test(name));
   const tables: ConvexExport = new Map();
   for (const [name, content] of files) {
     const match = DOCUMENTS_FILE.exec(name);
@@ -72,20 +72,25 @@ const LOCAL_HEADER = 0x04034b50;
 const U32_MAX = 0xffffffff;
 
 /**
- * Every file of a zip (stored or deflated, zip64 included), CRC-checked. Enough
- * for Convex exports; encrypted and multi-disk archives are refused.
+ * The files of a zip that `wanted` selects (default all; stored or deflated,
+ * zip64 and data descriptors included), CRC-checked. Enough for Convex
+ * exports; encrypted and multi-disk archives are refused.
  */
-export function readZip(zip: Buffer): Map<string, Buffer> {
+export function readZip(zip: Buffer, wanted: (name: string) => boolean = () => true): Map<string, Buffer> {
   const eocd = findEocd(zip);
   let count = zip.readUInt16LE(eocd + 10);
   let directoryOffset: number = zip.readUInt32LE(eocd + 16);
+  let disks = [zip.readUInt16LE(eocd + 4), zip.readUInt16LE(eocd + 6)];
   const locator = eocd - 20;
   if (locator >= 0 && zip.readUInt32LE(locator) === ZIP64_EOCD_LOCATOR) {
+    // Zip64 writers may saturate every field of the classic record: the zip64 one is authoritative.
     const zip64 = Number(zip.readBigUInt64LE(locator + 8));
     if (zip.readUInt32LE(zip64) !== ZIP64_EOCD) throw new Error("zip: bad zip64 end of central directory");
+    disks = [zip.readUInt32LE(zip64 + 16), zip.readUInt32LE(zip64 + 20)];
     count = Number(zip.readBigUInt64LE(zip64 + 32));
     directoryOffset = Number(zip.readBigUInt64LE(zip64 + 48));
   }
+  if (disks.some((disk) => disk !== 0)) throw new Error("zip: multi-disk archives are not supported");
 
   const files = new Map<string, Buffer>();
   let at = directoryOffset;
@@ -122,7 +127,7 @@ export function readZip(zip: Buffer): Map<string, Buffer> {
     }
     at += 46 + nameLength + extraLength + commentLength;
 
-    if (name.endsWith("/")) continue;
+    if (name.endsWith("/") || !wanted(name)) continue;
     if (flags & 0x1) throw new Error(`zip: ${name} is encrypted`);
     if (zip.readUInt32LE(localOffset) !== LOCAL_HEADER) throw new Error(`zip: bad local header for ${name}`);
     const dataStart = localOffset + 30 + zip.readUInt16LE(localOffset + 26) + zip.readUInt16LE(localOffset + 28);
@@ -140,10 +145,7 @@ export function readZip(zip: Buffer): Map<string, Buffer> {
 function findEocd(zip: Buffer): number {
   // The record is 22 bytes plus a comment of up to 64 KiB, at the very end.
   for (let at = zip.length - 22; at >= Math.max(0, zip.length - 22 - 0xffff); at--) {
-    if (zip.readUInt32LE(at) === EOCD) {
-      if (zip.readUInt16LE(at + 4) !== 0 || zip.readUInt16LE(at + 6) !== 0) throw new Error("zip: multi-disk archives are not supported");
-      return at;
-    }
+    if (zip.readUInt32LE(at) === EOCD) return at;
   }
   throw new Error("not a zip file (no end of central directory)");
 }
