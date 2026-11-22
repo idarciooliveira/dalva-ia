@@ -77,7 +77,7 @@ export function transactionChanges(original: Transaction, draft: TransactionDraf
   }
   for (const field of ["description", "note", "payee"] as const) {
     const next = draft[field].trim();
-    if (next !== (original[field] ?? "")) changes[field] = next === "" ? null : next;
+    if (next !== (original[field] ?? "").trim()) changes[field] = next === "" ? null : next;
   }
   return changes;
 }
@@ -108,7 +108,7 @@ export function transferChanges(
   if (draft.date !== original.date) changes.date = draft.date;
   for (const field of ["description", "note"] as const) {
     const next = draft[field].trim();
-    if (next !== (original[field] ?? "")) changes[field] = next === "" ? null : next;
+    if (next !== (original[field] ?? "").trim()) changes[field] = next === "" ? null : next;
   }
   return changes;
 }

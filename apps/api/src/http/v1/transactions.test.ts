@@ -198,6 +198,16 @@ describe("api/v1 transactions: writes", () => {
     // An adjustment without a subcategory may "clear" it.
     const adjustment = await asAlice.transactions.create({ type: "adjustment", amount: usd(-50), accountId: aliceAccount, date: "2026-01-02" });
     await asAlice.transactions.update({ id: adjustment.transaction.id, subcategoryId: null, note: "fix" });
+    // A new category with an explicit null subcategory.
+    const transport = await seedCategory(alice, { name: "Transport" });
+    await asAlice.transactions.update({ id: transaction.id, subcategoryId: groceries });
+    const moved = await asAlice.transactions.update({ id: transaction.id, categoryId: transport, subcategoryId: null });
+    expect(moved.transaction).toMatchObject({ categoryId: transport });
+    expect(moved.transaction.subcategoryId).toBeUndefined();
+    // Clearing doesn't get around the managed-row rule.
+    const savings = await seedAccount(alice, { name: "Savings" });
+    const { transfer } = await asAlice.transfers.create({ amount: usd(10), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-03", note: "x" });
+    await expectApiError(asAlice.transactions.update({ id: transfer.outgoingId, note: null }), "conflict");
   });
 
   it("deletes a plain row and restores the balance", async () => {

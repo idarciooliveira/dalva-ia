@@ -115,7 +115,8 @@ function TransactionsContent() {
         </Button>
       </EmptyState>
     );
-  } else if (result.isPending) {
+  } else if (result.isPending || (result.isPlaceholderData && transactions.length === 0)) {
+    // The previous search's empty result isn't this one's answer.
     body = <TransactionsListSkeleton />;
   } else if (result.isError && transactions.length === 0) {
     body = (
@@ -138,7 +139,12 @@ function TransactionsContent() {
   } else {
     body = (
       <>
-        <div role="list" aria-label="Transactions" aria-busy={result.isFetching || undefined} className="space-y-3">
+        <div
+          role="list"
+          aria-label="Transactions"
+          aria-busy={result.isFetching || undefined}
+          className={result.isPlaceholderData ? "space-y-3 opacity-60 transition-opacity" : "space-y-3"}
+        >
           {transactions.map((tx) => (
             <TransactionRow
               key={tx.id}
@@ -170,7 +176,7 @@ function TransactionsContent() {
           <div className="mt-4 flex justify-center">
             <Button
               variant="outline"
-              disabled={result.isFetchingNextPage}
+              disabled={result.isFetchingNextPage || result.isPlaceholderData}
               onClick={() => void result.fetchNextPage()}
             >
               {result.isFetchingNextPage ? "Loading..." : "Load more"}

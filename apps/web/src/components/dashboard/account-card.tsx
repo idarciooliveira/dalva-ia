@@ -109,6 +109,8 @@ interface AccountCardsSectionProps {
   currency: string;
   holderName?: string;
   status?: CardStatus;
+  /** Why the totals show "—" (e.g. accounts in several currencies). */
+  totalsError?: string;
 }
 
 export function AccountCardsSection({
@@ -118,6 +120,7 @@ export function AccountCardsSection({
   currency,
   holderName,
   status,
+  totalsError,
 }: AccountCardsSectionProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   // An account can disappear (archived elsewhere) while its dot was selected.
@@ -227,6 +230,7 @@ export function AccountCardsSection({
           </div>
         </div>
       </div>
+      {totalsError && <p className="text-xs text-muted-foreground">{totalsError}</p>}
     </div>
   );
 }

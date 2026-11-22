@@ -55,7 +55,7 @@ export function CardStatusBody({ status }: { status?: CardStatus }) {
   if (status.error) return <CardError error={status.error} onRetry={status.onRetry} />;
   if (status.loading) {
     return (
-      <div className="flex min-h-32 flex-col justify-center gap-3 sm:min-h-36" aria-busy="true" aria-label="Loading">
+      <div role="status" className="flex min-h-32 flex-col justify-center gap-3 sm:min-h-36" aria-busy="true" aria-label="Loading">
         <Skeleton className="h-6 w-1/2" />
         <Skeleton className="h-4 w-full" />
         <Skeleton className="h-4 w-3/4" />

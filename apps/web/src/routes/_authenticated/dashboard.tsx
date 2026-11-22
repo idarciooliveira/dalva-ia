@@ -17,9 +17,11 @@ import {
   dashboardGoalsQuery,
   debtSummaryQuery,
   netWorthQuery,
+  recentTransactionsQuery,
   transactionSummaryQuery,
 } from "@/lib/api/dashboard";
 import { buildRecentTransactions } from "@/lib/dashboard-data";
+import { apiErrorMessage } from "@/lib/api/errors";
 import type { DebtPaydownData, GoalsProgressData, NetWorthData } from "@/lib/mock-dashboard-data";
 
 // Budgets have no backend module yet: this card stays on mock data.
@@ -49,6 +51,7 @@ function DashboardPage() {
   );
   const categoriesResult = useQuery(categoriesQuery({ includeArchived: true }));
   const summaryResult = useQuery(transactionSummaryQuery(currentMonth));
+  const recentResult = useQuery(recentTransactionsQuery(currentMonth));
   const netWorthResult = useQuery(netWorthQuery());
   const goalsResult = useQuery(dashboardGoalsQuery());
   const debtsResult = useQuery(debtSummaryQuery());
@@ -57,11 +60,11 @@ function DashboardPage() {
   const recentTransactions = useMemo(
     () =>
       buildRecentTransactions(
-        summary?.recentTransactions ?? [],
+        recentResult.data?.items ?? [],
         new Map<string, string>((accountsResult.data?.items ?? []).map((a) => [a.id, a.name])),
         new Map<string, string>((categoriesResult.data?.items ?? []).map((c) => [c.id, c.name])),
       ),
-    [summary, accountsResult.data, categoriesResult.data],
+    [recentResult.data, accountsResult.data, categoriesResult.data],
   );
 
   const netWorth: NetWorthData = netWorthResult.data
@@ -132,9 +135,14 @@ function DashboardPage() {
               income={summary ? summary.totalIncome.amountMinor : null}
               expenses={summary ? summary.totalExpenses.amountMinor : null}
               currency={summary?.totalIncome.currency ?? baseCurrency}
+              totalsError={
+                summaryResult.isError && !summary
+                  ? apiErrorMessage(summaryResult.error, "Couldn't load this month's totals.")
+                  : undefined
+              }
               holderName={profile.name?.toUpperCase() ?? "DALVA USER"}
             />
-            <RecentTransactionsCard transactions={recentTransactions} status={cardStatus(summaryResult)} />
+            <RecentTransactionsCard transactions={recentTransactions} status={cardStatus(recentResult)} />
           </div>
 
           {/* --- Right column --- */}

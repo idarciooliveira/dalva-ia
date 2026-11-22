@@ -133,6 +133,8 @@ export function TransactionFormDialog({
   const { mutateAsync: createTransaction, isPending: isCreating } = useApiMutation("transactions", "create");
   const { mutateAsync: updateTransaction, isPending: isUpdating } = useApiMutation("transactions", "update");
   const isPending = isCreating || isUpdating;
+  // The account select (and the amount's precision) need the accounts.
+  const accountsLoading = accountsResult.isPending && accountsResult.fetchStatus !== "idle";
 
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const selectedCategory = filteredCategories.find((c) => c.id === categoryId);
@@ -244,7 +246,14 @@ export function TransactionFormDialog({
     );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // A save in flight finishes in this dialog: its result must not land in the next one opened.
+        if (!next && isPending) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-md gap-0 overflow-hidden p-0 max-sm:max-w-[calc(100vw-1rem)]">
         {/* Header */}
         <DialogHeader className="px-4 pt-4 pb-0 sm:px-5 sm:pt-5">
@@ -547,6 +556,9 @@ export function TransactionFormDialog({
           )}
 
           {/* ── Error ── */}
+          {accountsResult.isError && !accountsResult.data && (
+            <FormError message={apiErrorMessage(accountsResult.error, "Couldn't load your accounts. Close and try again.")} />
+          )}
           <FormError id={ERROR_ID} message={error} />
         </div>
 
@@ -558,7 +570,7 @@ export function TransactionFormDialog({
               variant="outline"
               size="default"
               className="w-full sm:w-auto"
-              disabled={isPending}
+              disabled={isPending || accountsLoading}
               onClick={() => void handleSubmit(true)}
             >
               {isPending ? "Saving..." : "Save & new"}
@@ -569,7 +581,7 @@ export function TransactionFormDialog({
             variant="accent"
             size="default"
             className="w-full sm:w-auto"
-            disabled={isPending}
+            disabled={isPending || accountsLoading}
             onClick={() => void handleSubmit(false)}
           >
             {isPending ? "Saving..." : isEdit ? "Save changes" : "Save"}

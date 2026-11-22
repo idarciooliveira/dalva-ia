@@ -235,14 +235,14 @@ test.describe("Transactions (apps/api)", () => {
     await expect(list.getByRole("listitem")).toHaveCount(26);
 
     // Type filter.
-    await page.getByRole("button", { name: /filters/i }).click();
+    await page.getByRole("button", { name: /^filters/i }).click();
     await page.getByRole("combobox", { name: "Type" }).click();
     await page.getByRole("option", { name: "Income" }).click();
     await page.keyboard.press("Escape");
     await expect(list.getByRole("listitem")).toHaveCount(1);
 
     // An inverted date range is caught before it reaches the API.
-    await page.getByRole("button", { name: /filters/i }).click();
+    await page.getByRole("button", { name: /^filters/i }).click();
     await page.getByLabel("From", { exact: true }).fill("2026-03-01");
     await page.getByLabel("To", { exact: true }).fill("2026-01-01");
     await expect(page.getByText("The start date is after the end date.").first()).toBeVisible();

@@ -26,7 +26,8 @@ const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> 
   "profile.completeOnboarding": [queryKeys.profile],
   // Balances feed net worth and the account filters of the transaction pages.
   "accounts.create": [queryKeys.accounts.all, queryKeys.reports.all],
-  "accounts.update": [queryKeys.accounts.all, queryKeys.transactions.all],
+  // The type moves a balance between assets and debts in net worth.
+  "accounts.update": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
   "accounts.adjust": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
   "accounts.archive": [queryKeys.accounts.all, queryKeys.reports.all],
   "accounts.restore": [queryKeys.accounts.all, queryKeys.reports.all],

@@ -42,6 +42,7 @@ describe("ledger invalidation", () => {
   it("keeps every ledger and dashboard key under a prefix some write invalidates", () => {
     expect(startsWith(ledgerKeys.search({ q: "x" }), queryKeys.transactions.all())).toBe(true);
     expect(startsWith(ledgerKeys.transfer("t1"), queryKeys.transactions.all())).toBe(true);
+    expect(startsWith(dashboardKeys.recent("2026-01"), queryKeys.transactions.all())).toBe(true);
     for (const key of [
       dashboardKeys.summary("2026-01"),
       dashboardKeys.spending("2026-01"),

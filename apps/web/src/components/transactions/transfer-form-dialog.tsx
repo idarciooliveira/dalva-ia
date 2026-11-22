@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Account } from "@mpf/finance-contract";
+import type { Account, Transfer } from "@mpf/finance-contract";
 import { Calculator, CalendarDays, FileText, Landmark, StickyNote, ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -52,8 +52,12 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [showDatePicker, setShowDatePicker] = useState(false);
-  /** The transfer the fields were filled from: a background refetch must not overwrite edits. */
-  const [filledFrom, setFilledFrom] = useState<string | null>(null);
+  /**
+   * The transfer as the fields were filled from it. A background refetch neither
+   * overwrites the edits nor moves the baseline the update is diffed against.
+   */
+  const [filled, setFilled] = useState<{ id: string; transfer: Transfer } | null>(null);
+  const filledFrom = filled?.id ?? null;
 
   const datePreset = getDatePreset(date);
   const amountRef = useRef<HTMLInputElement>(null);
@@ -73,7 +77,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
       setDescription("");
       setNote("");
     }
-    setFilledFrom(null);
+    setFilled(null);
     setShowDatePicker(false);
     setError("");
   }, [open, isEdit, transferId]);
@@ -87,7 +91,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
     setDate(transfer.date);
     setDescription(transfer.description ?? "");
     setNote(transfer.note ?? "");
-    setFilledFrom(transferId);
+    setFilled({ id: transferId!, transfer });
   }, [open, transfer, transferId, filledFrom]);
 
   const { mutateAsync: createTransfer, isPending: isCreating } = useApiMutation("transfers", "create");
@@ -151,9 +155,9 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
     };
 
     try {
-      if (transferId && transfer) {
-        // Only what changed; an emptied description or note is cleared (`null`).
-        const changes = transferChanges(transfer, { ...fields, description, note });
+      if (transferId && filled) {
+        // Only what changed since the form was filled; an emptied description or note is cleared (`null`).
+        const changes = transferChanges(filled.transfer, { ...fields, description, note });
         if (Object.keys(changes).length > 0) await updateTransfer({ id: transferId, ...changes });
         onOpenChange(false);
         return;
@@ -191,7 +195,14 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
     );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // A save in flight finishes in this dialog: its result must not land in the next one opened.
+        if (!next && isPending) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-md gap-0 overflow-hidden p-0 max-sm:max-w-[calc(100vw-1rem)]">
         {/* Header */}
         <DialogHeader className="px-4 pt-4 pb-0 sm:px-5 sm:pt-5">
@@ -210,7 +221,7 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
             />
           </div>
         ) : loadingTransfer ? (
-          <div className="space-y-4 px-4 py-5 sm:px-5" aria-busy="true" aria-label="Loading transfer">
+          <div role="status" className="space-y-4 px-4 py-5 sm:px-5" aria-busy="true" aria-label="Loading transfer">
             <Skeleton className="h-10 w-full" />
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-8 w-full" />
@@ -347,6 +358,9 @@ export function TransferFormDialog({ open, onOpenChange, transferId }: TransferF
               </div>
 
               {/* ── Error ── */}
+              {accountsResult.isError && !accountsResult.data && (
+                <FormError message={apiErrorMessage(accountsResult.error, "Couldn't load your accounts. Close and try again.")} />
+              )}
               <FormError id={ERROR_ID} message={error} />
             </div>
 

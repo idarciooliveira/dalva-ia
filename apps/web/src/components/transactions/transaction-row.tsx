@@ -22,8 +22,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { useQueryClient } from "@tanstack/react-query";
+
 import { useApiMutation } from "@/lib/api/mutations";
-import { apiErrorMessage } from "@/lib/api/errors";
+import { apiErrorMessage, isApiError } from "@/lib/api/errors";
+import { queryKeys } from "@/lib/api/keys";
 import { cn } from "@/lib/utils";
 import { formatDate } from "@/lib/format";
 import { formatMinor } from "@/lib/money";
@@ -70,7 +73,16 @@ export function TransactionRow({ transaction, accountName, categoryName, onEdit,
   const isAdjustment = transaction.type === "adjustment";
   const title = transaction.description || transaction.payee || "Untitled";
 
-  const onError = (fallback: string) => (error: Error) => setDeleteError(apiErrorMessage(error, fallback));
+  const queryClient = useQueryClient();
+  const onError = (fallback: string) => (error: Error) => {
+    setDeleteError(apiErrorMessage(error, fallback));
+    // Already gone (deleted elsewhere): drop the stale row and balances.
+    if (isApiError(error, "not_found")) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.transactions.all() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.accounts.all() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.reports.all() });
+    }
+  };
   const deleteTransaction = useApiMutation("transactions", "delete", {
     onMutate: () => setDeleteError(null),
     onError: onError("Couldn't delete the transaction. Try again."),

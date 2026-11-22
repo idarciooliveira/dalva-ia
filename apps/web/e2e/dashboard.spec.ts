@@ -19,6 +19,28 @@ test.describe("Dashboard (apps/api)", () => {
     await expect(page.getByText("No debts tracked yet.")).toBeVisible();
   });
 
+  test("accounts in another currency: recent rows stay, reports say why they're missing", async ({ page }) => {
+    await registerAndCompleteOnboarding(page);
+    const { account } = await apiWrite<{ account: { id: string } }>(page, "POST", "/accounts", {
+      name: "Euro Account",
+      type: "bank",
+      balance: { amountMinor: 0, currency: "EUR" },
+    });
+    await apiWrite(page, "POST", "/transactions", {
+      type: "expense",
+      amount: { amountMinor: 1_999, currency: "EUR" },
+      accountId: account.id,
+      date: today(),
+      description: "Paris lunch",
+    });
+
+    await page.goto("/dashboard");
+    await expect(page.getByText("Paris lunch")).toBeVisible();
+    await expect(page.getByText("-€19.99")).toBeVisible();
+    await expect(page.getByText("Reports across multiple currencies are not supported yet").first()).toBeVisible();
+    await expect(page.getByRole("group", { name: "Total income" })).toContainText("—");
+  });
+
   test("reflects transactions, goals and debts, and updates after a quick-action write", async ({ page }) => {
     await registerAndCompleteOnboarding(page);
     const main = await accountId(page, "Main Checking");
@@ -49,7 +71,9 @@ test.describe("Dashboard (apps/api)", () => {
     const expenses = page.getByRole("group", { name: "Total expenses" });
     await expect(expenses).toContainText("$42.50");
     await expect(page.getByText("Dinner out")).toBeVisible();
-    await expect(page.getByText("Food & Dining").first()).toBeVisible();
+    const spending = page.locator('[data-slot="card"]', { hasText: "Spending by Category" });
+    await expect(spending).toContainText("Food & Dining");
+    await expect(spending).toContainText("$42.50");
     // Net worth: 3,000.00 - 42.50 in accounts, minus the 7,500.00 debt.
     await expect(page.getByText("-$4,542.50")).toBeVisible();
   });
