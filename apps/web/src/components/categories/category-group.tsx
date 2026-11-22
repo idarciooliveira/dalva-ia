@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import type { Category, Subcategory } from "@mpf/finance-contract";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,12 +8,12 @@ import { CategoryRow } from "./category-row";
 interface CategoryGroupProps {
   title: string;
   type: "income" | "expense";
-  categories: Doc<"categories">[];
-  subcategoriesByParent: Map<string, Doc<"subcategories">[]>;
+  categories: Category[];
+  subcategoriesByParent: Map<string, Subcategory[]>;
   onCreateCategory: () => void;
-  onEditCategory: (category: Doc<"categories">) => void;
-  onAddSubcategory: (category: Doc<"categories">) => void;
-  onEditSubcategory: (subcategory: Doc<"subcategories">) => void;
+  onEditCategory: (category: Category) => void;
+  onAddSubcategory: (category: Category) => void;
+  onEditSubcategory: (subcategory: Subcategory) => void;
 }
 
 export function CategoryGroup({
@@ -70,9 +70,9 @@ export function CategoryGroup({
         ) : (
           categories.map((category) => (
             <CategoryRow
-              key={category._id}
+              key={category.id}
               category={category}
-              subcategories={subcategoriesByParent.get(category._id) ?? []}
+              subcategories={subcategoriesByParent.get(category.id) ?? []}
               onEdit={() => onEditCategory(category)}
               onAddSubcategory={() => onAddSubcategory(category)}
               onEditSubcategory={onEditSubcategory}

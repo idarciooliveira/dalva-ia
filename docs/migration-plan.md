@@ -49,11 +49,12 @@ apps/api/drizzle/   SQL migrations
 
 ## Production freeze
 
-Before PR 9, cut `legacy-convex` from `main`:
+Done with PR 9. `legacy-convex` was cut from `main` at `cb229df`, the commit Vercel production serves.
 
-- Vercel production branch → `legacy-convex`.
+- `apps/web/vercel.json` sets `git.deploymentEnabled.main: false`, so merges to `main` no longer deploy. Production stays on the `cb229df` build. (The Vercel API can't change the production branch; the dashboard can, if preferred.)
+- Hotfix: push to `legacy-convex`, then promote its preview deployment (`vercel promote <url>`).
 - `convex deploy` only from `legacy-convex`.
-- Pin `AGENT_IMAGE_TAG` on the VPS to a short SHA.
+- The agent image still builds from `main`. Agent code must stay Convex-compatible until cutover; pin `AGENT_IMAGE_TAG` on the VPS to a short SHA to be safe.
 
 Hotfixes for production go to `legacy-convex` and are ported to `main` by hand.
 
@@ -144,7 +145,7 @@ Cut `legacy-convex` first (see Production freeze).
 - Vite dev proxy `/api` → `localhost:4000`.
 - Contract client + React Query layer: query-key factory, invalidation map per mutation, generated `Idempotency-Key` per write.
 - Better Auth client replaces `useConvexAuth` and `useAuthActions`: login, register, guard, sign out.
-- Money: the contract speaks decimal strings; adapt the format helpers.
+- Money: the contract speaks ISO minor units (`{ amountMinor, currency }`); adapt the format helpers.
 - Swap onboarding, accounts, categories.
 - `bun run setup` and `bun run dev` start Postgres, API, web, agent.
 

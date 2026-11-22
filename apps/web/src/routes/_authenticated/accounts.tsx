@@ -1,8 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
-import { convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { Account } from "@mpf/finance-contract";
 import { useState } from "react";
 import { Plus, Wallet, Archive } from "lucide-react";
 
@@ -11,6 +9,8 @@ import { AccountFormDialog } from "@/components/accounts/account-form-dialog";
 import { AdjustBalanceDialog } from "@/components/accounts/adjust-balance-dialog";
 import { AccountsListSkeleton } from "@/components/accounts/accounts-list-skeleton";
 import { Button } from "@/components/ui/button";
+import { ErrorState } from "@/components/error-state";
+import { accountsQuery } from "@/lib/api/queries";
 
 export const Route = createFileRoute("/_authenticated/accounts")({
   component: AccountsPage,
@@ -37,22 +37,19 @@ function AccountsPage() {
 function AccountsContent() {
   const [showArchived, setShowArchived] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [editAccount, setEditAccount] = useState<Doc<"accounts"> | null>(null);
-  const [adjustAccount, setAdjustAccount] = useState<Doc<"accounts"> | null>(
-    null,
-  );
+  const [editAccount, setEditAccount] = useState<Account | null>(null);
+  const [adjustAccount, setAdjustAccount] = useState<Account | null>(null);
 
-  const { data: accounts, isLoading } = useQuery(
-    convexQuery(api.accounts.listAccounts, {
-      includeArchived: showArchived,
-    }),
-  );
+  const accountsResult = useQuery({
+    ...accountsQuery({ includeArchived: showArchived }),
+    placeholderData: keepPreviousData,
+  });
 
-  if (isLoading) {
+  if (accountsResult.isPending) {
     return <AccountsListSkeleton />;
   }
 
-  const sortedAccounts = [...(accounts ?? [])].sort((a, b) =>
+  const sortedAccounts = [...(accountsResult.data?.items ?? [])].sort((a, b) =>
     a.name.localeCompare(b.name),
   );
 
@@ -73,12 +70,13 @@ function AccountsContent() {
             variant={showArchived ? "secondary" : "outline"}
             size="default"
             onClick={() => setShowArchived(!showArchived)}
+            aria-pressed={showArchived}
             className="relative"
           >
             <Archive className="mr-1.5 size-4" />
             Archived
             {showArchived && (
-              <span className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
+              <span aria-hidden="true" className="ml-1.5 inline-flex size-5 items-center justify-center rounded-full bg-accent text-[11px] font-semibold text-accent-foreground">
                 1
               </span>
             )}
@@ -96,7 +94,13 @@ function AccountsContent() {
       </div>
 
       {/* List */}
-      {sortedAccounts.length === 0 ? (
+      {accountsResult.isError && !accountsResult.data ? (
+        <ErrorState
+          error={accountsResult.error}
+          fallback="Couldn't load your accounts."
+          onRetry={() => void accountsResult.refetch()}
+        />
+      ) : sortedAccounts.length === 0 ? (
           <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 sm:py-16">
           <Wallet className="mb-3 size-10 text-muted-foreground/50" />
           <p className="text-sm font-medium text-muted-foreground">
@@ -107,10 +111,10 @@ function AccountsContent() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div role="list" aria-label="Accounts" className="space-y-3">
           {sortedAccounts.map((account) => (
             <AccountRow
-              key={account._id}
+              key={account.id}
               account={account}
               onEdit={() => setEditAccount(account)}
               onAdjustBalance={() => setAdjustAccount(account)}
@@ -135,13 +139,13 @@ function AccountsContent() {
         account={editAccount}
       />
 
-      {/* Adjust Balance Dialog */}
+      {/* Adjust Balance Dialog: the live row, so the delta is taken from the current balance */}
       <AdjustBalanceDialog
         open={adjustAccount !== null}
         onOpenChange={(open) => {
           if (!open) setAdjustAccount(null);
         }}
-        account={adjustAccount}
+        account={sortedAccounts.find((a) => a.id === adjustAccount?.id) ?? adjustAccount}
       />
     </>
   );

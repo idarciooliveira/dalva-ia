@@ -2,6 +2,7 @@ import { Wallet, ArrowRight, ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { getCategoryIcon } from "@/lib/category-icons";
+import { ErrorState } from "@/components/error-state";
 import { StepHeader } from "./step-header";
 
 interface DefaultCategory {
@@ -13,6 +14,8 @@ interface DefaultCategory {
 
 export function CategoriesStep({
   defaultCategories,
+  loadError = null,
+  onRetryLoad,
   selectedCategories,
   onSelectedChange,
   onFinish,
@@ -20,6 +23,9 @@ export function CategoriesStep({
   isSubmitting,
 }: {
   defaultCategories: DefaultCategory[];
+  /** The default list couldn't be loaded. */
+  loadError?: unknown;
+  onRetryLoad?: () => void;
   selectedCategories: string[];
   onSelectedChange: (names: string[]) => void;
   onFinish: () => void;
@@ -57,7 +63,12 @@ export function CategoriesStep({
         subtitle="We'll start you with these defaults. You can customize later."
       />
 
+      {loadError != null && (
+        <ErrorState error={loadError} fallback="Couldn't load the categories." onRetry={onRetryLoad} />
+      )}
+
       {/* Select all / deselect all */}
+      {defaultCategories.length > 0 && (
       <div className="flex justify-end">
         <button
           type="button"
@@ -67,6 +78,7 @@ export function CategoriesStep({
           {allSelected ? "Deselect all" : "Select all"}
         </button>
       </div>
+      )}
 
       {/* Income */}
       <div className="space-y-3">
@@ -107,7 +119,7 @@ export function CategoriesStep({
       </div>
 
       <div className="flex gap-3">
-        <Button variant="outline" className="flex-1" onClick={onBack}>
+        <Button variant="outline" className="flex-1" onClick={onBack} disabled={isSubmitting}>
           <ArrowLeft className="size-4" />
           Back
         </Button>

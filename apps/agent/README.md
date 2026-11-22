@@ -30,14 +30,12 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 ## Local dev
 
 ```bash
-bun run setup   # writes .env.local (local FINANCE_API_URL + service key), creates .env if missing
+bun run setup   # apps/api/.env.local with the service key, creates .env if missing
 # fill TELEGRAM_BOT_TOKEN and an LLM key in apps/agent/.env, keep TELEGRAM_MODE=polling
-bun run dev     # or bun run dev:agent with the backend already running
+bun run dev     # or bun run dev:agent with the API already running
 ```
 
-Bun loads `.env.local` over `.env`, so the bot uses the local backend even if `.env` points elsewhere. Delete `.env.local` to use the values in `.env`.
-
-To run the bot against the new backend (`apps/api`) instead of Convex: set `FINANCE_API_SERVICE_KEY` in `apps/api/.env.local`, start it (`bun run dev:api`), then `bun run dev:agent:api`. It takes `FINANCE_API_URL` (`http://localhost:$PORT`) and the service key from `apps/api/.env.local`, over the agent's own env files. Plain `dev:agent` keeps using Convex.
+`dev:agent` runs the bot against the local `apps/api`: it takes `FINANCE_API_URL` (`http://localhost:$PORT`) and `FINANCE_API_SERVICE_KEY` from `apps/api/.env.local`, over the agent's own env files. `bun run dev:agent:convex` uses the agent's env files instead (a Convex deployment in `FINANCE_API_URL`).
 
 Polling calls `deleteWebhook` first (pending updates are kept), so don't point a dev bot at a production webhook. Use a separate bot for dev.
 

@@ -1,8 +1,5 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
+import type { Subcategory } from "@mpf/finance-contract";
 import {
   MoreVertical,
   Archive,
@@ -20,10 +17,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
+import { FormError } from "@/components/error-state";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 
 interface SubcategoryRowProps {
-  subcategory: Doc<"subcategories">;
+  subcategory: Subcategory;
   parentColor: string;
   onEdit: () => void;
 }
@@ -35,17 +35,30 @@ export function SubcategoryRow({
 }: SubcategoryRowProps) {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
-  const { mutate: archiveSub } = useMutation({
-    mutationFn: useConvexMutation(api.categories.archiveSubcategory),
+  const [actionError, setActionError] = useState<string | null>(null);
+  const handlers = (failure: string) => ({
+    onMutate: () => setActionError(null),
+    onError: (error: Error) => setActionError(apiErrorMessage(error, failure)),
   });
-  const { mutate: restoreSub } = useMutation({
-    mutationFn: useConvexMutation(api.categories.restoreSubcategory),
-  });
-  const { mutate: deleteSub } = useMutation({
-    mutationFn: useConvexMutation(api.categories.deleteSubcategory),
-  });
+  const { mutate: archiveSub, isPending: isArchiving } = useApiMutation(
+    "subcategories",
+    "archive",
+    handlers("Couldn't archive the subcategory. Try again."),
+  );
+  const { mutate: restoreSub, isPending: isRestoring } = useApiMutation(
+    "subcategories",
+    "restore",
+    handlers("Couldn't restore the subcategory. Try again."),
+  );
+  const { mutate: deleteSub, isPending: isDeleting } = useApiMutation(
+    "subcategories",
+    "delete",
+    handlers("Couldn't delete the subcategory. Try again."),
+  );
+  const isBusy = isArchiving || isRestoring || isDeleting;
 
   return (
+    <div>
     <div
       className={cn(
         "flex min-h-11 items-center gap-2.5 rounded-xl px-3 py-2.5 pl-8 hover:bg-muted/50 sm:min-h-12 sm:gap-3 sm:px-4 sm:py-3 sm:pl-10",
@@ -82,17 +95,18 @@ export function SubcategoryRow({
             Edit
           </DropdownMenuItem>
           {subcategory.archived ? (
-            <DropdownMenuItem onClick={() => restoreSub({ id: subcategory._id })}>
+            <DropdownMenuItem disabled={isBusy} onClick={() => restoreSub({ id: subcategory.id })}>
               <ArchiveRestore className="mr-2 size-4" />
               Restore
             </DropdownMenuItem>
           ) : (
-            <DropdownMenuItem onClick={() => archiveSub({ id: subcategory._id })}>
+            <DropdownMenuItem disabled={isBusy} onClick={() => archiveSub({ id: subcategory.id })}>
               <Archive className="mr-2 size-4" />
               Archive
             </DropdownMenuItem>
           )}
           <DropdownMenuItem
+            disabled={isBusy}
             className="text-destructive focus:text-destructive"
             onClick={() => setDeleteDialogOpen(true)}
           >
@@ -107,8 +121,10 @@ export function SubcategoryRow({
         onOpenChange={setDeleteDialogOpen}
         title="Delete subcategory"
         description="Delete this subcategory? This cannot be undone."
-        onConfirm={() => deleteSub({ id: subcategory._id })}
+        onConfirm={() => deleteSub({ id: subcategory.id })}
       />
+    </div>
+    <FormError message={actionError} className="mt-1 pl-8 sm:pl-10" />
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useConvexAuth } from "convex/react";
-import { useAuthActions } from "@convex-dev/auth/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -13,7 +12,9 @@ import { AuthErrorAlert } from "@/components/auth-error-alert";
 import { AuthPageLayout } from "@/components/auth/auth-page-layout";
 import { GoogleOAuthButton } from "@/components/auth/google-oauth-button";
 import { OrDivider } from "@/components/auth/or-divider";
-import { parseConvexAuthError } from "@/lib/auth-errors";
+import { authClient, resetUserCache } from "@/lib/auth-client";
+import { authErrorMessage } from "@/lib/auth-errors";
+import { useSession } from "@/hooks/use-session";
 
 export const Route = createFileRoute("/login")({ component: LoginPage });
 
@@ -33,8 +34,9 @@ type LoginValues = z.infer<typeof loginSchema>;
 /* -------------------------------------------------------------------------- */
 
 function LoginPage() {
-  const { signIn } = useAuthActions();
-  const { isAuthenticated } = useConvexAuth();
+  const queryClient = useQueryClient();
+  const { data: session } = useSession();
+  const isAuthenticated = session != null;
   const router = useRouter();
   const [authError, setAuthError] = useState<string | null>(null);
 
@@ -57,13 +59,19 @@ function LoginPage() {
   async function onSubmit(data: LoginValues) {
     setAuthError(null);
     try {
-      await signIn("password", {
+      const { error } = await authClient.signIn.email({
         email: data.email,
         password: data.password,
-        flow: "signIn",
       });
+      if (error) {
+        setAuthError(authErrorMessage(error, "signIn"));
+        return;
+      }
+      // The effect above navigates once the new session is read. If that read fails, the
+      // user is still signed in: go on, and the guard there shows the error with a retry.
+      await resetUserCache(queryClient).catch(() => router.navigate({ to: "/dashboard" }));
     } catch (error) {
-      setAuthError(parseConvexAuthError(error, "signIn"));
+      setAuthError(authErrorMessage(error, "signIn"));
     }
   }
 

@@ -6,50 +6,32 @@ import { SubcategoryFormDialog } from "./subcategory-form-dialog";
 const createSubcategoryMock = vi.fn();
 const updateSubcategoryMock = vi.fn();
 
-vi.mock("@convex-dev/react-query", () => ({
-  useConvexMutation: vi.fn((mutation: unknown) => mutation),
-}));
-
-vi.mock("@tanstack/react-query", () => ({
-  useMutation: vi.fn(({ mutationFn }: { mutationFn: unknown }) => {
-    if (mutationFn === "createSubcategoryMutation") {
+vi.mock("@/lib/api/mutations", () => ({
+  useApiMutation: vi.fn((group: string, op: string) => {
+    if (group === "subcategories" && op === "create") {
       return { mutateAsync: createSubcategoryMock, isPending: false };
     }
 
-    if (mutationFn === "updateSubcategoryMutation") {
+    if (group === "subcategories" && op === "update") {
       return { mutateAsync: updateSubcategoryMock, isPending: false };
     }
 
-    throw new Error("Unexpected mutation");
+    throw new Error(`Unexpected mutation ${group}.${op}`);
   }),
 }));
 
-vi.mock("@mpf/backend/convex/_generated/api", () => ({
-  api: {
-    categories: {
-      createSubcategory: "createSubcategoryMutation",
-      updateSubcategory: "updateSubcategoryMutation",
-    },
-  },
-}));
-
 const parentCategory = {
-  _id: "cat_1",
-  _creationTime: 0,
-  userId: "user_1",
+  id: "cat_1",
   name: "Food",
   type: "expense",
   icon: "utensils",
   color: "#F97316",
-  archived: false,
   isDefault: false,
   sortOrder: 0,
 };
 
 const subcategory = {
-  _id: "sub_1",
-  _creationTime: 0,
-  userId: "user_1",
+  id: "sub_1",
   categoryId: "cat_1",
   name: "Groceries",
   archived: false,
@@ -121,6 +103,30 @@ describe("SubcategoryFormDialog", () => {
     });
     expect(createSubcategoryMock).not.toHaveBeenCalled();
     expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("shows the API error inside the dialog and keeps it open", async () => {
+    const { FinanceApiError } = await import("@mpf/finance-contract");
+    createSubcategoryMock.mockRejectedValue(
+      new FinanceApiError("not_found", "Category not found", 404),
+    );
+    const onOpenChange = vi.fn();
+
+    render(
+      <SubcategoryFormDialog
+        open
+        onOpenChange={onOpenChange}
+        parentCategory={parentCategory as never}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Subcategory name"), {
+      target: { value: "Dining Out" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add subcategory" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe("Category not found");
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 
   it("keeps create actions disabled for blank names", () => {
