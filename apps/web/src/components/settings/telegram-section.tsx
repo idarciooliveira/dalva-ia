@@ -27,19 +27,14 @@ import { chatLinksQuery } from "@/lib/api/queries";
 /** How often the page checks whether the bot redeemed the code (no live updates until SSE). */
 const LINK_POLL_MS = 3_000;
 
-/** Telegram bot usernames: 5-32 chars of [A-Za-z0-9_]. Anything else is treated as not configured. */
-function validBotUsername(value: string | undefined): string | null {
-  const name = value?.replace(/^@/, "").trim();
-  return name && /^[A-Za-z0-9_]{5,32}$/.test(name) ? name : null;
-}
-
 const linkedDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
 export function TelegramSection() {
   const links = useQuery(chatLinksQuery());
   const telegram = links.data?.items.find((link) => link.channel === "telegram");
-  const bot = validBotUsername(links.data?.botUsernames?.telegram);
+  // Validated by the API config (TELEGRAM_BOT_USERNAME); absent when unset.
+  const bot = links.data?.botUsernames?.telegram ?? null;
 
   return (
     <section aria-labelledby="telegram-heading" className="rounded-xl border border-border">

@@ -5,7 +5,6 @@ import { Archive, ArchiveRestore, Edit, PlusCircle, Trash2 } from "lucide-react"
 
 import { ErrorState, FormError } from "@/components/error-state";
 import { InlineConfirm } from "@/components/inline-confirm";
-import { goalPercent, goalProgressColor } from "@/components/goals/goal-card";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ProgressBar } from "@/components/ui/progress-bar";
@@ -14,6 +13,7 @@ import { useApiMutation } from "@/lib/api/mutations";
 import { goalContributionsQuery } from "@/lib/api/queries";
 import { formatMonthYear } from "@/lib/dates";
 import { formatDate } from "@/lib/format";
+import { goalPercent, goalProgressColor } from "@/lib/goals";
 import { formatMinor } from "@/lib/money";
 
 interface GoalDetailDialogProps {
@@ -32,7 +32,6 @@ export function GoalDetailDialog({ goal, open, onOpenChange, onEdit, onContribut
   const currency = goal.targetAmount.currency;
   const remaining = Math.max(0, goal.targetAmount.amountMinor - goal.currentAmount.amountMinor);
 
-
   const close = () => onOpenChange(false);
   const { mutate: archiveGoal, isPending: archiving } = useApiMutation("goals", "archive", {
     onMutate: () => setError(null),
@@ -50,8 +49,7 @@ export function GoalDetailDialog({ goal, open, onOpenChange, onEdit, onContribut
     onError: (err) => setError(apiErrorMessage(err, "Couldn't delete the goal. Try again.")),
   });
   const busy = archiving || restoring || deleting;
-  // Not while deleting: the delete invalidates the goals prefix, and this list would refetch a 404.
-  const contributions = useQuery({ ...goalContributionsQuery(goal.id), enabled: open && !deleting });
+  const contributions = useQuery({ ...goalContributionsQuery(goal.id), enabled: open });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -140,7 +138,6 @@ export function GoalDetailDialog({ goal, open, onOpenChange, onEdit, onContribut
             )}
           </div>
         </div>
-
       </DialogContent>
     </Dialog>
   );

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Debt } from "@mpf/finance-contract";
+import type { Debt, DebtType } from "@mpf/finance-contract";
 import { Calendar, CreditCard, Landmark, Percent, Wallet } from "lucide-react";
 
 import { AccountPickerHint } from "@/components/account-picker-hint";
@@ -44,7 +44,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
   const digits = fractionDigits(currency);
 
   const [name, setName] = useState("");
-  const [debtType, setDebtType] = useState<Debt["debtType"]>("credit_card");
+  const [debtType, setDebtType] = useState<DebtType>("credit_card");
   const [originalAmount, setOriginalAmount] = useState("");
   const [currentBalance, setCurrentBalance] = useState("");
   const [lender, setLender] = useState("");
@@ -63,8 +63,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
     LIABILITY_TYPES,
   );
   // An edited debt may point at an account not listed (archived, or legacy in another currency): keep it selectable.
-  const keepsUnlistedAccount =
-    debt?.linkedAccountId !== undefined && !liabilityAccounts.some((a) => a.id === debt.linkedAccountId);
+  const unlistedAccountId = liabilityAccounts.some((a) => a.id === debt?.linkedAccountId) ? undefined : debt?.linkedAccountId;
 
   const debtId = debt?.id;
   useEffect(() => {
@@ -129,7 +128,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
       linkedAccountId: linkedAccountId === NO_ACCOUNT ? undefined : linkedAccountId,
     };
     // Edits are compared with the debt as the dialog opened with it, not the live (refetched) row.
-    const from = isEdit ? (opened ?? debt) : null;
+    const from = opened ?? debt;
     if (exceedsOriginal(from, fields)) {
       setError("Current balance cannot exceed the original amount");
       return;
@@ -142,7 +141,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
 
     try {
       if (isEdit) {
-        const changes = debtChanges(opened ?? debt, fields);
+        const changes = debtChanges(from ?? debt, fields);
         if (changes) await updateDebt({ id: debt.id, ...changes });
       } else {
         await createDebt(fields);
@@ -222,7 +221,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
 
             <div className="flex items-center gap-3 border-b border-border py-3">
               <Wallet className="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-              <Select value={debtType} onValueChange={(v) => setDebtType(v as Debt["debtType"])}>
+              <Select value={debtType} onValueChange={(v) => setDebtType(v as DebtType)}>
                 <SelectTrigger
                   aria-label="Debt type"
                   className="h-auto w-full min-w-0 border-0 bg-transparent px-2 py-0 text-sm shadow-none ring-0 focus:ring-0"
@@ -303,9 +302,7 @@ export function DebtFormDialog({ open, onOpenChange, debt }: DebtFormDialogProps
                   <SelectContent>
                     {/* Once linked, a debt can switch accounts but not unlink (the API can't clear the field). */}
                     {!debt?.linkedAccountId && <SelectItem value={NO_ACCOUNT}>No linked liability account</SelectItem>}
-                    {keepsUnlistedAccount && debt?.linkedAccountId && (
-                      <SelectItem value={debt.linkedAccountId}>Current account</SelectItem>
-                    )}
+                    {unlistedAccountId && <SelectItem value={unlistedAccountId}>Current account</SelectItem>}
                     {liabilityAccounts.map((account) => (
                       <SelectItem key={account.id} value={account.id}>
                         {account.name}

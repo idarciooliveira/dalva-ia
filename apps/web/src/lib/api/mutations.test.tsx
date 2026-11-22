@@ -92,7 +92,13 @@ describe("useApiMutation invalidation of goal and debt money movements", () => {
     const { result, keys } = render("goalContributions", "add");
     await act(() => result.current.mutateAsync({ goalId: "g1", amount: usd(100), date: "2026-01-01" } as never));
     await waitFor(() =>
-      expect(keys()).toEqual([queryKeys.goals.all(), queryKeys.accounts.all(), queryKeys.transactions.all(), queryKeys.reports.all()]),
+      expect(keys()).toEqual([
+        queryKeys.goalContributions.all(),
+        queryKeys.goals.all(),
+        queryKeys.accounts.all(),
+        queryKeys.transactions.all(),
+        queryKeys.reports.all(),
+      ]),
     );
   });
 
@@ -101,7 +107,13 @@ describe("useApiMutation invalidation of goal and debt money movements", () => {
     const { result, keys } = render("debtPayments", "record");
     await act(() => result.current.mutateAsync({ debtId: "d1", amount: usd(100), date: "2026-01-01", fromAccountId: "a1" } as never));
     await waitFor(() =>
-      expect(keys()).toEqual([queryKeys.debts.all(), queryKeys.accounts.all(), queryKeys.transactions.all(), queryKeys.reports.all()]),
+      expect(keys()).toEqual([
+        queryKeys.debtPayments.all(),
+        queryKeys.debts.all(),
+        queryKeys.accounts.all(),
+        queryKeys.transactions.all(),
+        queryKeys.reports.all(),
+      ]),
     );
     expect(queryKeys.reports.debtSummary().slice(0, 2)).toEqual(queryKeys.reports.all());
   });

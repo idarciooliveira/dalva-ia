@@ -44,7 +44,7 @@ export const goalsQuery = (input: RouteInput<UserRoutes["goals"]["list"]> = {}) 
 
 export const goalContributionsQuery = (goalId: string) =>
   queryOptions({
-    queryKey: queryKeys.goals.contributions(goalId),
+    queryKey: queryKeys.goalContributions.list(goalId),
     queryFn: ({ signal }) => api.goalContributions.list({ goalId }, { signal }),
   });
 
@@ -56,7 +56,7 @@ export const debtsQuery = (input: RouteInput<UserRoutes["debts"]["list"]> = {}) 
 
 export const debtPaymentsQuery = (debtId: string) =>
   queryOptions({
-    queryKey: queryKeys.debts.payments(debtId),
+    queryKey: queryKeys.debtPayments.list(debtId),
     queryFn: ({ signal }) => api.debtPayments.list({ debtId }, { signal }),
   });
 

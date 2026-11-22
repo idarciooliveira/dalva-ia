@@ -63,7 +63,7 @@ export function accountsForBaseCurrency<A extends { type: string; balance: { cur
   baseCurrency: string,
   types?: readonly string[],
 ): { usable: A[]; otherCurrency: number } {
-  const ofType = types ? accounts.filter((a) => types.includes(a.type)) : [...accounts];
+  const ofType = types ? accounts.filter((a) => types.includes(a.type)) : accounts;
   const usable = ofType.filter((a) => a.balance.currency === baseCurrency);
   return { usable, otherCurrency: ofType.length - usable.length };
 }

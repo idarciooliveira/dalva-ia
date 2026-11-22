@@ -4,20 +4,9 @@ import { Target } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { formatMonthYear } from "@/lib/dates";
-import { DEFAULT_GOAL_COLOR } from "@/lib/goals";
+import { DEFAULT_GOAL_COLOR, goalPercent, goalProgressColor } from "@/lib/goals";
 import { formatMinor } from "@/lib/money";
 import { cn } from "@/lib/utils";
-
-/** Saved / target as a whole percentage, at most 100. */
-export function goalPercent(goal: Goal): number {
-  const target = goal.targetAmount.amountMinor;
-  if (target <= 0) return 0;
-  return Math.max(0, Math.min(100, Math.round((goal.currentAmount.amountMinor / target) * 100)));
-}
-
-export function goalProgressColor(percent: number): string {
-  return percent >= 80 ? "bg-wise-positive" : percent >= 50 ? "bg-wise-bright-green" : "bg-chart-2";
-}
 
 interface GoalCardProps {
   goal: Goal;

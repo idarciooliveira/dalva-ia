@@ -99,8 +99,10 @@ export function GoalFormDialog({ open, onOpenChange, goal }: GoalFormDialogProps
       setError("Please enter a valid target amount");
       return;
     }
+    // Edits are compared with the goal as the dialog opened with it, not the live (refetched) row.
+    const from = opened ?? goal;
     // The API can change the date, not clear it: say so instead of closing as if it were saved.
-    if (isEdit && (opened ?? goal).targetDate && !targetDate) {
+    if (from?.targetDate && !targetDate) {
       setError("The target date can be changed but not removed");
       return;
     }
@@ -112,8 +114,7 @@ export function GoalFormDialog({ open, onOpenChange, goal }: GoalFormDialogProps
     const target = { amountMinor, currency };
     try {
       if (isEdit) {
-        // Compared with the goal as the dialog opened with it, not the live (refetched) row.
-        const changes = goalChanges(opened ?? goal, {
+        const changes = goalChanges(from ?? goal, {
           name: name.trim(),
           targetAmount: target,
           targetDate: targetDate || undefined,

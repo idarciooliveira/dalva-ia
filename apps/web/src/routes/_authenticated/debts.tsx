@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { RouteOutput, UserRoutes } from "@mpf/finance-contract";
 import { Archive, CreditCard, Plus } from "lucide-react";
 import { useState } from "react";
 
@@ -39,6 +40,8 @@ function DebtsContent() {
     ...debtsQuery({ includeArchived: showArchived }),
     placeholderData: keepPreviousData,
   });
+  // Started with the list, not after it: the summary only shows once the list has debts.
+  const summary = useQuery(debtSummaryQuery());
 
   const debts = debtsResult.data?.items ?? [];
   const find = (id: string | null) => (id ? (debts.find((d) => d.id === id) ?? null) : null);
@@ -88,7 +91,7 @@ function DebtsContent() {
         </div>
       ) : (
         <>
-          <DebtSummary />
+          <DebtSummary data={summary.data} />
           <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
             {debts.map((debt) => (
               <DebtCard key={debt.id} debt={debt} onClick={() => setDetailDebtId(debt.id)} />
@@ -135,8 +138,7 @@ function DebtsContent() {
 }
 
 /** Totals of the open (unarchived) debts. Hidden while loading, on error, or with nothing open. */
-function DebtSummary() {
-  const { data } = useQuery(debtSummaryQuery());
+function DebtSummary({ data }: { data: RouteOutput<UserRoutes["reports"]["debtSummary"]> | undefined }) {
   if (!data || data.totalOriginal.amountMinor === 0) return null;
 
   const currency = data.totalOriginal.currency;

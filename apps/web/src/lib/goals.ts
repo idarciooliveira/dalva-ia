@@ -2,6 +2,17 @@ import type { Goal } from "@mpf/finance-contract";
 
 export const DEFAULT_GOAL_COLOR = "#a3e635";
 
+/** Saved / target as a whole percentage, at most 100. */
+export function goalPercent(goal: Goal): number {
+  const target = goal.targetAmount.amountMinor;
+  if (target <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((goal.currentAmount.amountMinor / target) * 100)));
+}
+
+export function goalProgressColor(percent: number): string {
+  return percent >= 80 ? "bg-wise-positive" : percent >= 50 ? "bg-wise-bright-green" : "bg-chart-2";
+}
+
 /** What the goal edit form can change. Blank date is `undefined`. */
 export interface GoalFormFields {
   name: string;

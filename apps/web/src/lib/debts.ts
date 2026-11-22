@@ -1,4 +1,4 @@
-import type { Debt } from "@mpf/finance-contract";
+import type { Debt, DebtType } from "@mpf/finance-contract";
 
 export const DEBT_TYPES = [
   { value: "credit_card", label: "Credit card" },
@@ -7,9 +7,9 @@ export const DEBT_TYPES = [
   { value: "student_loan", label: "Student loan" },
   { value: "personal_loan", label: "Personal loan" },
   { value: "other", label: "Other" },
-] as const satisfies ReadonlyArray<{ value: Debt["debtType"]; label: string }>;
+] as const satisfies ReadonlyArray<{ value: DebtType; label: string }>;
 
-export function debtTypeLabel(type: Debt["debtType"]): string {
+export function debtTypeLabel(type: DebtType): string {
   return DEBT_TYPES.find((t) => t.value === type)?.label ?? type;
 }
 
@@ -52,7 +52,7 @@ type Money = { amountMinor: number; currency: string };
 /** A debt as the form builds it: blank optional fields are `undefined`. */
 export interface DebtFormFields {
   name: string;
-  debtType: Debt["debtType"];
+  debtType: DebtType;
   originalAmount: Money;
   currentBalance: Money;
   lender?: string;

@@ -23,12 +23,19 @@ export const queryKeys = {
   goals: {
     all: () => ["api", "goals"] as const,
     list: (input: RouteInput<UserRoutes["goals"]["list"]>) => ["api", "goals", "list", input] as const,
-    contributions: (goalId: string) => ["api", "goals", "contributions", goalId] as const,
+  },
+  // Not under "goals"/"debts": deleting a goal or debt must not refetch its (gone) history.
+  goalContributions: {
+    all: () => ["api", "goalContributions"] as const,
+    list: (goalId: string) => ["api", "goalContributions", goalId] as const,
   },
   debts: {
     all: () => ["api", "debts"] as const,
     list: (input: RouteInput<UserRoutes["debts"]["list"]>) => ["api", "debts", "list", input] as const,
-    payments: (debtId: string) => ["api", "debts", "payments", debtId] as const,
+  },
+  debtPayments: {
+    all: () => ["api", "debtPayments"] as const,
+    list: (debtId: string) => ["api", "debtPayments", debtId] as const,
   },
   reports: {
     all: () => ["api", "reports"] as const,

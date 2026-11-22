@@ -11,7 +11,7 @@ import type { Operations, ServiceOperations } from "./http/operation";
 import { type AppEnv, resolvePrincipal, serviceKeySource, sessionSource, userTokenSource } from "./http/principal";
 import { errorResponse } from "./http/errors";
 import { contractRouter } from "./http/router";
-import { createOperations, serviceOperations as v1ServiceOperations } from "./http/v1";
+import { createOperations, type OperationSettings, serviceOperations as v1ServiceOperations } from "./http/v1";
 import { errorFields, type Logger } from "./log";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -26,8 +26,8 @@ export interface AppOptions {
   serviceKey?: string;
   /** Contract route implementations. Default: every ported `/api/v1` group (tests swap in their own). */
   operations?: Operations;
-  /** Config `TELEGRAM_BOT_USERNAME`: listed with the chat links for the web's deep link. */
-  telegramBotUsername?: string;
+  /** Config the default operations read (`TELEGRAM_BOT_USERNAME` for the web's deep link). */
+  operationSettings?: OperationSettings;
   /** Service route implementations. Default: every ported service group. */
   serviceOperations?: ServiceOperations;
   /** Public origin (config `PUBLIC_URL`): the only origin allowed to post to the auth routes. */
@@ -114,7 +114,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     contractRouter({
       db: options.db,
       logger: options.logger,
-      operations: options.operations ?? createOperations({ telegramBotUsername: options.telegramBotUsername }),
+      operations: options.operations ?? createOperations(options.operationSettings),
       serviceOperations: options.serviceOperations ?? v1ServiceOperations,
       tokens: options.tokens,
     }),
