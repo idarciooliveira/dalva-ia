@@ -58,7 +58,7 @@ export DATABASE_URL=postgres://dalva:dalva@127.0.0.1:55432/dalva
 
 Check that `source.users` in the report matches the user count in the dashboard: a wrong deployment still passes every check. Every error must be fixed in Convex, or accepted with `--drop-invalid` / `--accept-lone-legs`, before the real run. Read `changedByImport`. Also check that `convex export` works while the deployment is paused (step 2); if it doesn't, plan to export right after unpausing with web and agent still down. Then `docker stop dalva-import`.
 
-Bring up the production stack beforehand (the deploy steps in this file; the `backup restore` command and `dalva_backups` volume used below come from them) with an empty database (deploy steps, production hostname and bot) but without routing traffic to it.
+Bring up the production stack beforehand with an empty database (the deploy steps in this file, production hostname and bot) but without routing traffic to it. The `backup restore` command and `dalva_backups` volume used below come from it.
 
 ### 2. Freeze
 
