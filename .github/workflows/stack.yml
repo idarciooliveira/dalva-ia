@@ -13,11 +13,12 @@ on:
       - apps/*/Dockerfile.dockerignore
       - apps/web/Caddyfile
       - apps/api/drizzle/**
-      # What smoke.sh exercises through Caddy: config, auth, cookies, routing.
-      - apps/api/src/main.ts
-      - apps/api/src/app.ts
-      - apps/api/src/config.ts
-      - apps/api/src/auth/**
+      # Code the images bundle: a broken bundle, migration path or route fails here.
+      - apps/api/src/**
+      - apps/agent/src/**
+      - packages/finance-contract/src/**
+      - package.json
+      - bun.lock
       - .dockerignore
       - .github/workflows/images.yml
       - .github/workflows/stack.yml

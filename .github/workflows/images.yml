@@ -23,10 +23,10 @@ on:
     paths: *paths
   workflow_dispatch:
 
-# PRs: one run per branch, newest wins. Pushes: one run per commit. Each push diffs only its
-# own commits, so a cancelled push run would never build what it changed.
+# One run per ref at a time, so :latest only moves forward. A newer push replaces a pending
+# one; pushes diff against the last successful run, so the replaced run's changes still build.
 concurrency:
-  group: images-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: images-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -40,14 +40,30 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
       images: ${{ github.event_name == 'workflow_dispatch' && '["agent","api","web"]' || steps.filter.outputs.changes }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # Pushes: everything since the last successful push run on this branch (falls back to
+      # the push's own `before`). PRs: the PR's files.
+      - id: base
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/images.yml/runs?branch=$GITHUB_REF_NAME&event=push&status=success&per_page=1" \
+            --jq '.workflow_runs[0].head_sha // empty' || true)
+          if [ -z "$sha" ] || ! git cat-file -e "$sha^{commit}" 2>/dev/null; then sha=$BEFORE; fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - id: filter
         if: github.event_name != 'workflow_dispatch'
         uses: dorny/paths-filter@v3
         with:
+          base: ${{ steps.base.outputs.sha }}
           # Same inputs as the old agent-image.yml for the agent.
           filters: |
             agent:

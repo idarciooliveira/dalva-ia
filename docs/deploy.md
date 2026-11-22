@@ -99,7 +99,7 @@ Pin a release by setting each `*_IMAGE_TAG` to a short SHA from its package in G
 
 ## Backup and restore
 
-The `backup` service dumps the database daily at `BACKUP_AT` (UTC) into the `backups` volume as `<db>-YYYYmmdd-HHMMSS.dump` (`pg_dump --format=custom`) and deletes dumps older than `BACKUP_KEEP_DAYS`. The volume is on the same host: copy dumps off it regularly.
+The `backup` service dumps the database daily at `BACKUP_AT` (UTC) into the `backups` volume as `<db>-YYYYmmdd-HHMMSS.dump` (`pg_dump --format=custom`) and deletes dumps more than `BACKUP_KEEP_DAYS` full days old (`find -mtime +N`: 14 keeps 15 dailies). The volume is on the same host: copy dumps off it regularly.
 
 ```bash
 docker compose run --rm backup now                       # dump now

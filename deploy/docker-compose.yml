@@ -54,7 +54,9 @@ services:
     shm_size: 128mb
     stop_grace_period: 30s
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      # Over TCP: the entrypoint's init server listens on the socket only, so a socket
+      # check could pass before the real server accepts connections from migrate.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       start_period: 30s
@@ -252,8 +254,9 @@ services:
         # Explicit `|| return 1`: callers run it under `||`, where `set -e` is off.
         dump() {
           name="$$PGDATABASE-$$(date +%Y%m%d-%H%M%S).dump"
-          rm -f /backups/*.partial
-          pg_dump --format=custom --no-owner --file="/backups/$$name.partial" || return 1
+          # Leftovers of crashed runs only; a concurrent `now` and the schedule never share a name.
+          find /backups -name "*.partial" -type f -mmin +720 -delete
+          pg_dump --format=custom --no-owner --file="/backups/$$name.partial" || { rm -f "/backups/$$name.partial"; return 1; }
           mv "/backups/$$name.partial" "/backups/$$name" || return 1
           find /backups -name "$$PGDATABASE-*.dump" -type f -mtime +"$$BACKUP_KEEP_DAYS" -delete
           echo "{\"level\":\"info\",\"msg\":\"backup_done\",\"file\":\"$$name\",\"bytes\":$$(wc -c < "/backups/$$name")}"
@@ -276,7 +279,7 @@ services:
               today="$$(date +%F)"
               if [ "$$(date +%H:%M)" = "$$BACKUP_AT" ] && [ "$$last" != "$$today" ]; then
                 last="$$today"
-                dump || { rm -f /backups/*.partial; echo "{\"level\":\"error\",\"msg\":\"backup_failed\"}" >&2; }
+                dump || { echo "{\"level\":\"error\",\"msg\":\"backup_failed\"}" >&2; }
               fi
               sleep 20
             done ;;
