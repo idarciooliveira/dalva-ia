@@ -1,6 +1,6 @@
 # Deploy
 
-The whole app runs from one compose stack on the VPS: web (Caddy + SPA), API, agent, Postgres, nightly backup and cloudflared. No open ports. Production still runs the legacy setup (Convex + Vercel + the agent stack in `deploy/agent/`) until cutover: see [Legacy: agent on Convex](#legacy-agent-on-convex).
+The whole app runs from one compose stack on the VPS: web (Caddy + SPA), API, agent, Postgres, nightly backup and cloudflared. No open ports. Production still runs the legacy setup (Convex + Vercel + the agent stack in `deploy/agent/`) until cutover: see [Cutover](#cutover) for the move and [Legacy: agent on Convex](#legacy-agent-on-convex) for the old setup.
 
 ```text
 Cloudflare edge -> tunnel -> cloudflared -> web:8080 (Caddy, single entry)
