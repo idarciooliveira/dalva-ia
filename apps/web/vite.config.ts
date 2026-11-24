@@ -25,7 +25,9 @@ const config = defineConfig(({ mode }) => {
 
   return {
     server: { proxy: apiProxy },
-    preview: { proxy: apiProxy },
+    // The SPA build prerenders its shell through a preview server on `localhost`. In a container, the server
+    // and Bun's fetch can resolve that to different families (::1 vs 127.0.0.1); a fixed IPv4 host avoids it.
+    preview: { host: '127.0.0.1', proxy: apiProxy },
     plugins: [
       devtools(),
       tsconfigPaths({ projects: ['./tsconfig.json'] }),

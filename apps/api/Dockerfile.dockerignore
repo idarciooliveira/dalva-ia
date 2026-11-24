@@ -1,0 +1,15 @@
+# Context filter for apps/api/Dockerfile. Allowlist: everything else stays out of the build.
+*
+!package.json
+!bun.lock
+!tsconfig.json
+!apps/*/package.json
+!packages/*/package.json
+!packages/finance-contract/src
+!apps/api/tsconfig.json
+!apps/api/src
+!apps/api/drizzle
+**/node_modules
+**/*.test.ts
+**/.env
+**/.env.*

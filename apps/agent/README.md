@@ -41,7 +41,7 @@ Polling calls `deleteWebhook` first (pending updates are kept), so don't point a
 
 ## Webhook
 
-`POST /webhooks/telegram`. Requests without the right `X-Telegram-Bot-Api-Secret-Token` get 401. An update gets 200 only once it is stored (claimed) or needs nothing; a full queue, a failed claim, boot recovery or shutdown get 503, so Telegram redelivers it later. Registering the webhook and exposing the port are deploy setup: see [`docs/deploy-agent.md`](../../docs/deploy-agent.md).
+`POST /webhooks/telegram`. Requests without the right `X-Telegram-Bot-Api-Secret-Token` get 401. An update gets 200 only once it is stored (claimed) or needs nothing; a full queue, a failed claim, boot recovery or shutdown get 503, so Telegram redelivers it later. Registering the webhook and exposing the port are deploy setup: see [`docs/deploy.md`](../../docs/deploy.md).
 
 ```bash
 # needs TELEGRAM_BOT_TOKEN, AGENT_PUBLIC_URL (https origin, no path), TELEGRAM_WEBHOOK_SECRET for set; DROP_PENDING_UPDATES=1 optional
@@ -134,6 +134,6 @@ docker build -f apps/agent/Dockerfile -t dalva-agent .
 docker run --env-file apps/agent/.env -p 8080:8080 dalva-agent
 ```
 
-Production runs the GHCR image from `deploy/agent/docker-compose.yml` (see `docs/deploy-agent.md`).
+Production runs the GHCR image from `deploy/agent/docker-compose.yml` until cutover, then from the full stack in `deploy/docker-compose.yml` (see `docs/deploy.md`).
 
 Build from the repo root: the image bundles the service with `@mpf/finance-contract` into one file and runs it on distroless Bun as a non-root user.
