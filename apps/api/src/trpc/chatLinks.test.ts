@@ -135,7 +135,7 @@ describe("chatLinks (web)", () => {
   });
 
   it("names the configured bot, so the web can link to it", async () => {
-    const { app } = testApp({ operationSettings: { telegramBotUsername: "dalva_test_bot" } });
+    const { app } = testApp({ settings: { telegramBotUsername: "dalva_test_bot" } });
     const { web } = await newUser(app);
     expect(await web.chatLinks.list()).toEqual({ items: [], botUsernames: { telegram: "dalva_test_bot" } });
   });

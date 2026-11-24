@@ -10,7 +10,6 @@
       "version": "0.0.1",
       "dependencies": {
         "@ai-sdk/gateway": "^4.0.142",
-        "@mpf/finance-contract": "workspace:*",
         "@mpf/shared": "workspace:*",
         "@openrouter/ai-sdk-provider": "^3.1.0",
         "@trpc/client": "^11.31.1",
@@ -32,7 +31,6 @@
       "version": "0.0.1",
       "dependencies": {
         "@hono/trpc-server": "^0.4.2",
-        "@mpf/finance-contract": "workspace:*",
         "@mpf/shared": "workspace:*",
         "@trpc/server": "^11.31.1",
         "better-auth": "^1.7.25",
@@ -55,7 +53,6 @@
       "version": "0.0.1",
       "dependencies": {
         "@hookform/resolvers": "^5.2.2",
-        "@mpf/finance-contract": "workspace:*",
         "@mpf/shared": "workspace:*",
         "@tanstack/react-devtools": "^0.10.14",
         "@tanstack/react-query": "^5.107.0",
@@ -97,17 +94,6 @@
         "typescript": "^5.7.2",
         "vite": "^7.3.1",
         "vite-tsconfig-paths": "^5.1.4",
-        "vitest": "^4.1.2",
-      },
-    },
-    "packages/finance-contract": {
-      "name": "@mpf/finance-contract",
-      "version": "0.0.1",
-      "dependencies": {
-        "zod": "^4.3.6",
-      },
-      "devDependencies": {
-        "typescript": "^5.8.0",
         "vitest": "^4.1.2",
       },
     },
@@ -346,8 +332,6 @@
     "@mpf/agent": ["@mpf/agent@workspace:apps/agent"],
 
     "@mpf/api": ["@mpf/api@workspace:apps/api"],
-
-    "@mpf/finance-contract": ["@mpf/finance-contract@workspace:packages/finance-contract"],
 
     "@mpf/shared": ["@mpf/shared@workspace:packages/shared"],
 

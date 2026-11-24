@@ -1,6 +1,6 @@
 # @mpf/agent
 
-Telegram bot for DALVA. Bun + Hono, one long-running process. Stateless: events, sessions and messages live in the backend, reached only through `@mpf/finance-contract`.
+Telegram bot for DALVA. Bun + Hono, one long-running process. Stateless: events, sessions and messages live in the backend, reached only through its tRPC API (`src/core/finance.ts`, typed from `@mpf/api`'s `AppRouter`).
 
 ## Env
 
@@ -50,7 +50,7 @@ bun run telegram:webhook:info   # status, never prints token or secret
 bun run telegram:webhook:delete
 ```
 
-`GET /health` returns `{ ok, uptime, mode, accepting, financeApi, queued }`. `accepting` is false during boot recovery and shutdown. `financeApi` is an unauthenticated probe of the API base, cached 15s.
+`GET /health` returns `{ ok, uptime, mode, accepting, financeApi, queued }`. `accepting` is false during boot recovery and shutdown. `financeApi` is an unauthenticated probe of the API's `/health` (up below 500), cached 15s.
 
 ## How an update flows
 
@@ -89,7 +89,7 @@ Offered only when the identity has `finance:write` (`resolve` scopes, checked ev
 
 1. Resolves what it needs with the user's token: the account (its currency), category/subcategory (exist, active, matching type, subcategory under its category), the current row for edits and deletes (`transactions.get`; transfer legs, goal-contribution and debt-payment rows are refused with a pointer to the right tool or the app), goal or debt.
 2. Converts the model's decimal string (`"5000"`, `"12.50"`) with `parseDecimalAmount` in that currency. More decimals than the currency has, zero, signs, separators, or a currency the user named that isn't the account's fail here: no rounding, no conversion. DALVA stores every currency with 2 decimals (value × 100), so a 3-decimal amount like `12.345 KWD` is refused ("only supports 2 decimal places in DALVA for now"); `12.340` is fine. A debt payment whose principal is above the debt's remaining balance is refused with that balance.
-3. Checks the full request against the contract's request schema, so bad input fails at proposal time, not after Confirm.
+3. Stores it as a pending action; the API checks the input against the operation's own schema, so bad input fails at proposal time (`invalid_input` with the issues), not after Confirm.
 4. Builds the summary in code from the validated input and the looked-up names, in the language the model passes (`pt`/`en`): `Despesa · 5 000,00 AOA · Alimentação › Restaurantes · BAI Conta Ordem · hoje`. The model never writes it. What will be written is always shown in full (amounts, new values, descriptions, payees, notes); only context about an existing row is cut (names to 20 characters, then dropped) to fit the backend's 500 characters. Edits list the changes first, as `field: old → new`; old values are cut, then dropped, before anything else. When the changes alone can't fit, the proposal is refused and the model asks the user to change fewer things at once.
 5. Calls `agentPendingActions.create` with `clientKey = <eventId>:0` and returns `{ status: "awaiting_confirmation", summary }` (no action id) to the model.
 
@@ -136,4 +136,4 @@ docker run --env-file apps/agent/.env -p 8080:8080 dalva-agent
 
 Production runs the GHCR image in the compose stack, `deploy/docker-compose.yml` (see `docs/deploy.md`).
 
-Build from the repo root: the image bundles the service with `@mpf/finance-contract` into one file and runs it on distroless Bun as a non-root user.
+Build from the repo root: the image bundles the service with `@mpf/shared` into one file (only types come from `@mpf/api`) and runs it on distroless Bun as a non-root user.

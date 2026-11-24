@@ -76,7 +76,7 @@ const t = initTRPC.context<TrpcContext>().create({
 
 export const router = t.router;
 
-/** Outermost: `DomainError`, input and known database errors → a `TRPCError` with the v1 code (see errors.ts). */
+/** Outermost: `DomainError`, input and known database errors → a `TRPCError` with the API code (see errors.ts). */
 const mapErrors = t.middleware(async ({ next }) => {
   const result = await next();
   if (result.ok) return result;

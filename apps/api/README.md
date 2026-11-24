@@ -19,9 +19,9 @@ Config is validated at boot (`src/config.ts`); a bad variable is named in the er
 
 Better Auth, email and password, mounted at `/api/auth/*` (`src/auth/auth.ts`). Sessions are httpOnly, SameSite=Lax cookies (`Secure` when `PUBLIC_URL` is https) that last 30 days and renew daily while in use. Web and API share one origin behind the proxy, so auth writes posted from any other origin are refused. Rate limits on sign-in and sign-up are per client address and need `CLIENT_IP_HEADER`, a header the proxy overwrites (required in production, off locally).
 
-Requests under `/api/v1/*` get a principal from `src/http/principal.ts`: one middleware turns the request into "who is calling, with what scopes". Sources, first match wins:
+Every API request gets a principal from `src/http/principal.ts` when its tRPC context is built: "who is calling, with what scopes". Sources, first match wins:
 
-- service key (`src/auth/service-key.ts`, config `FINANCE_API_SERVICE_KEY`): the chat agent's own credential for the service routes, compared in constant time. Goes first, since it is a bearer credential too; any other bearer value falls through to the user-token source. Unset (allowed outside production): service routes answer 401.
+- service key (`src/auth/service-key.ts`, config `FINANCE_API_SERVICE_KEY`): the chat agent's own credential for the service procedures, compared in constant time. Goes first, since it is a bearer credential too; any other bearer value falls through to the user-token source. Unset (allowed outside production): service procedures answer 401.
 - bearer user token (`src/auth/tokens.ts`): HS256 JWT with `sub`, `scope`, `aud: "finance-api"`, `exp` and, for a linked chat, `cid`. The user isn't looked up: tokens are only minted for existing users, and users are never deleted. A `cid` token is re-checked against its channel identity inside each request's transaction: unlinked is `unauthorized`, read-only blocks writes with `forbidden`.
 - session cookie: full finance access (`finance:read`, `finance:write`). Never tried when the request has an `Authorization` header.
 
@@ -35,32 +35,37 @@ Password hashes of imported users (Lucia `Scrypt`) use the same format as Better
 - Hand-written SQL (anything Drizzle can't express): `bunx drizzle-kit generate --custom --name <what>` in `apps/api`, then fill the empty file.
 - Conventions are in the header of `schema.ts`: UUIDv7 ids from Postgres, `user_id` on every user-owned row, money as `bigint` minor units, `date` for calendar dates, enums for closed sets, deferred foreign keys.
 
-## Contract routes (`/api/v1`)
+## API (`/api/trpc`)
 
-`src/http/router.ts` serves every route of `@mpf/finance-contract` in this order: credential of the route's kind (401) → implemented (404) → scope (403) → `Idempotency-Key` on finance writes (400) → body (JSON object, 64 KiB cap, read as a stream) and the route's request schema (400) → handler → `{ ok: true, data }`. A credential that is present but invalid is refused by the principal middleware first, on any `/api/v1` path; paths that match no contract route fall through to the app's 404. Responses carry `Cache-Control: no-store`.
+tRPC v11, mounted with `@hono/trpc-server` (`src/trpc/mount.ts`). The router in `src/trpc/router.ts` is the whole API and its only contract: clients import `type AppRouter` from `@mpf/api/trpc`, a types-only export (a runtime import of server code doesn't resolve, so nothing of the server reaches a bundle). Procedure paths are `group.op` (`transactions.create`); pending actions store them as operation names.
 
-Web-only routes (`webOnly` in the contract: profile, account and category management, chat links, `transfers.get`) answer `forbidden` to chat tokens (`cid`), so the agent can't reach them. Routes marked `idempotent: false` (the chat-link writes) take no `Idempotency-Key`: a stored replay of `chatLinks.createCode` would keep the raw link code.
+Every procedure is built from one of the builders in `src/trpc/init.ts`, which do the checks in this order: credential (401) → web-only / scope (403) → `Idempotency-Key` (400) → transaction [channel identity re-check → idempotency claim → input (400) → procedure].
 
-Agent-store routes (explicit `scope: agent:state`) require a chat token whose identity is still linked, take no `Idempotency-Key`, and a handler may return `commitThenFail(error)` to commit its writes and still answer with an error (an action marked `expired` on confirm). On a route with an `Idempotency-Key` that is a 500: the replay would be a stored success.
+- `financeRead` / `financeWrite`: finance data for the web app and the agent (`finance:read` / `finance:write`, writes with an `Idempotency-Key`).
+- `webRead` / `webWrite`: web app only (profile, account, category, goal and debt management, `transfers.get`). Chat tokens (`cid`) get `forbidden`, so the agent can neither call nor propose them.
+- `webWriteNoKey`: web-only writes without `Idempotency-Key` (chat links): a stored replay of `chatLinks.createCode` would keep the raw link code.
+- `agentRead` / `agentWrite`: the agent store (`agent:state`), only with a token for a still-linked chat, no `Idempotency-Key`. A procedure may `throw commitThenFail(error)` to commit its writes and still answer with an error (an action marked `expired` on confirm); in a finance write that is a 500, since the replay would be a stored success.
+- `serviceRead` / `serviceWrite`: the service key only (channel link redeem, identity resolve and unlink, inbound events). They act for no user; each procedure finds the user from server state (the code row, the linked identity).
 
-Service routes (`auth: "service"`: channel link redeem, identity resolve and unlink, inbound events) take the service key only: credential (401) → implemented (404) → body and schema (400) → handler in a transaction. They act for no user; each handler finds the user from server state (the code row, the linked identity). Implementations: `src/http/v1/service.ts`, registered in `serviceOperations`.
+`src/trpc/init.test.ts` lists every procedure with its access (`ACCESS`) and checks credentials, scopes and keys for each; a new procedure fails it until it is listed.
 
-Layout, per contract group (copy it for the next one):
+Bodies are capped at 64 KiB (413). Responses carry `Cache-Control: no-store`. Unknown procedures answer `not_found`.
+
+Layout, per module (copy it for the next one):
 
 ```text
-src/domain/<group>.ts        Domain logic: (tx, userId, args), Drizzle queries, throws DomainError
-src/domain/<group>.test.ts   Domain tests against the database
-src/http/v1/<group>.ts       One operation per contract route: contract input -> domain -> DTO
-src/http/v1/<group>.test.ts  HTTP tests through the contract client
-src/http/v1/index.ts         Registry: add the group here (`operations`, or `serviceOperations` for service routes)
+src/domain/<module>.ts        Domain logic: (tx, userId, args), Drizzle queries, throws DomainError
+src/domain/<module>.test.ts   Domain tests against the database
+src/trpc/<module>.ts          Router: zod input/output schemas next to the procedures, input -> domain -> DTO
+src/trpc/<module>.test.ts     Procedure tests through `clientFor` (test/api.ts)
+src/trpc/router.ts            Add the module's router here
 ```
 
-- An operation is `operation(routes.group.op, async (tx, user, input) => response)`. `input` is already validated; `user.userId` is the only user id there is (never take one from `input`). The registry type requires every operation of a group once the group is there; groups not ported yet answer `not_found`.
-- GET runs in a read-only snapshot (`readTx`), writes in `withTx`, with the idempotency record in the same transaction.
-- Errors: throw `DomainError` (`notFound("Account")`, `conflict(...)`, `invalid(path, message)` in `src/domain/errors.ts`); the router sends its code, status and details. Anything else is a logged 500 with no detail.
-- Ids: contract ids are any URL-safe string, rows are lowercase UUIDs. `toId(input.id, "id")` turns anything else into `validation_failed`; missing and other users' rows are both `not_found`.
+- A procedure is `financeWrite.input(schema).output(schema).mutation(async ({ ctx, input }) => ...)`. `input` is already validated; `ctx.user.userId` is the only user id there is (never take one from `input`). `ctx.tx` is a read-only snapshot for queries (`readTx`) and the write's SERIALIZABLE transaction for mutations (`withTx`, may run more than once), with the idempotency record in the same transaction.
+- Shared zod primitives (ids, money, dates, text) are in `src/trpc/schemas.ts`; DTOs in `src/trpc/dto.ts` (optional fields omitted, never null; `archived` only when true); currency checks in `src/trpc/currency.ts`.
+- Errors: throw `DomainError` (`notFound("Account")`, `conflict(...)`, `invalid(path, message)` in `src/domain/errors.ts`). `src/trpc/errors.ts` sets the HTTP status from it and puts its code and details on `error.data` (`apiCode`, `details`): clients branch on those, not on tRPC's codes. Input errors are `validation_failed` with `{ issues: [{ path, message }] }`. Anything else is a logged 500 with no detail.
+- Ids are lowercase UUIDs (`idSchema`): anything else is `validation_failed`; missing and other users' rows are both `not_found`. Agent-store ids are any URL-safe string (an unknown one is `not_found`).
 - Money: the database stores value × 100 for every currency; `src/domain/money.ts` converts to and from ISO minor units. Request amounts that don't fit exactly are `validation_failed` (`reason: "precision"`), never rounded.
-- DTOs (`src/http/v1/shared.ts`): optional fields are omitted, never null; `archived` only appears when true.
 
 Transactions, transfers and reports (`src/domain/{transactions,transfers,reports}.ts`):
 
@@ -69,7 +74,7 @@ Transactions, transfers and reports (`src/domain/{transactions,transfers,reports
 - Legacy rows with a null `account_id` (account deleted before the migration) skip their balance effect, list in the base currency with `accountId: MISSING_ACCOUNT_ID` (a nil UUID no lookup finds), and make a report that would sum them `conflict` (`unknown_currency`).
 - `transactions.search`: keyset cursor over `(date, created_at, id)`, `created_at` in microseconds (a JS Date would lose them). All filters, `q` included, run in SQL, so only the last page is short.
 - Reports: a month is `[first day, first day of next month)`, never a `-31` bound. Totals use SQL aggregates over every row of the range.
-- A date the contract accepts but Postgres can't hold (year 0000) is `validation_failed` (router, SQLSTATE 22008); a stored amount or total the contract can't express is `conflict` (`MoneyRangeError`).
+- A date the schema accepts but Postgres can't hold (year 0000) is `validation_failed` (SQLSTATE 22008, `src/trpc/errors.ts`); a stored amount or total ISO minor units can't express is `conflict` (`MoneyRangeError`).
 
 Goals and debts (`src/domain/{goals,debts}.ts`), in the base currency:
 
@@ -78,30 +83,11 @@ Goals and debts (`src/domain/{goals,debts}.ts`), in the base currency:
 - `current_amount` and `current_balance` move with relative updates; the principal check reads the balance in the same SERIALIZABLE transaction, so racing payments can't pay down more than is left.
 - A goal's or debt's linked account, and the accounts a contribution or payment moves money on, must be in the base currency (`validation_failed`).
 
-Tests use `test/api.ts`: `seedUser`, `seedAccount`, `seedCategory`, `seedSubcategory`, `seedTransaction` (rows only, no balance; `null` account for legacy rows), `seedDebt`, `seedDebtPayment`, `seedContribution`, `seedChannelIdentity`, `tokenFor(userId, scopes?)`, `clientFor(app, token)` (the contract client, which parses every success with the response schema), `serviceClientFor(app)` (service key), `linkedChat(app)` (a user linked through the real code/redeem/resolve flow, with its agent token), `raw(app, method, path, { token | cookie, body, idempotencyKey })`, `expectApiError(promise, code, status)` and `twoUsers()` for isolation checks. `testApp({ operations })` swaps in fake operations (e.g. one that writes then throws).
-
-## tRPC (`/api/trpc`, proof of concept)
-
-Accounts are also served by tRPC v11 at `/api/trpc`, mounted with `@hono/trpc-server` next to the contract routes. Same domain code, same credentials, same behaviour. Clients import `type AppRouter` from `@mpf/api/trpc` (a types-only export: a runtime import of server code doesn't resolve).
-
-```text
-src/trpc/init.ts       Context and procedure builders: financeRead, financeWrite, webRead, webWrite
-src/trpc/errors.ts     DomainError -> TRPCError; error.data carries apiCode (the v1 code) and details
-src/trpc/schemas.ts    Shared zod primitives (id, money, dates)
-src/trpc/accounts.ts   Accounts router, schemas next to the procedures
-src/trpc/router.ts     appRouter, type AppRouter
-src/trpc/mount.ts      Hono mount: Cache-Control, 64 KiB body cap, context from the principal sources
-```
-
-- Order as on `/api/v1`: credential (401) → web-only (403) → scope (403) → `Idempotency-Key` (400) → transaction [channel identity re-check → idempotency claim → input (400) → procedure].
-- Queries run in `readTx`, mutations in `withTx` (`ctx.tx`). Throw `DomainError`; never take a user id from the input (`ctx.user.userId`).
-- Finance writes need `Idempotency-Key` (header, one mutation per request; batched writes are refused). The hash covers the procedure path and the raw input; storage is `api_idempotency_keys`, as on `/api/v1`. A replay answers `Idempotent-Replayed: true`.
-- Errors: HTTP status from the tRPC code; `error.data.apiCode` is the v1 code (`not_found`, `conflict`, ...), `error.data.details` the v1 details. Unexpected errors answer `Internal error` and are logged.
-- Tests: `src/trpc/accounts.test.ts`, with `trpcFor(app, { token | cookie })` and `expectTrpcError` (`test/trpc.ts`).
+Tests use `test/api.ts`: `seedUser`, `seedAccount`, `seedCategory`, `seedSubcategory`, `seedTransaction` (rows only, no balance; `null` account for legacy rows), `seedDebt`, `seedDebtPayment`, `seedContribution`, `seedChannelIdentity`, `tokenFor(userId, scopes?)`, `clientFor(app, token)` (a tRPC client called as `client.group.op(input)`, failures as `ApiError` with the API code), `serviceClientFor(app)` (service key), `linkedChat(app)` (a user linked through the real code/redeem/resolve flow, with its agent token), `raw(app, "group.op", input, { token | cookie, idempotencyKey, rawBody })`, `expectApiError(promise, code, status)` and `twoUsers()` for isolation checks. `testApp({ router })` swaps in a router built with the same builders (e.g. a procedure that writes then throws); `probeRouter` (`test/app.ts`) answers who called. `test/trpc.ts` has a typed vanilla client (`trpcFor`) for transport tests.
 
 ## Idempotency
 
-Finance writes need `Idempotency-Key` (8-128 of `[A-Za-z0-9._:-]`). `(user, key) -> sha256(operation + canonical input) + response` is stored in `api_idempotency_keys` inside the write's transaction (`src/http/idempotency.ts`). Same key and request: the stored response, `Idempotent-Replayed: true`. Same key, different request or operation: `conflict`. A failed write stores nothing. Concurrent requests with one key serialize: one runs, the others replay it. The key is claimed with `INSERT ... ON CONFLICT DO NOTHING` and the row is only read when the key exists: a `SELECT` under SERIALIZABLE takes index-page read locks, and with clustered UUIDv7 ids every user's write then collided with every other's (about one 500 in ten at 40 concurrent writers). Keep reads of shared, append-heavy tables off the hot write path for the same reason. Keys count as unused after 7 days; `purgeExpiredIdempotencyKeys` deletes them in batches (a retention job).
+Finance writes need `Idempotency-Key` (8-128 of `[A-Za-z0-9._:-]`), one write per HTTP request: batched writes with a key are refused. `(user, key) -> sha256(procedure path + canonical raw input) + response` is stored in `api_idempotency_keys` inside the write's transaction (`src/http/idempotency.ts`). Same key and request: the stored response, `Idempotent-Replayed: true`. Same key, different request or operation: `conflict`. A failed write stores nothing. Concurrent requests with one key serialize: one runs, the others replay it. The key is claimed with `INSERT ... ON CONFLICT DO NOTHING` and the row is only read when the key exists: a `SELECT` under SERIALIZABLE takes index-page read locks, and with clustered UUIDv7 ids every user's write then collided with every other's (about one 500 in ten at 40 concurrent writers). Keep reads of shared, append-heavy tables off the hot write path for the same reason. Keys count as unused after 7 days; `purgeExpiredIdempotencyKeys` deletes them in batches (a retention job).
 
 ## Agent store and retention jobs
 

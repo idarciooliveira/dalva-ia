@@ -10,12 +10,12 @@ COPY package.json bun.lock ./
 COPY apps/agent/package.json apps/agent/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
-COPY packages/finance-contract/package.json packages/finance-contract/
+COPY packages/shared/package.json packages/shared/
 RUN bun install --frozen-lockfile --filter '@mpf/agent' --ignore-scripts
 
 FROM deps AS build
 COPY tsconfig.json ./
-COPY packages/finance-contract/src packages/finance-contract/src
+COPY packages/shared/src packages/shared/src
 COPY apps/agent/src apps/agent/src
 RUN bun build apps/agent/src/main.ts --target bun --minify-syntax --minify-whitespace --outfile /out/main.js
 

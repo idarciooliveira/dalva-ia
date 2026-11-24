@@ -38,7 +38,7 @@ async function seedGoal(userId: string, extra: { linkedAccountId?: string; archi
 
 const goalRow = async (id: string) => (await testDb().select().from(savingsGoals).where(eq(savingsGoals.id, id)))[0];
 
-describe("api/v1 goals and contributions", () => {
+describe("goals and contributions", () => {
   it("lists and gets goals in the base currency", async () => {
     const { app } = testApp();
     const user = await seedUser({ baseCurrency: "KWD" });

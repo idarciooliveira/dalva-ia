@@ -187,7 +187,7 @@ describe("channelLinks.redeem", () => {
 });
 
 describe("channelIdentities.resolve", () => {
-  it("returns a short-lived token with the identity's scopes that works on /api/v1", async () => {
+  it("returns a short-lived token with the identity's scopes that works on the user procedures", async () => {
     const { app } = testApp();
     const { userId, service } = await linkedChat(app, { name: "Alice", baseCurrency: "EUR" });
     const account = await seedAccount(userId, { currency: "EUR", balance: 10_000 });

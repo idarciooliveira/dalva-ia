@@ -1,4 +1,3 @@
-import { API_BASE_PATH } from "@mpf/finance-contract";
 import type { AnyTRPCRouter } from "@trpc/server";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
@@ -8,12 +7,9 @@ import { createSignInLimiter, type SignInLimiter } from "./auth/sign-in-limit";
 import { createServiceKey } from "./auth/service-key";
 import type { UserTokens } from "./auth/tokens";
 import type { Database } from "./db/client";
-import type { Operations, ServiceOperations } from "./http/operation";
-import { type AppEnv, resolvePrincipal, serviceKeySource, sessionSource, userTokenSource } from "./http/principal";
-import { errorResponse } from "./http/errors";
-import { contractRouter } from "./http/router";
-import { createOperations, type OperationSettings, serviceOperations as v1ServiceOperations } from "./http/v1";
+import { type AppEnv, serviceKeySource, sessionSource, userTokenSource } from "./http/principal";
 import { errorFields, type Logger } from "./log";
+import type { TrpcSettings } from "./trpc/init";
 import { mountTrpc } from "./trpc/mount";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -26,12 +22,8 @@ export interface AppOptions {
   tokens: UserTokens;
   /** The chat agent's key for the service routes (config `FINANCE_API_SERVICE_KEY`). Unset: they answer 401. */
   serviceKey?: string;
-  /** Contract route implementations. Default: every ported `/api/v1` group (tests swap in their own). */
-  operations?: Operations;
-  /** Config the default operations read (`TELEGRAM_BOT_USERNAME` for the web's deep link). */
-  operationSettings?: OperationSettings;
-  /** Service route implementations. Default: every ported service group. */
-  serviceOperations?: ServiceOperations;
+  /** Config procedures read (`TELEGRAM_BOT_USERNAME` for the web's deep link). */
+  settings?: TrpcSettings;
   /** The tRPC router. Default: the whole API (tests swap in their own). */
   trpcRouter?: AnyTRPCRouter;
   /** Public origin (config `PUBLIC_URL`): the only origin allowed to post to the auth routes. */
@@ -99,43 +91,26 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     }
   });
 
-  // Contract routes: never cached; every request gets a principal (or null), then the contract router.
-  app.use(`${API_BASE_PATH}/*`, async (c, next) => {
-    c.header("Cache-Control", "no-store");
-    await next();
-  });
-  const principalSources = [
-    // First: the service key is a bearer credential too (see principal.ts).
-    serviceKeySource(options.serviceKey ? createServiceKey(options.serviceKey) : undefined),
-    userTokenSource(options.tokens),
-    sessionSource(options.auth, { publicUrl: options.publicUrl }),
-  ];
-  app.use(`${API_BASE_PATH}/*`, resolvePrincipal(principalSources));
-  app.use(
-    `${API_BASE_PATH}/*`,
-    contractRouter({
-      db: options.db,
-      logger: options.logger,
-      operations: options.operations ?? createOperations(options.operationSettings),
-      serviceOperations: options.serviceOperations ?? v1ServiceOperations,
-      tokens: options.tokens,
-    }),
-  );
-
-  // tRPC proof of concept (accounts only), same credentials as the contract routes.
+  // The API: tRPC, with the caller resolved from these sources (first match wins, see principal.ts).
   mountTrpc(app, {
     db: options.db,
     logger: options.logger,
-    sources: principalSources,
+    sources: [
+      // First: the service key is a bearer credential too.
+      serviceKeySource(options.serviceKey ? createServiceKey(options.serviceKey) : undefined),
+      userTokenSource(options.tokens),
+      sessionSource(options.auth, { publicUrl: options.publicUrl }),
+    ],
     tokens: options.tokens,
-    settings: { telegramBotUsername: options.operationSettings?.telegramBotUsername },
+    settings: options.settings ?? {},
     router: options.trpcRouter,
   });
 
-  app.notFound((c) => errorResponse(c, "not_found", "Not found"));
+  // Outside tRPC, errors keep the shape of tRPC's: `error.data.apiCode`.
+  app.notFound((c) => c.json({ error: { message: "Not found", data: { apiCode: "not_found", httpStatus: 404 } } }, 404));
   app.onError((error, c) => {
     options.logger.error("request_failed", { method: c.req.method, path: c.req.path, ...errorFields(error) });
-    return errorResponse(c, "internal", "Internal error");
+    return c.json({ error: { message: "Internal error", data: { apiCode: "internal", httpStatus: 500 } } }, 500);
   });
   return app;
 }

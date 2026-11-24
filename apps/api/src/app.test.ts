@@ -1,7 +1,6 @@
-import { errorEnvelopeSchema } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
-import { silentLogger as silent, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../test/app";
+import { apiCodeOf, silentLogger as silent, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../test/app";
 import { createApp } from "./app";
 import { createAuth } from "./auth/auth";
 import { createDatabase } from "./db/client";
@@ -30,10 +29,10 @@ describe("GET /health", () => {
 });
 
 describe("fallbacks", () => {
-  it("answers unknown routes with the contract's not_found envelope", async () => {
+  it("answers unknown routes with not_found", async () => {
     const res = await testApp().app.request("/nope");
     expect(res.status).toBe(404);
-    expect(errorEnvelopeSchema.parse(await res.json()).error.code).toBe("not_found");
+    expect(await apiCodeOf(res)).toBe("not_found");
   });
 
   it("answers thrown errors with internal and logs only the error's name and code", async () => {
@@ -44,7 +43,7 @@ describe("fallbacks", () => {
     });
     const res = await app.request("/boom");
     expect(res.status).toBe(500);
-    expect(errorEnvelopeSchema.parse(await res.json()).error.code).toBe("internal");
+    expect(await apiCodeOf(res)).toBe("internal");
     expect(lines).toHaveLength(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ level: "error", msg: "request_failed", path: "/boom", errorCode: "XX000" });
     expect(lines[0]).not.toContain("secret detail");

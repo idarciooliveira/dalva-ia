@@ -4,7 +4,7 @@ The whole app runs from one compose stack on the VPS: web (Caddy + SPA), API, ag
 
 ```text
 Cloudflare edge -> tunnel -> cloudflared -> web:8080 (Caddy, single entry)
-                                             ├─ /api/auth/*, /api/v1/*, /api/trpc/* -> api:4000 -> postgres
+                                             ├─ /api/auth/*, /api/trpc/*  -> api:4000 -> postgres
                                              ├─ /webhooks/telegram      -> agent:3000 -> api:4000
                                              └─ everything else         -> SPA (fallback to the shell)
 migrate (one-shot, before api) -> postgres     backup (daily pg_dump) -> postgres
@@ -78,7 +78,7 @@ Steps for a staging stack next to production on the same VPS. Production uses th
 8. **Check from outside.**
    ```bash
    curl -s -o /dev/null -w '%{http_code}\n' https://staging.dalva.example.com/                        # 200
-   curl -s -o /dev/null -w '%{http_code}\n' https://staging.dalva.example.com/api/v1/accounts         # 401
+   curl -s -o /dev/null -w '%{http_code}\n' https://staging.dalva.example.com/api/trpc/accounts.list   # 401
    curl -s -o /dev/null -w '%{http_code}\n' -X POST https://staging.dalva.example.com/webhooks/telegram  # 401
    ```
    Then sign up in the browser, finish onboarding, and link Telegram from Settings with the staging bot.

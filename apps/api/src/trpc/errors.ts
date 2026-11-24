@@ -1,10 +1,10 @@
 /**
- * Errors on `/api/trpc`. Procedures throw `DomainError` as on `/api/v1`; the
- * `mapErrors` middleware turns it (and the database errors the v1 router maps)
- * into a `TRPCError` with the matching HTTP status and the `DomainError` as
- * `cause`. The error formatter then puts the v1 error code and details on
- * `error.data` (`apiCode`, `details`), so clients keep branching on
- * `not_found`, `conflict`, `validation_failed`, ...
+ * Errors. Procedures throw `DomainError`; the `mapErrors` middleware turns it
+ * (and input errors, and the database errors below) into a `TRPCError` with
+ * the matching HTTP status and the `DomainError` as `cause`. The error
+ * formatter puts the API's own code and details on `error.data` (`apiCode`,
+ * `details`), so clients branch on `not_found`, `conflict`,
+ * `validation_failed`, ... rather than on tRPC's coarser codes.
  */
 import { TRPCError } from "@trpc/server";
 
@@ -47,7 +47,7 @@ export function trpcError(error: DomainError): TRPCError {
 
 export const fail = (code: ApiErrorCode, message: string, details?: unknown) => trpcError(new DomainError(code, message, details));
 
-/** `{ issues: [{ path, message }] }`, the v1 `validation_failed` details. Works for Zod and Standard Schema issues. */
+/** `{ issues: [{ path, message }] }`, the `validation_failed` details. Works for Zod and Standard Schema issues. */
 export function validationIssues(issues: ReadonlyArray<{ path?: ReadonlyArray<PropertyKey | { key: PropertyKey }>; message: string }>) {
   return {
     issues: issues.map((issue) => ({
@@ -78,13 +78,13 @@ export interface ApiErrorData {
   code: TrpcCode;
   httpStatus: number;
   path?: string;
-  /** The `/api/v1` error code. */
+  /** The API's error code. */
   apiCode: ApiErrorCode;
   /** `validation_failed`: `{ issues: [{ path, message }] }`; some conflicts carry a `reason`. */
   details?: unknown;
 }
 
-/** The error formatter: v1 code and details, no stack, and no message for unexpected errors. */
+/** The error formatter: the API's code and details, no stack, and no message for unexpected errors. */
 export function formatError(error: TRPCError, data: { httpStatus: number; path?: string }): { message: string; data: ApiErrorData } {
   const domain = error.cause instanceof DomainError ? error.cause : null;
   const apiCode = domain?.code ?? API_CODE[error.code] ?? "internal";

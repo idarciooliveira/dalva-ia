@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { clientFor, expectApiError, expectOk, raw, seedUser, tokenFor } from "../../test/api";
 import { testApp } from "../../test/app";
 
-describe("api/v1 profile", () => {
+describe("profile", () => {
   it("is null before onboarding, then created, re-created with a new currency and completed", async () => {
     const { app } = testApp();
     const user = await seedUser({ profile: false });

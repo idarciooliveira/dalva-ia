@@ -21,7 +21,7 @@ import { MISSING_ACCOUNT_ID } from "./dto";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
-describe("api/v1 transfers", () => {
+describe("transfers", () => {
   it("creates, updates (via either leg) and deletes a transfer", async () => {
     const { app, alice, aliceAccount, asAlice } = await twoUsers();
     const savings = await seedAccount(alice, { name: "Savings" });

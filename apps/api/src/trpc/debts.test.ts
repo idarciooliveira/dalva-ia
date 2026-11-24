@@ -33,7 +33,7 @@ const carLoan = (userId: string, extra: { linkedAccountId?: string } = {}) =>
 
 const debtRow = async (id: string) => (await testDb().select().from(debts).where(eq(debts.id, id)))[0];
 
-describe("api/v1 debts and payments", () => {
+describe("debts and payments", () => {
   it("lists and gets debts", async () => {
     const { app, alice } = await twoUsers();
     const debt = await carLoan(alice);

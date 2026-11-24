@@ -5,15 +5,16 @@ import { bodyLimit } from "hono/body-limit";
 
 import type { Database } from "../db/client";
 import { type AppEnv, INVALID_CREDENTIALS, type PrincipalSource, principalFrom } from "../http/principal";
-import { MAX_BODY_BYTES } from "../http/router";
 import { errorFields, type Logger } from "../log";
 import type { UserTokens } from "../auth/tokens";
 import { IDEMPOTENCY_KEY_HEADER, type TrpcContext, type TrpcSettings } from "./init";
 import { appRouter } from "./router";
 
 export const TRPC_BASE_PATH = "/api/trpc";
+/** Request bodies past this are refused before tRPC reads them. */
+export const MAX_BODY_BYTES = 64 * 1024;
 
-/** tRPC at `/api/trpc`, next to the `/api/v1` contract routes, with the same credentials. */
+/** The API: tRPC at `/api/trpc`, the caller resolved from `sources` (see `src/http/principal.ts`). */
 export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Logger; sources: readonly PrincipalSource[]; tokens: UserTokens; settings: TrpcSettings; router?: AnyTRPCRouter }): void {
   const path = `${TRPC_BASE_PATH}/*`;
 

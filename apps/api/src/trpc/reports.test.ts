@@ -18,7 +18,7 @@ import {
 import { testApp } from "../../test/app";
 import { MIXED_CURRENCIES_MESSAGE, UNKNOWN_CURRENCY_MESSAGE } from "./currency";
 
-describe("api/v1 reports", () => {
+describe("reports", () => {
   it("summarises a month in the base currency, with transactions in their account currency", async () => {
     const { app, alice, aliceAccount, asAlice } = await twoUsers();
     const food = await seedCategory(alice);

@@ -59,7 +59,7 @@ my-personal-finance/
 |- apps/web/                  @mpf/web              Frontend app
 |- apps/api/                  @mpf/api              Backend (Hono + Drizzle + Postgres)
 |- apps/agent/                @mpf/agent            Telegram chat agent
-|- packages/finance-contract/ @mpf/finance-contract API contract shared by web, API and agent
+|- packages/shared/          @mpf/shared           Money, date and limit helpers shared by web, API and agent
 |- deploy/                                          Production compose stack
 |- scripts/                                         Local setup and dev helpers
 `- docs/                                            Product, design and deploy docs
@@ -174,14 +174,14 @@ Authenticated pages share a persistent app shell with sidebar navigation, top ba
 - Transfers are modeled as two linked `transactions` records with a shared `transferGroupId`.
 - Categories are seeded during onboarding and can be extended later with custom categories and subcategories.
 - Savings goals track progress separately from account balances, with goal contributions stored in their own table.
-- The frontend reads and writes through the typed `@mpf/finance-contract` client with React Query.
+- The API is tRPC (`/api/trpc`): web and agent import only its `AppRouter` type. The frontend reads and writes through `@trpc/tanstack-react-query`.
 - Every write runs in one `SERIALIZABLE` transaction; every query is scoped to the signed-in user.
 
 ---
 
 ## Testing
 
-Unit tests cover the contract, the API (domain and routes, against Postgres), the agent and the web app's helpers.
+Unit tests cover the shared helpers, the API (domain and procedures, against Postgres), the agent and the web app's helpers.
 
 Playwright E2E coverage currently includes:
 

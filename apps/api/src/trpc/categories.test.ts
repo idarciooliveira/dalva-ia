@@ -34,7 +34,7 @@ async function seedSub(userId: string, categoryId: string, extra: { archived?: b
   return row!.id;
 }
 
-describe("api/v1 categories and subcategories", () => {
+describe("categories and subcategories", () => {
   it("lists categories, hiding archived ones unless asked", async () => {
     const { app, alice, asAlice } = await twoUsers();
     const food = await seedCategory(alice);
