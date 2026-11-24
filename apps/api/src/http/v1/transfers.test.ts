@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   balanceOf,
   expectApiError,
+  getTransactionRow,
   expectConforms,
   raw,
   seedAccount,
@@ -62,6 +63,25 @@ describe("api/v1 transfers", () => {
     expect(await balanceOf(aliceAccount)).toBe(100_000);
     expect(await balanceOf(savings)).toBe(0);
     expect(await transactionRows()).toEqual([]);
+  });
+
+  it("clears description and note on both legs with null", async () => {
+    const { alice, aliceAccount, asAlice } = await twoUsers();
+    const savings = await seedAccount(alice, { name: "Savings" });
+    const { transfer } = await asAlice.transfers.create({
+      amount: usd(1_000),
+      fromAccountId: aliceAccount,
+      toAccountId: savings,
+      date: "2026-01-01",
+      description: "Rent pot",
+      note: "monthly",
+    });
+    const updated = await asAlice.transfers.update({ id: transfer.incomingId, description: null, note: null });
+    expect(updated.transfer).not.toHaveProperty("description");
+    expect(updated.transfer).not.toHaveProperty("note");
+    for (const id of [transfer.outgoingId, transfer.incomingId]) {
+      expect(await getTransactionRow(id)).toMatchObject({ description: null, note: null, amount: 1_000 });
+    }
   });
 
   it("gets a transfer by either leg, and not_found for anything else", async () => {

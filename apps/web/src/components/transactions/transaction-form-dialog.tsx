@@ -1,8 +1,6 @@
-import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { useConvexMutation, convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc, Id } from "@mpf/backend/convex/_generated/dataModel";
+import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { Transaction } from "@mpf/finance-contract";
 import {
   Calculator,
   CheckCircle2,
@@ -19,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -29,44 +28,28 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { CurrencyInput, parseCurrencyInputToCents } from "@/components/ui/currency-input";
+import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
 import { Switch } from "@/components/ui/switch";
-import { convexErrorMessage, TRANSACTION_MANAGED } from "@/lib/convex-errors";
-import { ACCOUNT_THEMES } from "@/lib/accounts";
+import { FormError } from "@/components/error-state";
+import { useAuthProfile } from "@/hooks/use-auth-profile";
+import { accountsQuery, categoriesQuery, subcategoriesQuery } from "@/lib/api/queries";
+import { useApiMutation } from "@/lib/api/mutations";
+import { apiErrorMessage } from "@/lib/api/errors";
+import { fractionDigits, maskPlaceholder } from "@/lib/money";
 import { cn } from "@/lib/utils";
+import { accountTheme, getDatePreset, localISODate, selectableAccounts, transactionChanges } from "./form-helpers";
 
 type TxType = "income" | "expense";
 
-function isEditableTransactionType(type: Doc<"transactions">["type"]): type is TxType {
-  return type === "income" || type === "expense";
-}
+const ERROR_ID = "transaction-form-error";
 
 interface TransactionFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Pass a transaction to edit, or null for create mode. */
-  transaction: Doc<"transactions"> | null;
+  /** An income or expense row to edit, or null for create mode. */
+  transaction: Transaction | null;
   /** Pre-select the transaction type (used by FAB). */
   defaultType?: TxType;
-}
-
-function todayISO(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-function yesterdayISO(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-type DatePreset = "today" | "yesterday" | "other";
-
-function getDatePreset(dateStr: string): DatePreset {
-  if (dateStr === todayISO()) return "today";
-  if (dateStr === yesterdayISO()) return "yesterday";
-  return "other";
 }
 
 export function TransactionFormDialog({
@@ -76,6 +59,7 @@ export function TransactionFormDialog({
   defaultType,
 }: TransactionFormDialogProps) {
   const isEdit = transaction !== null;
+  const baseCurrency = useAuthProfile().baseCurrency ?? "USD";
 
   // Form state
   const [type, setType] = useState<TxType>(defaultType ?? "expense");
@@ -83,7 +67,7 @@ export function TransactionFormDialog({
   const [accountId, setAccountId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [subcategoryId, setSubcategoryId] = useState("");
-  const [date, setDate] = useState(todayISO());
+  const [date, setDate] = useState(localISODate());
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
   const [payee, setPayee] = useState("");
@@ -93,35 +77,30 @@ export function TransactionFormDialog({
   const [showDatePicker, setShowDatePicker] = useState(false);
 
   const datePreset = getDatePreset(date);
+  const amountRef = useRef<HTMLInputElement>(null);
 
-  // Fetch accounts & categories
-  const { data: accounts } = useQuery(
-    convexQuery(api.accounts.listAccounts, {}),
-  );
-  const { data: categories } = useQuery(
-    convexQuery(api.categories.listCategories, {}),
-  );
+  // Archived accounts and categories stay listed only when the row already uses them.
+  const accountsResult = useQuery({ ...accountsQuery({ includeArchived: true }), enabled: open });
+  const categoriesResult = useQuery({ ...categoriesQuery({ includeArchived: true }), enabled: open });
+  const subcategoriesResult = useQuery({
+    ...subcategoriesQuery({ categoryId, includeArchived: true }),
+    enabled: open && categoryId !== "",
+  });
 
-  // Filter categories by selected type
-  const filteredCategories = (categories ?? []).filter(
-    (c) => c.type === type && !c.archived,
+  const accounts = selectableAccounts(accountsResult.data?.items, [transaction?.accountId]);
+  const filteredCategories = (categoriesResult.data?.items ?? []).filter(
+    (c) => c.type === type && (!c.archived || c.id === transaction?.categoryId),
   );
-
-  // Fetch subcategories for selected category
-  const { data: subcategories } = useQuery(
-    convexQuery(
-      api.categories.listSubcategories,
-      categoryId
-        ? { categoryId: categoryId as Id<"categories"> }
-        : "skip",
-    ),
+  const subcategories = (subcategoriesResult.data?.items ?? []).filter(
+    (sc) => !sc.archived || sc.id === transaction?.subcategoryId,
   );
 
-  // Reset form when opening/closing or switching between create/edit
+  // Fill the form on open. Closing keeps the fields, so the dialog doesn't flash empty while it animates out.
   useEffect(() => {
+    if (!open) return;
     if (transaction) {
-      setType(isEditableTransactionType(transaction.type) ? transaction.type : "expense");
-      setAmount(String(transaction.amount));
+      setType(transaction.type === "income" ? "income" : "expense");
+      setAmount(String(transaction.amount.amountMinor));
       setAccountId(transaction.accountId);
       setCategoryId(transaction.categoryId ?? "");
       setSubcategoryId(transaction.subcategoryId ?? "");
@@ -129,53 +108,68 @@ export function TransactionFormDialog({
       setDescription(transaction.description ?? "");
       setNote(transaction.note ?? "");
       setPayee(transaction.payee ?? "");
-      setIsPaid(true);
-      setShowMore(
-        !!(transaction.note || transaction.payee),
-      );
-      setShowDatePicker(false);
+      setShowMore(!!(transaction.note || transaction.payee));
     } else {
       setType(defaultType ?? "expense");
-      setAmount("");
-      setAccountId("");
-      setCategoryId("");
-      setSubcategoryId("");
-      setDate(todayISO());
-      setDescription("");
-      setNote("");
-      setPayee("");
-      setIsPaid(true);
-      setShowMore(false);
-      setShowDatePicker(false);
+      resetFields();
     }
+    setIsPaid(true);
+    setShowDatePicker(false);
     setError("");
   }, [transaction, open, defaultType]);
 
-  // Clear subcategory when category changes
-  useEffect(() => {
-    if (!transaction) setSubcategoryId("");
-  }, [categoryId, transaction]);
+  function resetFields() {
+    setAmount("");
+    setAccountId("");
+    setCategoryId("");
+    setSubcategoryId("");
+    setDate(localISODate());
+    setDescription("");
+    setNote("");
+    setPayee("");
+    setShowMore(false);
+  }
 
-  // Mutations
-  const { mutateAsync: createTransaction, isPending: isCreating } = useMutation(
-    { mutationFn: useConvexMutation(api.transactions.createTransaction) },
-  );
-  const { mutateAsync: updateTransaction, isPending: isUpdating } = useMutation(
-    { mutationFn: useConvexMutation(api.transactions.updateTransaction) },
-  );
-
+  const { mutateAsync: createTransaction, isPending: isCreating } = useApiMutation("transactions", "create");
+  const { mutateAsync: updateTransaction, isPending: isUpdating } = useApiMutation("transactions", "update");
   const isPending = isCreating || isUpdating;
+  // The account select (and the amount's precision) need the accounts.
+  const accountsLoading = accountsResult.isPending && accountsResult.fetchStatus !== "idle";
+
+  const selectedAccount = accounts.find((a) => a.id === accountId);
+  const selectedCategory = filteredCategories.find((c) => c.id === categoryId);
+  // Amounts are typed in the account's minor units: the row's own currency while
+  // accounts load, the base currency until one is picked.
+  const currency =
+    selectedAccount?.balance.currency ??
+    (transaction && accountId === transaction.accountId ? transaction.amount.currency : baseCurrency);
+  const digits = fractionDigits(currency);
+
+  function changeAccount(next: string) {
+    const nextCurrency = accounts.find((a) => a.id === next)?.balance.currency ?? baseCurrency;
+    // The typed digits mean another amount at another precision (USD 15,00 -> JPY 1.500).
+    if (fractionDigits(nextCurrency) !== digits) setAmount("");
+    setAccountId(next);
+  }
+
+  function changeType(next: TxType) {
+    if (next === type) return;
+    setType(next);
+    // Categories are per type: the selected one no longer applies.
+    setCategoryId("");
+    setSubcategoryId("");
+  }
 
   async function handleSubmit(andCreateNew = false) {
+    if (isPending) return;
     setError("");
 
-    // Validate
-    const amountCents = parseCurrencyInputToCents(amount);
-    if (!amount || isNaN(amountCents) || amountCents <= 0) {
+    const amountMinor = parseCurrencyInput(amount);
+    if (!amount || Number.isNaN(amountMinor) || amountMinor <= 0) {
       setError("Please enter a valid amount greater than 0");
       return;
     }
-    if (!accountId) {
+    if (!selectedAccount) {
       setError("Please select an account");
       return;
     }
@@ -183,109 +177,101 @@ export function TransactionFormDialog({
       setError("Please select a date");
       return;
     }
+    // The API changes only the fields it is sent, so a saved category can be replaced but not removed.
+    if (transaction?.categoryId && !categoryId) {
+      setError("Choose a category. A saved transaction's category can be changed but not removed.");
+      return;
+    }
+
+    const amountValue = { amountMinor, currency };
 
     try {
-      if (isEdit && transaction) {
-        await updateTransaction({
-          id: transaction._id,
+      if (transaction) {
+        const changes = transactionChanges(transaction, {
           type,
-          amount: amountCents,
-          accountId: accountId as Id<"accounts">,
+          amount: amountValue,
+          accountId: selectedAccount.id,
           date,
-          ...(categoryId
-            ? { categoryId: categoryId as Id<"categories"> }
-            : {}),
-          ...(subcategoryId
-            ? { subcategoryId: subcategoryId as Id<"subcategories"> }
-            : {}),
-          description: description || undefined,
-          note: note || undefined,
-          payee: payee || undefined,
+          categoryId,
+          subcategoryId,
+          description,
+          note,
+          payee,
         });
+        // Nothing changed: no request (the API refuses an empty update).
+        if (Object.keys(changes).length > 0) await updateTransaction({ id: transaction.id, ...changes });
         onOpenChange(false);
+        return;
+      }
+      await createTransaction({
+        type,
+        amount: amountValue,
+        accountId: selectedAccount.id,
+        date,
+        ...(categoryId ? { categoryId } : {}),
+        ...(subcategoryId ? { subcategoryId } : {}),
+        ...(description.trim() ? { description: description.trim() } : {}),
+        ...(note.trim() ? { note: note.trim() } : {}),
+        ...(payee.trim() ? { payee: payee.trim() } : {}),
+      });
+      if (andCreateNew) {
+        resetFields();
+        setShowDatePicker(false);
+        amountRef.current?.focus();
       } else {
-        await createTransaction({
-          type,
-          amount: amountCents,
-          accountId: accountId as Id<"accounts">,
-          date,
-          ...(categoryId
-            ? { categoryId: categoryId as Id<"categories"> }
-            : {}),
-          ...(subcategoryId
-            ? { subcategoryId: subcategoryId as Id<"subcategories"> }
-            : {}),
-          description: description || undefined,
-          note: note || undefined,
-          payee: payee || undefined,
-        });
-
-        if (andCreateNew) {
-          // Reset form for another entry
-          setAmount("");
-          setAccountId("");
-          setCategoryId("");
-          setSubcategoryId("");
-          setDate(todayISO());
-          setDescription("");
-          setNote("");
-          setPayee("");
-          setIsPaid(true);
-          setShowMore(false);
-          setShowDatePicker(false);
-          setError("");
-        } else {
-          onOpenChange(false);
-        }
+        onOpenChange(false);
       }
     } catch (err) {
       setError(
-        convexErrorMessage(err, TRANSACTION_MANAGED) ??
-          (err instanceof Error ? err.message : "Something went wrong"),
+        apiErrorMessage(err, isEdit ? "Couldn't save the transaction. Try again." : "Couldn't add the transaction. Try again."),
       );
     }
   }
 
-  // Helpers
-  const selectedAccount = (accounts ?? []).find((a) => a._id === accountId);
-  const selectedCategory = (categories ?? []).find(
-    (c) => c._id === categoryId,
-  );
-  const accountTheme = selectedAccount
-    ? ACCOUNT_THEMES.find((t) => t.id === (selectedAccount.theme ?? "default")) ??
-      ACCOUNT_THEMES[0]
-    : null;
-
-  const accentColor =
-    type === "expense"
-      ? "border-destructive"
-      : "border-emerald-500 dark:border-emerald-400";
-
-  const typeLabel =
-    type === "expense"
-      ? isEdit
-        ? "Edit expense"
-        : "New expense"
-      : isEdit
-        ? "Edit income"
-        : "New income";
+  const theme = selectedAccount ? accountTheme(selectedAccount) : null;
+  const accentColor = type === "expense" ? "border-destructive" : "border-emerald-500 dark:border-emerald-400";
+  const typeLabel = `${isEdit ? "Edit" : "New"} ${type}`;
+  const errorProps = {
+    "aria-invalid": error ? true : undefined,
+    "aria-describedby": error ? ERROR_ID : undefined,
+  } as const;
+  const presetClass = (active: boolean) =>
+    cn(
+      "rounded-full px-3 py-1 text-sm font-medium transition-colors",
+      active
+        ? type === "expense"
+          ? "bg-destructive text-white"
+          : "bg-emerald-500 text-white"
+        : "bg-muted text-muted-foreground hover:text-foreground",
+    );
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // A save in flight finishes in this dialog: its result must not land in the next one opened.
+        if (!next && isPending) return;
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-md gap-0 overflow-hidden p-0 max-sm:max-w-[calc(100vw-1rem)]">
         {/* Header */}
         <DialogHeader className="px-4 pt-4 pb-0 sm:px-5 sm:pt-5">
           <DialogTitle className="text-lg font-semibold">
-            {typeLabel}
+            {typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            {isEdit ? "Change the amount, date, category or account of this record." : "Record income or an expense on one of your accounts."}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="min-w-0 px-4 pt-3.5 pb-0 sm:px-5 sm:pt-4">
           {/* ── Type toggle (compact pill) ── */}
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+          <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Transaction type">
             <button
               type="button"
-              onClick={() => setType("income")}
+              onClick={() => changeType("income")}
+              aria-pressed={type === "income"}
               className={cn(
                 "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
                 type === "income"
@@ -297,7 +283,8 @@ export function TransactionFormDialog({
             </button>
             <button
               type="button"
-              onClick={() => setType("expense")}
+              onClick={() => changeType("expense")}
+              aria-pressed={type === "expense"}
               className={cn(
                 "rounded-full px-4 py-1.5 text-sm font-medium transition-colors",
                 type === "expense"
@@ -311,84 +298,62 @@ export function TransactionFormDialog({
 
           {/* ── Amount input (prominent, top) ── */}
           <div className="mb-5">
-            <div
-              className={cn(
-                "flex items-center gap-2 border-b-2 pb-2",
-                accentColor,
-              )}
-            >
-              <Calculator className="size-5 text-muted-foreground shrink-0" />
+            <div className={cn("flex items-center gap-2 border-b-2 pb-2", accentColor)}>
+              <Calculator className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
               <CurrencyInput
+                ref={amountRef}
                 value={amount}
                 onValueChange={setAmount}
-                placeholder="0,00"
+                fractionDigits={digits}
+                placeholder={maskPlaceholder(digits)}
                 autoFocus
                 className="min-w-0 flex-1 bg-transparent text-2xl font-semibold text-foreground outline-none placeholder:text-muted-foreground/50"
                 aria-label="Amount"
+                {...errorProps}
               />
+              <span className="shrink-0 text-sm font-medium text-muted-foreground">{currency}</span>
             </div>
           </div>
 
           {/* ── Paid toggle ── */}
           <div className="flex items-center gap-3 border-b border-border py-3">
-            <CheckCircle2 className="size-5 text-muted-foreground shrink-0" />
+            <CheckCircle2 className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
             <span className="flex-1 text-sm text-foreground">Was paid</span>
-            <Switch
-              checked={isPaid}
-              onCheckedChange={setIsPaid}
-              aria-label="Was paid"
-            />
+            <Switch checked={isPaid} onCheckedChange={setIsPaid} aria-label="Was paid" />
           </div>
 
           {/* ── Date field (quick picks) ── */}
           <div className="flex items-center gap-3 border-b border-border py-3">
-            <CalendarDays className="size-5 text-muted-foreground shrink-0" />
-            <div className="flex flex-1 flex-wrap items-center gap-2">
+            <CalendarDays className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
+            <div className="flex flex-1 flex-wrap items-center gap-2" role="group" aria-label="Date">
               <button
                 type="button"
+                aria-pressed={datePreset === "today"}
                 onClick={() => {
-                  setDate(todayISO());
+                  setDate(localISODate(0));
                   setShowDatePicker(false);
                 }}
-                className={cn(
-                  "rounded-full px-3 py-1 text-sm font-medium transition-colors",
-                  datePreset === "today"
-                    ? type === "expense"
-                      ? "bg-destructive text-white"
-                      : "bg-emerald-500 text-white"
-                    : "bg-muted text-muted-foreground hover:text-foreground",
-                )}
+                className={presetClass(datePreset === "today")}
               >
                 Today
               </button>
               <button
                 type="button"
+                aria-pressed={datePreset === "yesterday"}
                 onClick={() => {
-                  setDate(yesterdayISO());
+                  setDate(localISODate(1));
                   setShowDatePicker(false);
                 }}
-                className={cn(
-                  "rounded-full px-3 py-1 text-sm font-medium transition-colors",
-                  datePreset === "yesterday"
-                    ? type === "expense"
-                      ? "bg-destructive text-white"
-                      : "bg-emerald-500 text-white"
-                    : "bg-muted text-muted-foreground hover:text-foreground",
-                )}
+                className={presetClass(datePreset === "yesterday")}
               >
                 Yesterday
               </button>
               <button
                 type="button"
+                aria-pressed={datePreset === "other"}
+                aria-expanded={showDatePicker}
                 onClick={() => setShowDatePicker(!showDatePicker)}
-                className={cn(
-                  "rounded-full px-3 py-1 text-sm font-medium transition-colors",
-                  datePreset === "other"
-                    ? type === "expense"
-                      ? "bg-destructive text-white"
-                      : "bg-emerald-500 text-white"
-                    : "bg-muted text-muted-foreground hover:text-foreground",
-                )}
+                className={presetClass(datePreset === "other")}
               >
                 Other...
               </button>
@@ -410,12 +375,13 @@ export function TransactionFormDialog({
 
           {/* ── Description ── */}
           <div className="flex items-center gap-3 border-b border-border py-3">
-            <FileText className="size-5 text-muted-foreground shrink-0" />
+            <FileText className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
             <input
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Description"
+              maxLength={500}
               className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
               aria-label="Description"
             />
@@ -423,22 +389,28 @@ export function TransactionFormDialog({
 
           {/* ── Category ── */}
           <div className="flex items-center gap-3 border-b border-border py-3">
-            <Tag className="size-5 text-muted-foreground shrink-0" />
+            <Tag className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
             <Select
               value={categoryId || "__none__"}
-              onValueChange={(v) => setCategoryId(v === "__none__" ? "" : v)}
+              onValueChange={(v) => {
+                setCategoryId(v === "__none__" ? "" : v);
+                // A subcategory belongs to its category.
+                setSubcategoryId("");
+              }}
             >
-              <SelectTrigger className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5">
+              <SelectTrigger
+                aria-label="Category"
+                className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5"
+              >
                 <SelectValue>
                   {selectedCategory ? (
                     <span className="flex items-center gap-1.5">
                       {selectedCategory.icon && (
                         <span
+                          aria-hidden="true"
                           className="inline-flex items-center justify-center size-4 rounded text-[10px]"
                           style={{
-                            backgroundColor: selectedCategory.color
-                              ? `${selectedCategory.color}20`
-                              : undefined,
+                            backgroundColor: selectedCategory.color ? `${selectedCategory.color}20` : undefined,
                             color: selectedCategory.color ?? undefined,
                           }}
                         >
@@ -455,7 +427,7 @@ export function TransactionFormDialog({
               <SelectContent>
                 <SelectItem value="__none__">None</SelectItem>
                 {filteredCategories.map((c) => (
-                  <SelectItem key={c._id} value={c._id}>
+                  <SelectItem key={c.id} value={c.id}>
                     {c.name}
                   </SelectItem>
                 ))}
@@ -464,27 +436,24 @@ export function TransactionFormDialog({
           </div>
 
           {/* ── Subcategory (only if category is selected and has subcategories) ── */}
-          {categoryId && (subcategories ?? []).length > 0 && (
-             <div className="flex items-center gap-3 border-b border-border py-3 pl-8">
+          {categoryId && subcategories.length > 0 && (
+            <div className="flex items-center gap-3 border-b border-border py-3 pl-8">
               <Select
                 value={subcategoryId || "__none__"}
-                onValueChange={(v) =>
-                  setSubcategoryId(v === "__none__" ? "" : v)
-                }
+                onValueChange={(v) => setSubcategoryId(v === "__none__" ? "" : v)}
               >
-               <SelectTrigger className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5">
+                <SelectTrigger
+                  aria-label="Subcategory"
+                  className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5"
+                >
                   <SelectValue>
-                    {subcategoryId
-                      ? (subcategories ?? []).find(
-                          (sc) => sc._id === subcategoryId,
-                        )?.name ?? "Subcategory"
-                      : "Subcategory"}
+                    {subcategories.find((sc) => sc.id === subcategoryId)?.name ?? "Subcategory"}
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="__none__">None</SelectItem>
-                  {(subcategories ?? []).map((sc) => (
-                    <SelectItem key={sc._id} value={sc._id}>
+                  {subcategories.map((sc) => (
+                    <SelectItem key={sc.id} value={sc.id}>
                       {sc.name}
                     </SelectItem>
                   ))}
@@ -495,21 +464,21 @@ export function TransactionFormDialog({
 
           {/* ── Account ── */}
           <div className="flex items-center gap-3 border-b border-border py-3">
-            <Landmark className="size-5 text-muted-foreground shrink-0" />
-            <Select
-              value={accountId || "__none__"}
-              onValueChange={(v) => setAccountId(v === "__none__" ? "" : v)}
-            >
-              <SelectTrigger className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5">
+            <Landmark className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
+            <Select value={accountId || "__none__"} onValueChange={(v) => changeAccount(v === "__none__" ? "" : v)}>
+              <SelectTrigger
+                aria-label="Account"
+                {...errorProps}
+                className="h-auto w-full min-w-0 border-0 bg-muted/60 px-3 py-1.5 text-left text-sm font-medium rounded-full shadow-none ring-0 focus:ring-0 gap-1.5"
+              >
                 <SelectValue>
                   {selectedAccount ? (
                     <span className="flex items-center gap-1.5">
-                      {accountTheme && (
+                      {theme && (
                         <span
+                          aria-hidden="true"
                           className="inline-block size-4 rounded-full shrink-0"
-                          style={{
-                            background: `linear-gradient(135deg, ${accountTheme.from}, ${accountTheme.to})`,
-                          }}
+                          style={{ background: `linear-gradient(135deg, ${theme.from}, ${theme.to})` }}
                         />
                       )}
                       {selectedAccount.name}
@@ -523,19 +492,15 @@ export function TransactionFormDialog({
                 <SelectItem value="__none__" disabled>
                   Select account
                 </SelectItem>
-                {(accounts ?? []).map((a) => {
-                  const t =
-                    ACCOUNT_THEMES.find(
-                      (th) => th.id === (a.theme ?? "default"),
-                    ) ?? ACCOUNT_THEMES[0];
+                {accounts.map((a) => {
+                  const t = accountTheme(a);
                   return (
-                    <SelectItem key={a._id} value={a._id}>
+                    <SelectItem key={a.id} value={a.id}>
                       <div className="flex items-center gap-2">
                         <span
+                          aria-hidden="true"
                           className="inline-block size-3.5 rounded-full shrink-0"
-                          style={{
-                            background: `linear-gradient(135deg, ${t.from}, ${t.to})`,
-                          }}
+                          style={{ background: `linear-gradient(135deg, ${t.from}, ${t.to})` }}
                         />
                         {a.name}
                       </div>
@@ -551,37 +516,38 @@ export function TransactionFormDialog({
             <button
               type="button"
               onClick={() => setShowMore(true)}
+              aria-expanded={false}
               className="flex items-center gap-1 py-3 text-sm font-semibold text-foreground hover:text-foreground/80 transition-colors w-full justify-end"
             >
               More details
-              <ChevronDown className="size-4" />
+              <ChevronDown className="size-4" aria-hidden="true" />
             </button>
           )}
 
           {/* ── Extended fields (payee, note) ── */}
           {showMore && (
             <>
-              {/* Payee */}
               <div className="flex items-center gap-3 border-b border-border py-3">
-                <User className="size-5 text-muted-foreground shrink-0" />
+                <User className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
                 <input
                   type="text"
                   value={payee}
                   onChange={(e) => setPayee(e.target.value)}
                   placeholder="Payee"
+                  maxLength={200}
                   className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                   aria-label="Payee"
                 />
               </div>
 
-              {/* Note */}
               <div className="flex items-center gap-3 border-b border-border py-3">
-                <StickyNote className="size-5 text-muted-foreground shrink-0" />
+                <StickyNote className="size-5 text-muted-foreground shrink-0" aria-hidden="true" />
                 <input
                   type="text"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   placeholder="Note"
+                  maxLength={1000}
                   className="flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground"
                   aria-label="Note"
                 />
@@ -590,20 +556,21 @@ export function TransactionFormDialog({
           )}
 
           {/* ── Error ── */}
-          {error && (
-            <p className="mt-3 text-sm text-destructive">{error}</p>
+          {accountsResult.isError && !accountsResult.data && (
+            <FormError message={apiErrorMessage(accountsResult.error, "Couldn't load your accounts. Close and try again.")} />
           )}
+          <FormError id={ERROR_ID} message={error} />
         </div>
 
         {/* ── Footer with actions ── */}
-         <div className="mt-2 flex flex-col-reverse gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-5">
+        <div className="mt-2 flex flex-col-reverse gap-2 px-4 py-4 sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:px-5">
           {!isEdit && (
             <Button
               type="button"
               variant="outline"
               size="default"
               className="w-full sm:w-auto"
-              disabled={isPending}
+              disabled={isPending || accountsLoading}
               onClick={() => void handleSubmit(true)}
             >
               {isPending ? "Saving..." : "Save & new"}
@@ -614,14 +581,10 @@ export function TransactionFormDialog({
             variant="accent"
             size="default"
             className="w-full sm:w-auto"
-            disabled={isPending}
+            disabled={isPending || accountsLoading}
             onClick={() => void handleSubmit(false)}
           >
-            {isPending
-              ? "Saving..."
-              : isEdit
-                ? "Save changes"
-                : "Save"}
+            {isPending ? "Saving..." : isEdit ? "Save changes" : "Save"}
           </Button>
         </div>
       </DialogContent>
