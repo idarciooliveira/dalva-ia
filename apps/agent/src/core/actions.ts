@@ -1,8 +1,9 @@
-import type { AgentActionStatus, AgentPendingAction, FinanceClient } from "@mpf/finance-contract";
+import type { AgentActionStatus, AgentPendingAction } from "@mpf/finance-contract";
 
 import { decodeButtonPayload, type ChannelAdapter, type InboundEvent, type RichText } from "../channels/channel";
 import { errorFields, type Logger } from "../log";
-import { isFinanceError } from "./finance";
+import { type FinanceClient, isFinanceError } from "./finance";
+import { viaTrpc } from "./trpc";
 import { encodeAssistantText } from "./history";
 import type { ResolvedUser } from "./identity";
 import { texts } from "./messages";
@@ -88,6 +89,12 @@ type Outcome = { status: "executed"; result: unknown } | { status: "failed"; cod
 /** The finance client method for an operation name (`transactions.create`). */
 function operationCall(finance: FinanceClient, operation: string) {
   const [group, op] = operation.split(".") as [string, string];
+  if (group === "accounts") {
+    // Accounts moved to /api/trpc: the action id is still the Idempotency-Key.
+    const procedure = (finance.trpc.accounts as unknown as Record<string, { mutate: (input: unknown, options: object) => Promise<unknown> }>)[op]!;
+    return (input: unknown, options: { idempotencyKey: string }) =>
+      viaTrpc(procedure.mutate(input, { context: { idempotencyKey: options.idempotencyKey } }));
+  }
   const fn = (finance as unknown as Record<string, Record<string, unknown>>)[group]?.[op];
   if (typeof fn !== "function") throw new Error(`Unknown operation ${operation}`);
   return fn as (input: unknown, options: { idempotencyKey: string }) => Promise<unknown>;

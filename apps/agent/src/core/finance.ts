@@ -1,7 +1,12 @@
 import { createFinanceClient, createFinanceServiceClient, FinanceApiError } from "@mpf/finance-contract";
-import type { FinanceClient, FinanceServiceClient } from "@mpf/finance-contract";
+import type { FinanceClient as ContractClient, FinanceServiceClient } from "@mpf/finance-contract";
 
-export type { FinanceClient, FinanceServiceClient };
+import { createFinanceTrpc, type FinanceTrpc } from "./trpc";
+
+export type { FinanceServiceClient, FinanceTrpc };
+
+/** A user's client: the `/api/v1` groups, plus `trpc` for what moved to `/api/trpc` (accounts). */
+export type FinanceClient = ContractClient & { trpc: FinanceTrpc };
 
 export interface FinanceClients {
   service: FinanceServiceClient;
@@ -32,7 +37,10 @@ export function createFinanceClients(options: FinanceClientsOptions): FinanceCli
       getServiceKey: () => options.serviceKey,
       fetch: timedFetch,
     }),
-    forToken: (token) => createFinanceClient({ baseUrl: options.baseUrl, getToken: () => token, fetch: timedFetch }),
+    forToken: (token) => ({
+      ...createFinanceClient({ baseUrl: options.baseUrl, getToken: () => token, fetch: timedFetch }),
+      trpc: createFinanceTrpc({ baseUrl: options.baseUrl, token, fetch: timedFetch }),
+    }),
   };
 }
 

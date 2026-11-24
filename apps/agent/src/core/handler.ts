@@ -1,10 +1,10 @@
-import type { Account } from "@mpf/finance-contract";
 
 import type { ChannelAdapter, InboundEvent, RichPart, RichText } from "../channels/channel";
 import { errorFields, type Logger } from "../log";
 import { actionStateMessage, handleButton } from "./actions";
 import type { FinanceClients } from "./finance";
 import { isFinanceError } from "./finance";
+import { type Account, viaTrpc } from "./trpc";
 import { redeemLink, resolveUser, type ResolvedUser } from "./identity";
 import { texts } from "./messages";
 import { formatMoney } from "./money";
@@ -169,7 +169,7 @@ export function createHandler(options: HandlerOptions): {
         break;
       case "balance": {
         await adapter.send({ chatId: event.chatId }, { type: "typing" }).catch(() => {});
-        const { items } = await user.finance.accounts.list({});
+        const { items } = await viaTrpc(user.finance.trpc.accounts.list.query({}));
         answer = formatBalances(items);
         break;
       }

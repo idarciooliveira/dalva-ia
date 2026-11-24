@@ -84,6 +84,18 @@ describe("Confirm", () => {
     expect(finance.events.get("9000")!.status).toBe("done");
   });
 
+  test("runs an account adjustment through /api/trpc, still keyed by the action id", async () => {
+    const { finance, press, action } = setup();
+    Object.assign(action(), { operation: "accounts.adjust", input: { id: "acc_bai", amount: { amountMinor: -1_000, currency: "AOA" } } });
+    await press("c:action_1");
+    expect(finance.calls.find((c) => c.path === "/accounts/acc_bai/adjustments")).toMatchObject({ method: "POST", idempotencyKey: "action_1" });
+    expect(finance.writes).toEqual([
+      { operation: "accounts.adjust", input: { id: "acc_bai", amount: { amountMinor: -1_000, currency: "AOA" } }, idempotencyKey: "action_1" },
+    ]);
+    expect(action().status).toBe("executed");
+    expect(action().result).toMatchObject({ account: { id: "acc_bai" } });
+  });
+
   test("English summaries get English texts", async () => {
     const { press, lastEdit } = setup({ summary: EN_SUMMARY });
     await press("c:action_1");

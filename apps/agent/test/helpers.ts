@@ -183,6 +183,7 @@ const WRITE_ROUTES: Array<[RegExp, string, string]> = [
   [/^\/transfers\/([^/]+)$/, "DELETE", "transfers.delete"],
   [/^\/goals\/([^/]+)\/contributions$/, "POST", "goalContributions.add"],
   [/^\/debts\/([^/]+)\/payments$/, "POST", "debtPayments.record"],
+  [/^\/accounts\/([^/]+)\/adjustments$/, "POST", "accounts.adjust"],
 ];
 
 const routeOf = (operation: string): RouteDef => {
@@ -191,6 +192,13 @@ const routeOf = (operation: string): RouteDef => {
 };
 
 const ISO = "2026-11-11T00:00:00.000Z";
+
+/** tRPC account procedure -> the v1 route the fake serves: method, path, body. */
+const ACCOUNT_PROCEDURES: Record<string, (id: string, rest: Json) => [string, string, Json]> = {
+  "accounts.list": (_id, rest) => ["GET", "/accounts", rest],
+  "accounts.get": (id) => ["GET", `/accounts/${id}`, {}],
+  "accounts.adjust": (id, rest) => ["POST", `/accounts/${id}/adjustments`, rest],
+};
 
 /**
  * In-memory Finance API. Routes are matched on method + path; every
@@ -411,6 +419,10 @@ export function fakeFinance() {
             sourceTransactionId: `tx_dp_${writes.length}`,
           },
         };
+      case "accounts.adjust": {
+        const account = accounts.find((a) => a.id === input.id);
+        return { account: { ...account, balance: { ...account?.balance, amountMinor: (account?.balance.amountMinor ?? 0) + input.amount.amountMinor } } };
+      }
     }
     throw new Error(`fake: no reply for ${operation}`);
   }
@@ -491,7 +503,29 @@ export function fakeFinance() {
     throw new Error(`fake: no user route ${method} ${path}`);
   }
 
+  /** `/api/trpc/accounts.*` (tRPC wire format) answered by the same fake, translated to the v1 route. */
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const procedure = /^\/api\/trpc\/(accounts\.\w+)$/.exec(url.pathname)?.[1];
+    if (!procedure) return await v1Fetch(input, init);
+    const isQuery = (init?.method ?? "GET") === "GET";
+    const raw = isQuery ? url.searchParams.get("input") : (init?.body as string | undefined);
+    const trpcInput = (raw ? JSON.parse(raw) : {}) as Json;
+    const { id, ...rest } = trpcInput;
+    const [method, path, body] = ACCOUNT_PROCEDURES[procedure]!(id as string, rest);
+    const query = method === "GET" ? `?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}` : "";
+    const response = await v1Fetch(`${BASE_URL}/api/v1${path}${query === "?" ? "" : query}`, {
+      ...init,
+      method,
+      body: method === "GET" ? undefined : JSON.stringify(body),
+    });
+    const reply = (await response.json()) as { ok: boolean; data?: unknown; error?: { code: string; message: string; details?: unknown } };
+    if (reply.ok) return envelope({ result: { data: reply.data } }, 200);
+    const { code, message, details } = reply.error!;
+    return envelope({ error: { message, code: -32000, data: { apiCode: code, httpStatus: response.status, ...(details ? { details } : {}) } } }, response.status);
+  }) as typeof fetch;
+
+  const v1Fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
     const path = url.pathname.replace(/^\/api\/v1/, "");

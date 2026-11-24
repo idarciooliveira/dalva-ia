@@ -2,6 +2,7 @@ import type { Transaction } from "@mpf/finance-contract";
 import { tool } from "ai";
 import { z } from "zod";
 
+import { viaTrpc } from "../core/trpc";
 import {
   call,
   clip,
@@ -43,7 +44,7 @@ export const searchTransactions = (context: ToolContext) =>
           return { items: [] };
         };
         const names = Promise.all([
-          context.finance.accounts.list({ includeArchived: true }, call(context)).catch(lookup),
+          viaTrpc(context.finance.trpc.accounts.list.query({ includeArchived: true }, call(context))).catch(lookup),
           context.finance.categories.list({ includeArchived: true }, call(context)).catch(lookup),
         ]);
         const { items, nextCursor } = await context.finance.transactions.search(

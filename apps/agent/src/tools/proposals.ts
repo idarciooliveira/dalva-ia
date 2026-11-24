@@ -3,17 +3,17 @@ import {
   MoneyError,
   parseDecimalAmount,
   routes,
-  type Account,
   type AgentActionOperation,
   type AgentPendingAction,
   type Category,
-  type FinanceClient,
   type RouteDef,
   type Subcategory,
 } from "@mpf/finance-contract";
 import { z } from "zod";
 
 import { shortText, SummaryTooLongError } from "../core/summary";
+import { type Account, viaTrpc } from "../core/trpc";
+import type { FinanceClient } from "../core/finance";
 import { call, toToolError, type ToolContext, type ToolError } from "./shared";
 
 /**
@@ -223,7 +223,7 @@ export function lookups(context: ToolContext) {
   const accounts = new Map<string, Promise<Account>>();
   return {
     account(id: string): Promise<Account> {
-      if (!accounts.has(id)) accounts.set(id, finance.accounts.get({ id }, call(context)).then((r) => r.account));
+      if (!accounts.has(id)) accounts.set(id, viaTrpc(finance.trpc.accounts.get.query({ id }, call(context))).then((r) => r.account));
       return accounts.get(id)!;
     },
     /** An account the user can still write to. */

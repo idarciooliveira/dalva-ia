@@ -1,5 +1,5 @@
 import { FinanceApiError, formatMinorAmount, isoDateSchema, monthSchema as contractMonthSchema } from "@mpf/finance-contract";
-import type { FinanceClient } from "@mpf/finance-contract";
+import type { FinanceClient } from "../core/finance";
 import { z } from "zod";
 
 /**
