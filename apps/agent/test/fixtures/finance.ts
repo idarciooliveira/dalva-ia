@@ -10,41 +10,41 @@ const aoa = (major: number) => ({ amountMinor: Math.round(major * 100), currency
 const usd = (major: number) => ({ amountMinor: Math.round(major * 100), currency: "USD" });
 
 const accounts: Json[] = [
-  { id: "acc_bai", name: "BAI Conta Ordem", type: "bank", balance: aoa(845_320.5) },
-  { id: "acc_cash", name: "Carteira", type: "cash", balance: aoa(32_000) },
-  { id: "acc_poup", name: "Poupança BFA", type: "savings", balance: aoa(1_250_000) },
-  { id: "acc_visa", name: "Visa BIC", type: "credit_card", balance: aoa(-185_400) },
-  { id: "acc_usd", name: "Wise USD", type: "e_wallet", balance: usd(1_240.75) },
-  { id: "acc_old", name: "Conta antiga", type: "bank", balance: aoa(0), archived: true },
+  { id: "00000001-0000-4000-8000-000000000001", name: "BAI Conta Ordem", type: "bank", balance: aoa(845_320.5) },
+  { id: "00000001-0000-4000-8000-000000000003", name: "Carteira", type: "cash", balance: aoa(32_000) },
+  { id: "00000001-0000-4000-8000-000000000002", name: "Poupança BFA", type: "savings", balance: aoa(1_250_000) },
+  { id: "00000001-0000-4000-8000-000000000007", name: "Visa BIC", type: "credit_card", balance: aoa(-185_400) },
+  { id: "00000001-0000-4000-8000-000000000004", name: "Wise USD", type: "e_wallet", balance: usd(1_240.75) },
+  { id: "00000001-0000-4000-8000-000000000008", name: "Conta antiga", type: "bank", balance: aoa(0), archived: true },
 ];
 
 const categories: Json[] = [
-  { id: "cat_food", name: "Alimentação", type: "expense", isDefault: true },
-  { id: "cat_transport", name: "Transporte", type: "expense", isDefault: true },
-  { id: "cat_home", name: "Casa", type: "expense", isDefault: true },
-  { id: "cat_fun", name: "Lazer", type: "expense", isDefault: true },
-  { id: "cat_health", name: "Saúde", type: "expense", isDefault: true },
-  { id: "cat_salary", name: "Salário", type: "income", isDefault: true },
-  { id: "cat_freelance", name: "Freelance", type: "income", isDefault: false },
+  { id: "00000002-0000-4000-8000-000000000001", name: "Alimentação", type: "expense", isDefault: true },
+  { id: "00000002-0000-4000-8000-000000000002", name: "Transporte", type: "expense", isDefault: true },
+  { id: "00000002-0000-4000-8000-000000000005", name: "Casa", type: "expense", isDefault: true },
+  { id: "00000002-0000-4000-8000-000000000003", name: "Lazer", type: "expense", isDefault: true },
+  { id: "00000002-0000-4000-8000-000000000008", name: "Saúde", type: "expense", isDefault: true },
+  { id: "00000002-0000-4000-8000-000000000004", name: "Salário", type: "income", isDefault: true },
+  { id: "00000002-0000-4000-8000-000000000007", name: "Freelance", type: "income", isDefault: false },
 ];
 
 const subcategories: Json[] = [
-  { id: "sub_market", categoryId: "cat_food", name: "Supermercado", archived: false, sortOrder: 1 },
-  { id: "sub_rest", categoryId: "cat_food", name: "Restaurantes", archived: false, sortOrder: 2 },
-  { id: "sub_fuel", categoryId: "cat_transport", name: "Combustível", archived: false, sortOrder: 1 },
-  { id: "sub_taxi", categoryId: "cat_transport", name: "Táxi / Yango", archived: false, sortOrder: 2 },
-  { id: "sub_rent", categoryId: "cat_home", name: "Renda", archived: false, sortOrder: 1 },
+  { id: "00000003-0000-4000-8000-000000000004", categoryId: "00000002-0000-4000-8000-000000000001", name: "Supermercado", archived: false, sortOrder: 1 },
+  { id: "00000003-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000001", name: "Restaurantes", archived: false, sortOrder: 2 },
+  { id: "00000003-0000-4000-8000-000000000002", categoryId: "00000002-0000-4000-8000-000000000002", name: "Combustível", archived: false, sortOrder: 1 },
+  { id: "00000003-0000-4000-8000-000000000003", categoryId: "00000002-0000-4000-8000-000000000002", name: "Táxi / Yango", archived: false, sortOrder: 2 },
+  { id: "00000003-0000-4000-8000-000000000005", categoryId: "00000002-0000-4000-8000-000000000005", name: "Renda", archived: false, sortOrder: 1 },
 ];
 
 const transactions: Json[] = [
-  { id: "tx_1", type: "expense", amount: aoa(18_450), accountId: "acc_bai", categoryId: "cat_food", subcategoryId: "sub_market", date: "2026-11-10", description: "Kero Talatona" },
-  { id: "tx_2", type: "expense", amount: aoa(6_500), accountId: "acc_cash", categoryId: "cat_transport", subcategoryId: "sub_taxi", date: "2026-11-09", description: "Yango" },
-  { id: "tx_3", type: "expense", amount: aoa(24_000), accountId: "acc_visa", categoryId: "cat_food", subcategoryId: "sub_rest", date: "2026-11-08", description: "Jantar Ilha" },
-  { id: "tx_4", type: "income", amount: aoa(650_000), accountId: "acc_bai", categoryId: "cat_salary", date: "2026-11-05", description: "Salário Novembro" },
-  { id: "tx_5", type: "expense", amount: aoa(150_000), accountId: "acc_bai", categoryId: "cat_home", subcategoryId: "sub_rent", date: "2026-11-03", description: "Renda" },
-  { id: "tx_6", type: "expense", amount: aoa(30_000), accountId: "acc_bai", categoryId: "cat_transport", subcategoryId: "sub_fuel", date: "2026-11-02", description: "Pumangol" },
-  { id: "tx_7", type: "expense", amount: usd(12.99), accountId: "acc_usd", categoryId: "cat_fun", date: "2026-11-01", description: "Spotify" },
-  { id: "tx_8", type: "expense", amount: aoa(9_800), accountId: "acc_cash", categoryId: "cat_health", date: "2026-10-28", description: "Farmácia" },
+  { id: "00000004-0000-4000-8000-000000000001", type: "expense", amount: aoa(18_450), accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000001", subcategoryId: "00000003-0000-4000-8000-000000000004", date: "2026-11-10", description: "Kero Talatona" },
+  { id: "00000004-0000-4000-8000-000000000005", type: "expense", amount: aoa(6_500), accountId: "00000001-0000-4000-8000-000000000003", categoryId: "00000002-0000-4000-8000-000000000002", subcategoryId: "00000003-0000-4000-8000-000000000003", date: "2026-11-09", description: "Yango" },
+  { id: "00000004-0000-4000-8000-000000000015", type: "expense", amount: aoa(24_000), accountId: "00000001-0000-4000-8000-000000000007", categoryId: "00000002-0000-4000-8000-000000000001", subcategoryId: "00000003-0000-4000-8000-000000000001", date: "2026-11-08", description: "Jantar Ilha" },
+  { id: "00000004-0000-4000-8000-000000000014", type: "income", amount: aoa(650_000), accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000004", date: "2026-11-05", description: "Salário Novembro" },
+  { id: "00000004-0000-4000-8000-000000000013", type: "expense", amount: aoa(150_000), accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000005", subcategoryId: "00000003-0000-4000-8000-000000000005", date: "2026-11-03", description: "Renda" },
+  { id: "00000004-0000-4000-8000-000000000012", type: "expense", amount: aoa(30_000), accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000002", subcategoryId: "00000003-0000-4000-8000-000000000002", date: "2026-11-02", description: "Pumangol" },
+  { id: "00000004-0000-4000-8000-000000000011", type: "expense", amount: usd(12.99), accountId: "00000001-0000-4000-8000-000000000004", categoryId: "00000002-0000-4000-8000-000000000003", date: "2026-11-01", description: "Spotify" },
+  { id: "00000004-0000-4000-8000-000000000010", type: "expense", amount: aoa(9_800), accountId: "00000001-0000-4000-8000-000000000003", categoryId: "00000002-0000-4000-8000-000000000008", date: "2026-10-28", description: "Farmácia" },
 ];
 
 /**
@@ -53,19 +53,19 @@ const transactions: Json[] = [
  */
 const managedTransactions: Array<{ transaction: Json; managedBy: string }> = [
   {
-    transaction: { id: "tx_tr_out", type: "transfer", amount: aoa(20_000), accountId: "acc_bai", destinationAccountId: "acc_poup", linkedTransactionId: "tx_tr_in", transferGroupId: "tg_1", date: "2026-11-07" },
+    transaction: { id: "00000004-0000-4000-8000-000000000004", type: "transfer", amount: aoa(20_000), accountId: "00000001-0000-4000-8000-000000000001", destinationAccountId: "00000001-0000-4000-8000-000000000002", linkedTransactionId: "00000004-0000-4000-8000-000000000002", transferGroupId: "tg_1", date: "2026-11-07" },
     managedBy: "transfer",
   },
   {
-    transaction: { id: "tx_tr_in", type: "transfer", amount: aoa(20_000), accountId: "acc_poup", linkedTransactionId: "tx_tr_out", transferGroupId: "tg_1", date: "2026-11-07" },
+    transaction: { id: "00000004-0000-4000-8000-000000000002", type: "transfer", amount: aoa(20_000), accountId: "00000001-0000-4000-8000-000000000002", linkedTransactionId: "00000004-0000-4000-8000-000000000004", transferGroupId: "tg_1", date: "2026-11-07" },
     managedBy: "transfer",
   },
   {
-    transaction: { id: "tx_goal", type: "transfer", amount: aoa(50_000), accountId: "acc_bai", destinationAccountId: "acc_poup", linkedTransactionId: "tx_goal_in", transferGroupId: "tg_2", date: "2026-11-06" },
+    transaction: { id: "00000004-0000-4000-8000-000000000006", type: "transfer", amount: aoa(50_000), accountId: "00000001-0000-4000-8000-000000000001", destinationAccountId: "00000001-0000-4000-8000-000000000002", linkedTransactionId: "00000004-0000-4000-8000-000000000009", transferGroupId: "tg_2", date: "2026-11-06" },
     managedBy: "goal_contribution",
   },
   {
-    transaction: { id: "tx_debt", type: "expense", amount: aoa(95_000), accountId: "acc_bai", date: "2026-11-04" },
+    transaction: { id: "00000004-0000-4000-8000-000000000007", type: "expense", amount: aoa(95_000), accountId: "00000001-0000-4000-8000-000000000001", date: "2026-11-04" },
     managedBy: "debt_payment",
   },
 ];
@@ -82,9 +82,9 @@ const spendingByCategory = (month: string): Json => ({
   month,
   total: aoa(228_950),
   categories: [
-    { categoryId: "cat_home", name: "Casa", amount: aoa(150_000) },
-    { categoryId: "cat_food", name: "Alimentação", amount: aoa(42_450) },
-    { categoryId: "cat_transport", name: "Transporte", amount: aoa(36_500) },
+    { categoryId: "00000002-0000-4000-8000-000000000005", name: "Casa", amount: aoa(150_000) },
+    { categoryId: "00000002-0000-4000-8000-000000000001", name: "Alimentação", amount: aoa(42_450) },
+    { categoryId: "00000002-0000-4000-8000-000000000002", name: "Transporte", amount: aoa(36_500) },
   ],
 });
 
@@ -106,13 +106,13 @@ const netWorth: Json = {
 };
 
 const goals: Json[] = [
-  { id: "goal_car", name: "Carro", targetAmount: aoa(4_000_000), currentAmount: aoa(1_250_000), targetDate: "2027-12-31", linkedAccountId: "acc_poup", isVirtual: false, createdAt: "2026-01-10" },
-  { id: "goal_trip", name: "Viagem a Lisboa", targetAmount: aoa(900_000), currentAmount: aoa(310_000), targetDate: "2027-07-01", isVirtual: true, createdAt: "2026-03-02" },
+  { id: "00000005-0000-4000-8000-000000000001", name: "Carro", targetAmount: aoa(4_000_000), currentAmount: aoa(1_250_000), targetDate: "2027-12-31", linkedAccountId: "00000001-0000-4000-8000-000000000002", isVirtual: false, createdAt: "2026-01-10" },
+  { id: "00000005-0000-4000-8000-000000000002", name: "Viagem a Lisboa", targetAmount: aoa(900_000), currentAmount: aoa(310_000), targetDate: "2027-07-01", isVirtual: true, createdAt: "2026-03-02" },
 ];
 
 const debts: Json[] = [
-  { id: "debt_car", name: "Crédito automóvel", debtType: "loan", lender: "BFA", originalAmount: aoa(3_000_000), currentBalance: aoa(2_000_000), interestRate: 14, minimumPayment: aoa(95_000), dueDate: "2026-11-25", createdAt: "2025-06-01" },
-  { id: "debt_visa", name: "Visa BIC", debtType: "credit_card", lender: "BIC", originalAmount: aoa(185_400), currentBalance: aoa(185_400), createdAt: "2026-09-01" },
+  { id: "00000006-0000-4000-8000-000000000001", name: "Crédito automóvel", debtType: "loan", lender: "BFA", originalAmount: aoa(3_000_000), currentBalance: aoa(2_000_000), interestRate: 14, minimumPayment: aoa(95_000), dueDate: "2026-11-25", createdAt: "2025-06-01" },
+  { id: "00000006-0000-4000-8000-000000000002", name: "Visa BIC", debtType: "credit_card", lender: "BIC", originalAmount: aoa(185_400), currentBalance: aoa(185_400), createdAt: "2026-09-01" },
 ];
 
 const debtSummary: Json = {
@@ -120,8 +120,8 @@ const debtSummary: Json = {
   totalRemaining: aoa(2_185_400),
   recentPayment: aoa(95_000),
   debts: [
-    { id: "debt_car", name: "Crédito automóvel", creditor: "BFA", originalAmount: aoa(3_000_000), currentBalance: aoa(2_000_000), percentPaid: 33 },
-    { id: "debt_visa", name: "Visa BIC", creditor: "BIC", originalAmount: aoa(185_400), currentBalance: aoa(185_400), percentPaid: 0 },
+    { id: "00000006-0000-4000-8000-000000000001", name: "Crédito automóvel", creditor: "BFA", originalAmount: aoa(3_000_000), currentBalance: aoa(2_000_000), percentPaid: 33 },
+    { id: "00000006-0000-4000-8000-000000000002", name: "Visa BIC", creditor: "BIC", originalAmount: aoa(185_400), currentBalance: aoa(185_400), percentPaid: 0 },
   ],
 };
 

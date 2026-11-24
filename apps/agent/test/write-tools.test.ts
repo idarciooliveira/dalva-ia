@@ -13,8 +13,8 @@ function setup(options: { eventId?: string; finance?: ReturnType<typeof fakeFina
   if (!options.finance) {
     seedFinance(finance);
     finance.accounts.push(
-      { id: "acc_jpy", name: "Tokyo Cash", type: "cash", balance: { amountMinor: 50_000, currency: "JPY" } },
-      { id: "acc_kwd", name: "Kuwait Bank", type: "bank", balance: { amountMinor: 1_000_000, currency: "KWD" } },
+      { id: "00000001-0000-4000-8000-000000000006", name: "Tokyo Cash", type: "cash", balance: { amountMinor: 50_000, currency: "JPY" } },
+      { id: "00000001-0000-4000-8000-000000000005", name: "Kuwait Bank", type: "bank", balance: { amountMinor: 1_000_000, currency: "KWD" } },
     );
     finance.link(USER);
     finance.sessions.push({ id: "sess_1", channel: "telegram", chatId: USER, startedAt: "x", lastActivityAt: "x", messageCount: 0 });
@@ -33,9 +33,9 @@ function setup(options: { eventId?: string; finance?: ReturnType<typeof fakeFina
 const expense = (extra: Record<string, unknown> = {}) => ({
   type: "expense",
   amount: "5000",
-  accountId: "acc_bai",
-  categoryId: "cat_food",
-  subcategoryId: "sub_rest",
+  accountId: "00000001-0000-4000-8000-000000000001",
+  categoryId: "00000002-0000-4000-8000-000000000001",
+  subcategoryId: "00000003-0000-4000-8000-000000000001",
   language: "pt",
   ...extra,
 });
@@ -86,9 +86,9 @@ describe("create_transaction", () => {
       input: {
         type: "expense",
         amount: { amountMinor: 500_000, currency: "AOA" },
-        accountId: "acc_bai",
-        categoryId: "cat_food",
-        subcategoryId: "sub_rest",
+        accountId: "00000001-0000-4000-8000-000000000001",
+        categoryId: "00000002-0000-4000-8000-000000000001",
+        subcategoryId: "00000003-0000-4000-8000-000000000001",
         date: TODAY,
       },
     });
@@ -98,31 +98,31 @@ describe("create_transaction", () => {
 
   test("amounts: 0-, 2- and 3-decimal currencies", async () => {
     const jpy = setup();
-    expect(await jpy.run("create_transaction", { type: "expense", amount: "1500", accountId: "acc_jpy", language: "en" })).toMatchObject({
+    expect(await jpy.run("create_transaction", { type: "expense", amount: "1500", accountId: "00000001-0000-4000-8000-000000000006", language: "en" })).toMatchObject({
       summary: "Expense · 1,500 JPY · Tokyo Cash · today",
     });
     expect(jpy.finance.actions[0]!.input.amount).toEqual({ amountMinor: 1500, currency: "JPY" });
 
     const usd = setup();
-    await usd.run("create_transaction", { type: "income", amount: "1240.5", accountId: "acc_usd", categoryId: "cat_freelance", language: "en", date: "2026-11-10" });
+    await usd.run("create_transaction", { type: "income", amount: "1240.5", accountId: "00000001-0000-4000-8000-000000000004", categoryId: "00000002-0000-4000-8000-000000000007", language: "en", date: "2026-11-10" });
     expect(usd.finance.actions[0]!.input.amount).toEqual({ amountMinor: 124_050, currency: "USD" });
     expect(usd.finance.actions[0]!.summary).toBe("Income · 1,240.50 USD · Freelance · Wise USD · yesterday");
 
     const kwd = setup();
-    await kwd.run("create_transaction", { type: "expense", amount: "12.340", accountId: "acc_kwd", language: "pt", date: "2026-10-01" });
+    await kwd.run("create_transaction", { type: "expense", amount: "12.340", accountId: "00000001-0000-4000-8000-000000000005", language: "pt", date: "2026-10-01" });
     expect(kwd.finance.actions[0]!.input.amount).toEqual({ amountMinor: 12_340, currency: "KWD" });
     expect(kwd.finance.actions[0]!.summary).toBe("Despesa · 12,340 KWD · Kuwait Bank · 01/10/2026");
   });
 
   test("3-decimal amounts DALVA can't store exactly (x100) are refused at proposal time, never rounded", async () => {
     const kwd = setup();
-    expect(await kwd.run("create_transaction", { type: "expense", amount: "12.345", accountId: "acc_kwd", language: "pt" })).toMatchObject({
+    expect(await kwd.run("create_transaction", { type: "expense", amount: "12.345", accountId: "00000001-0000-4000-8000-000000000005", language: "pt" })).toMatchObject({
       error: "invalid_input",
       message: expect.stringMatching(/KWD only supports 2 decimal places in DALVA/),
     });
     expect(kwd.finance.actions).toHaveLength(0);
     // "12.34" and "12.340" are the same storable amount.
-    expect(await kwd.run("create_transaction", { type: "expense", amount: "12.34", accountId: "acc_kwd", language: "pt" })).toMatchObject({
+    expect(await kwd.run("create_transaction", { type: "expense", amount: "12.34", accountId: "00000001-0000-4000-8000-000000000005", language: "pt" })).toMatchObject({
       status: "awaiting_confirmation",
     });
     expect(kwd.finance.actions[0]!.input.amount).toEqual({ amountMinor: 12_340, currency: "KWD" });
@@ -135,11 +135,11 @@ describe("create_transaction", () => {
       [{ amount: "-5" }, /amount/i],
       [{ amount: "5000.123" }, /2 decimal/],
       [{ amount: "1,5" }, /amount/i],
-      [{ accountId: "acc_jpy", subcategoryId: undefined, categoryId: undefined, amount: "1.5" }, /0 decimal/],
+      [{ accountId: "00000001-0000-4000-8000-000000000006", subcategoryId: undefined, categoryId: undefined, amount: "1.5" }, /0 decimal/],
       [{ currency: "USD" }, /AOA/],
-      [{ categoryId: "cat_salary", subcategoryId: undefined }, /income category/i],
-      [{ subcategoryId: "sub_fuel" }, /subcategory/i],
-      [{ accountId: "acc_old" }, /archived/i],
+      [{ categoryId: "00000002-0000-4000-8000-000000000004", subcategoryId: undefined }, /income category/i],
+      [{ subcategoryId: "00000003-0000-4000-8000-000000000002" }, /subcategory/i],
+      [{ accountId: "00000001-0000-4000-8000-000000000008" }, /archived/i],
       [{ date: "2026-02-30" }, /date/i],
     ];
     for (const [patch, message] of cases) {
@@ -149,12 +149,12 @@ describe("create_transaction", () => {
       expect(finance.actions, JSON.stringify(patch)).toHaveLength(0);
     }
     const missing = setup();
-    expect(await missing.run("create_transaction", expense({ accountId: "acc_nope" }))).toMatchObject({ error: "not_found" });
+    expect(await missing.run("create_transaction", expense({ accountId: "00000001-0000-4000-8000-000000000010" }))).toMatchObject({ error: "not_found" });
   });
 
   test("trailing zeros past the currency's decimals are fine; an out-of-range amount is invalid input", async () => {
     const jpy = setup();
-    await jpy.run("create_transaction", { type: "expense", amount: "1500.00", accountId: "acc_jpy", language: "en" });
+    await jpy.run("create_transaction", { type: "expense", amount: "1500.00", accountId: "00000001-0000-4000-8000-000000000006", language: "en" });
     expect(jpy.finance.actions[0]!.input.amount).toEqual({ amountMinor: 1500, currency: "JPY" });
     const huge = setup();
     expect(await huge.run("create_transaction", expense({ amount: "999999999999999999999" }))).toMatchObject({ error: "invalid_input" });
@@ -163,8 +163,8 @@ describe("create_transaction", () => {
 
   test("a subcategory alone implies its category", async () => {
     const { run, finance } = setup();
-    await run("create_transaction", expense({ categoryId: undefined, subcategoryId: "sub_taxi", language: "en" }));
-    expect(finance.actions[0]!.input).toMatchObject({ categoryId: "cat_transport", subcategoryId: "sub_taxi" });
+    await run("create_transaction", expense({ categoryId: undefined, subcategoryId: "00000003-0000-4000-8000-000000000003", language: "en" }));
+    expect(finance.actions[0]!.input).toMatchObject({ categoryId: "00000002-0000-4000-8000-000000000002", subcategoryId: "00000003-0000-4000-8000-000000000003" });
     expect(finance.actions[0]!.summary).toBe("Expense · 5,000.00 AOA · Transporte › Táxi / Yango · BAI Conta Ordem · today");
   });
 
@@ -184,7 +184,7 @@ describe("one action per turn and idempotent creation", () => {
     const [a, b] = await Promise.all([run("create_transaction", expense()), run("create_transaction", expense({ amount: "10" }))]);
     expect([a, b].filter((r) => r.status === "awaiting_confirmation")).toHaveLength(1);
     expect([a, b].find((r) => r.error)).toMatchObject({ error: "one_at_a_time" });
-    expect(await run("create_transfer", { amount: "1", fromAccountId: "acc_bai", toAccountId: "acc_poup", language: "pt" })).toMatchObject({
+    expect(await run("create_transfer", { amount: "1", fromAccountId: "00000001-0000-4000-8000-000000000001", toAccountId: "00000001-0000-4000-8000-000000000002", language: "pt" })).toMatchObject({
       error: "one_at_a_time",
     });
     expect(finance.actions).toHaveLength(1);
@@ -225,10 +225,10 @@ describe("one action per turn and idempotent creation", () => {
 describe("update_transaction and delete_transaction", () => {
   test("update proposes only the changed fields, described against the current row", async () => {
     const { run, finance } = setup();
-    const result = await run("update_transaction", { id: "tx_1", amount: "20000", date: "2026-11-11", language: "pt" });
+    const result = await run("update_transaction", { id: "00000004-0000-4000-8000-000000000001", amount: "20000", date: "2026-11-11", language: "pt" });
     expect(finance.actions[0]).toMatchObject({
       operation: "transactions.update",
-      input: { id: "tx_1", amount: { amountMinor: 2_000_000, currency: "AOA" }, date: TODAY },
+      input: { id: "00000004-0000-4000-8000-000000000001", amount: { amountMinor: 2_000_000, currency: "AOA" }, date: TODAY },
     });
     expect(result.summary).toBe(
       "Editar despesa · valor: 18 450,00 AOA → 20 000,00 AOA · data: ontem → hoje · Alimentação › Supermercado · BAI Conta Ordem · “Kero Talatona”",
@@ -237,7 +237,7 @@ describe("update_transaction and delete_transaction", () => {
 
   test("update in English, moving to another category", async () => {
     const { run } = setup();
-    const result = await run("update_transaction", { id: "tx_2", categoryId: "cat_fun", language: "en" });
+    const result = await run("update_transaction", { id: "00000004-0000-4000-8000-000000000005", categoryId: "00000002-0000-4000-8000-000000000003", language: "en" });
     expect(result.summary).toBe("Edit expense · category: Transporte › Táxi / Yango → Lazer · 6,500.00 AOA · Carteira · Nov 9, 2026 · “Yango”");
   });
 
@@ -249,18 +249,18 @@ describe("update_transaction and delete_transaction", () => {
       const index = finance.accounts.findIndex((a) => a.id === id);
       finance.accounts[index] = { ...finance.accounts[index], name };
     };
-    rename("acc_bai", long("Conta principal"));
-    rename("acc_cash", long("Carteira de casa"));
-    finance.reads.set("/transactions/tx_long", {
-      transaction: { id: "tx_long", type: "expense", amount: { amountMinor: 100, currency: "AOA" }, accountId: "acc_bai", categoryId: "cat_food", subcategoryId: "sub_rest", date: "2026-11-01", description: "d".repeat(200), payee: "p".repeat(100) },
+    rename("00000001-0000-4000-8000-000000000001", long("Conta principal"));
+    rename("00000001-0000-4000-8000-000000000003", long("Carteira de casa"));
+    finance.reads.set("/transactions/00000004-0000-4000-8000-000000000003", {
+      transaction: { id: "00000004-0000-4000-8000-000000000003", type: "expense", amount: { amountMinor: 100, currency: "AOA" }, accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000001", subcategoryId: "00000003-0000-4000-8000-000000000001", date: "2026-11-01", description: "d".repeat(200), payee: "p".repeat(100) },
     });
     const newDescription = `Novo ${"n".repeat(190)}`;
     const result = await run("update_transaction", {
-      id: "tx_long",
+      id: "00000004-0000-4000-8000-000000000003",
       amount: "20000",
-      accountId: "acc_cash",
-      categoryId: "cat_transport",
-      subcategoryId: "sub_fuel",
+      accountId: "00000001-0000-4000-8000-000000000003",
+      categoryId: "00000002-0000-4000-8000-000000000002",
+      subcategoryId: "00000003-0000-4000-8000-000000000002",
       date: "2026-11-11",
       description: newDescription,
       language: "pt",
@@ -272,14 +272,14 @@ describe("update_transaction and delete_transaction", () => {
     for (const shown of ["conta:", "categoria:", "Transporte › Combustível", "data: 01/11/2026 → hoje", `“${newDescription}”`]) {
       expect(summary, shown).toContain(shown);
     }
-    expect(finance.actions[0]!.input).toMatchObject({ description: newDescription, accountId: "acc_cash", subcategoryId: "sub_fuel" });
+    expect(finance.actions[0]!.input).toMatchObject({ description: newDescription, accountId: "00000001-0000-4000-8000-000000000003", subcategoryId: "00000003-0000-4000-8000-000000000002" });
 
     const tooMuch = await run("update_transaction", {
-      id: "tx_long",
+      id: "00000004-0000-4000-8000-000000000003",
       type: "income",
       amount: "20000",
-      accountId: "acc_cash",
-      categoryId: "cat_freelance",
+      accountId: "00000001-0000-4000-8000-000000000003",
+      categoryId: "00000002-0000-4000-8000-000000000007",
       date: "2026-11-11",
       description: newDescription,
       payee: "q".repeat(100),
@@ -289,17 +289,17 @@ describe("update_transaction and delete_transaction", () => {
     // Long category names plus long new texts: even without the old values it can't all fit.
     const categories = (finance.reads.get("/categories") as { items: any[] }).items;
     const subcategories = (finance.reads.get("/subcategories") as { items: any[] }).items;
-    finance.reads.set("/categories", { items: [...categories, { id: "cat_long", name: "c".repeat(80), type: "income", isDefault: false }] });
-    finance.reads.set("/subcategories", { items: [...subcategories, { id: "sub_long", categoryId: "cat_long", name: "s".repeat(80), archived: false, sortOrder: 1 }] });
+    finance.reads.set("/categories", { items: [...categories, { id: "00000002-0000-4000-8000-000000000006", name: "c".repeat(80), type: "income", isDefault: false }] });
+    finance.reads.set("/subcategories", { items: [...subcategories, { id: "00000003-0000-4000-8000-000000000006", categoryId: "00000002-0000-4000-8000-000000000006", name: "s".repeat(80), archived: false, sortOrder: 1 }] });
     const fresh = setup({ finance, eventId: "5002" });
     expect(
       await fresh.run("update_transaction", {
-        id: "tx_long",
+        id: "00000004-0000-4000-8000-000000000003",
         type: "income",
         amount: "20000",
-        accountId: "acc_cash",
-        categoryId: "cat_long",
-        subcategoryId: "sub_long",
+        accountId: "00000001-0000-4000-8000-000000000003",
+        categoryId: "00000002-0000-4000-8000-000000000006",
+        subcategoryId: "00000003-0000-4000-8000-000000000006",
         date: "2026-11-11",
         description: newDescription,
         payee: "q".repeat(100),
@@ -318,21 +318,21 @@ describe("update_transaction and delete_transaction", () => {
     expect(result.summary).toContain(payee);
     const goal = setup();
     const note = `Nota ${"c".repeat(190)}`;
-    expect((await goal.run("add_goal_contribution", { goalId: "goal_trip", amount: "1", note, language: "pt" })).summary).toContain(`“${note}”`);
+    expect((await goal.run("add_goal_contribution", { goalId: "00000005-0000-4000-8000-000000000002", amount: "1", note, language: "pt" })).summary).toContain(`“${note}”`);
   });
 
   test("update refuses no-op, managed rows and a cross-currency move without an amount", async () => {
     const { run, finance } = setup();
-    expect(await run("update_transaction", { id: "tx_1", language: "en" })).toMatchObject({ error: "invalid_input" });
-    expect(await run("update_transaction", { id: "tx_tr_out", amount: "1", language: "en" })).toMatchObject({
+    expect(await run("update_transaction", { id: "00000004-0000-4000-8000-000000000001", language: "en" })).toMatchObject({ error: "invalid_input" });
+    expect(await run("update_transaction", { id: "00000004-0000-4000-8000-000000000004", amount: "1", language: "en" })).toMatchObject({
       error: "managed",
       message: expect.stringMatching(/delete_transfer/),
     });
-    expect(await run("update_transaction", { id: "tx_debt", amount: "1", language: "en" })).toMatchObject({ error: "managed" });
-    expect(await run("update_transaction", { id: "tx_1", accountId: "acc_usd", language: "en" })).toMatchObject({
+    expect(await run("update_transaction", { id: "00000004-0000-4000-8000-000000000007", amount: "1", language: "en" })).toMatchObject({ error: "managed" });
+    expect(await run("update_transaction", { id: "00000004-0000-4000-8000-000000000001", accountId: "00000001-0000-4000-8000-000000000004", language: "en" })).toMatchObject({
       message: expect.stringMatching(/amount/),
     });
-    expect(await run("update_transaction", { id: "tx_1", type: "income", language: "en" })).toMatchObject({
+    expect(await run("update_transaction", { id: "00000004-0000-4000-8000-000000000001", type: "income", language: "en" })).toMatchObject({
       message: expect.stringMatching(/category/),
     });
     expect(finance.actions).toHaveLength(0);
@@ -340,93 +340,93 @@ describe("update_transaction and delete_transaction", () => {
 
   test("delete describes the row being deleted", async () => {
     const { run, finance } = setup();
-    const result = await run("delete_transaction", { id: "tx_1", language: "pt" });
-    expect(finance.actions[0]).toMatchObject({ operation: "transactions.delete", input: { id: "tx_1" } });
+    const result = await run("delete_transaction", { id: "00000004-0000-4000-8000-000000000001", language: "pt" });
+    expect(finance.actions[0]).toMatchObject({ operation: "transactions.delete", input: { id: "00000004-0000-4000-8000-000000000001" } });
     expect(result.summary).toBe("Apagar despesa · 18 450,00 AOA · ontem · Alimentação › Supermercado · BAI Conta Ordem · “Kero Talatona”");
     const managed = setup();
-    expect(await managed.run("delete_transaction", { id: "tx_tr_in", language: "en" })).toMatchObject({ error: "managed" });
-    expect(await managed.run("delete_transaction", { id: "tx_missing", language: "en" })).toMatchObject({ error: "not_found" });
+    expect(await managed.run("delete_transaction", { id: "00000004-0000-4000-8000-000000000002", language: "en" })).toMatchObject({ error: "managed" });
+    expect(await managed.run("delete_transaction", { id: "00000004-0000-4000-8000-000000000008", language: "en" })).toMatchObject({ error: "not_found" });
   });
 });
 
 describe("transfers", () => {
   test("create: same currency only, different accounts", async () => {
     const { run, finance } = setup();
-    expect(await run("create_transfer", { amount: "20000", fromAccountId: "acc_bai", toAccountId: "acc_usd", language: "pt" })).toMatchObject({
+    expect(await run("create_transfer", { amount: "20000", fromAccountId: "00000001-0000-4000-8000-000000000001", toAccountId: "00000001-0000-4000-8000-000000000004", language: "pt" })).toMatchObject({
       message: expect.stringMatching(/currenc/i),
     });
-    expect(await run("create_transfer", { amount: "20000", fromAccountId: "acc_bai", toAccountId: "acc_bai", language: "pt" })).toMatchObject({
+    expect(await run("create_transfer", { amount: "20000", fromAccountId: "00000001-0000-4000-8000-000000000001", toAccountId: "00000001-0000-4000-8000-000000000001", language: "pt" })).toMatchObject({
       error: "invalid_input",
     });
-    const result = await run("create_transfer", { amount: "20000", fromAccountId: "acc_bai", toAccountId: "acc_poup", language: "pt" });
+    const result = await run("create_transfer", { amount: "20000", fromAccountId: "00000001-0000-4000-8000-000000000001", toAccountId: "00000001-0000-4000-8000-000000000002", language: "pt" });
     expect(result.summary).toBe("Transferência · 20 000,00 AOA · BAI Conta Ordem → Poupança BFA · hoje");
     expect(finance.actions[0]).toMatchObject({
       operation: "transfers.create",
-      input: { amount: { amountMinor: 2_000_000, currency: "AOA" }, fromAccountId: "acc_bai", toAccountId: "acc_poup", date: TODAY },
+      input: { amount: { amountMinor: 2_000_000, currency: "AOA" }, fromAccountId: "00000001-0000-4000-8000-000000000001", toAccountId: "00000001-0000-4000-8000-000000000002", date: TODAY },
     });
   });
 
   test("delete from either leg names both accounts; goal-contribution transfers are refused", async () => {
     const { run, finance } = setup();
-    const result = await run("delete_transfer", { id: "tx_tr_in", language: "en" });
+    const result = await run("delete_transfer", { id: "00000004-0000-4000-8000-000000000002", language: "en" });
     expect(result.summary).toBe("Delete transfer · 20,000.00 AOA · BAI Conta Ordem → Poupança BFA · Nov 7, 2026");
-    expect(finance.actions[0]).toMatchObject({ operation: "transfers.delete", input: { id: "tx_tr_in" } });
+    expect(finance.actions[0]).toMatchObject({ operation: "transfers.delete", input: { id: "00000004-0000-4000-8000-000000000002" } });
     const other = setup();
-    expect(await other.run("delete_transfer", { id: "tx_goal", language: "en" })).toMatchObject({ error: "managed" });
-    expect(await other.run("delete_transfer", { id: "tx_1", language: "en" })).toMatchObject({ error: "invalid_input" });
+    expect(await other.run("delete_transfer", { id: "00000004-0000-4000-8000-000000000006", language: "en" })).toMatchObject({ error: "managed" });
+    expect(await other.run("delete_transfer", { id: "00000004-0000-4000-8000-000000000001", language: "en" })).toMatchObject({ error: "invalid_input" });
   });
 });
 
 describe("goal contributions and debt payments", () => {
   test("a linked goal needs the source account; the summary names goal and account", async () => {
     const { run, finance } = setup();
-    expect(await run("add_goal_contribution", { goalId: "goal_car", amount: "50000", language: "pt" })).toMatchObject({
+    expect(await run("add_goal_contribution", { goalId: "00000005-0000-4000-8000-000000000001", amount: "50000", language: "pt" })).toMatchObject({
       message: expect.stringMatching(/account/),
     });
-    const result = await run("add_goal_contribution", { goalId: "goal_car", amount: "50000", fromAccountId: "acc_bai", language: "pt" });
+    const result = await run("add_goal_contribution", { goalId: "00000005-0000-4000-8000-000000000001", amount: "50000", fromAccountId: "00000001-0000-4000-8000-000000000001", language: "pt" });
     expect(result.summary).toBe("Contribuição para meta · 50 000,00 AOA · Carro · de BAI Conta Ordem · hoje");
     expect(finance.actions[0]).toMatchObject({
       operation: "goalContributions.add",
-      input: { goalId: "goal_car", amount: { amountMinor: 5_000_000, currency: "AOA" }, fromAccountId: "acc_bai", date: TODAY },
+      input: { goalId: "00000005-0000-4000-8000-000000000001", amount: { amountMinor: 5_000_000, currency: "AOA" }, fromAccountId: "00000001-0000-4000-8000-000000000001", date: TODAY },
     });
   });
 
   test("a virtual goal takes no account", async () => {
     const { run, finance } = setup();
-    const result = await run("add_goal_contribution", { goalId: "goal_trip", amount: "10000", language: "en" });
+    const result = await run("add_goal_contribution", { goalId: "00000005-0000-4000-8000-000000000002", amount: "10000", language: "en" });
     expect(result.summary).toBe("Goal contribution · 10,000.00 AOA · Viagem a Lisboa · today");
     expect(finance.actions[0]!.input).not.toHaveProperty("fromAccountId");
   });
 
   test("debt payment with interest splits principal and interest", async () => {
     const { run, finance } = setup();
-    const result = await run("record_debt_payment", { debtId: "debt_car", amount: "95000", interest: "5000", fromAccountId: "acc_bai", language: "en" });
+    const result = await run("record_debt_payment", { debtId: "00000006-0000-4000-8000-000000000001", amount: "95000", interest: "5000", fromAccountId: "00000001-0000-4000-8000-000000000001", language: "en" });
     expect(finance.actions[0]).toMatchObject({
       operation: "debtPayments.record",
       input: {
-        debtId: "debt_car",
+        debtId: "00000006-0000-4000-8000-000000000001",
         amount: { amountMinor: 9_500_000, currency: "AOA" },
         principalAmount: { amountMinor: 9_000_000, currency: "AOA" },
         interestAmount: { amountMinor: 500_000, currency: "AOA" },
-        fromAccountId: "acc_bai",
+        fromAccountId: "00000001-0000-4000-8000-000000000001",
         date: TODAY,
       },
     });
     expect(result.summary).toBe("Debt payment · 95,000.00 AOA · Crédito automóvel · from BAI Conta Ordem · today · interest 5,000.00 AOA");
     const over = setup();
-    expect(await over.run("record_debt_payment", { debtId: "debt_car", amount: "2000000.01", fromAccountId: "acc_bai", language: "pt" })).toMatchObject({
+    expect(await over.run("record_debt_payment", { debtId: "00000006-0000-4000-8000-000000000001", amount: "2000000.01", fromAccountId: "00000001-0000-4000-8000-000000000001", language: "pt" })).toMatchObject({
       error: "invalid_input",
       message: expect.stringMatching(/2 000 000,00 AOA/),
     });
     // Interest doesn't count against the balance.
     expect(
-      await over.run("record_debt_payment", { debtId: "debt_car", amount: "2100000", interest: "100000", fromAccountId: "acc_bai", language: "pt" }),
+      await over.run("record_debt_payment", { debtId: "00000006-0000-4000-8000-000000000001", amount: "2100000", interest: "100000", fromAccountId: "00000001-0000-4000-8000-000000000001", language: "pt" }),
     ).toMatchObject({ status: "awaiting_confirmation" });
     const bad = setup();
-    expect(await bad.run("record_debt_payment", { debtId: "debt_car", amount: "100", interest: "200", fromAccountId: "acc_bai", language: "en" })).toMatchObject({
+    expect(await bad.run("record_debt_payment", { debtId: "00000006-0000-4000-8000-000000000001", amount: "100", interest: "200", fromAccountId: "00000001-0000-4000-8000-000000000001", language: "en" })).toMatchObject({
       error: "invalid_input",
     });
-    expect(await bad.run("record_debt_payment", { debtId: "debt_car", amount: "100", fromAccountId: "acc_usd", language: "en" })).toMatchObject({
+    expect(await bad.run("record_debt_payment", { debtId: "00000006-0000-4000-8000-000000000001", amount: "100", fromAccountId: "00000001-0000-4000-8000-000000000004", language: "en" })).toMatchObject({
       message: expect.stringMatching(/AOA/),
     });
   });

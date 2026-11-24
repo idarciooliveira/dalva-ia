@@ -1,4 +1,4 @@
-import type { Debt, DebtType } from "@mpf/finance-contract";
+import type { Debt, DebtType } from "@/lib/api/types";
 
 export const DEBT_TYPES = [
   { value: "credit_card", label: "Credit card" },

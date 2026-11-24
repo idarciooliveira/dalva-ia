@@ -5,8 +5,8 @@ import { createAuth } from "../src/auth/auth";
 import type { SignInLimiter } from "../src/auth/sign-in-limit";
 import { createUserTokens } from "../src/auth/tokens";
 import { users } from "../src/db/schema";
-import type { Operations, ServiceOperations } from "../src/http/operation";
-import type { OperationSettings } from "../src/http/v1";
+import { agentRead, financeRead, router, serviceRead, type TrpcSettings, webWriteNoKey } from "../src/trpc/init";
+import type { AnyTRPCRouter } from "@trpc/server";
 import { createLogger, type Logger } from "../src/log";
 import { testDb } from "./db";
 
@@ -24,10 +24,10 @@ export function testApp(
     logger?: Logger;
     clientIpHeader?: string;
     signInLimiter?: SignInLimiter;
-    operations?: Operations;
-    serviceOperations?: ServiceOperations;
+    /** A router in place of the API's (procedures built with the builders of `src/trpc/init.ts`). */
+    router?: AnyTRPCRouter;
     serviceKey?: string | null;
-    operationSettings?: OperationSettings;
+    settings?: TrpcSettings;
   } = {},
 ) {
   const logger = options.logger ?? silentLogger;
@@ -40,10 +40,9 @@ export function testApp(
     tokens: testTokens,
     publicUrl,
     signInLimiter: options.signInLimiter,
-    operations: options.operations,
-    serviceOperations: options.serviceOperations,
+    trpcRouter: options.router,
     serviceKey: options.serviceKey === null ? undefined : (options.serviceKey ?? TEST_SERVICE_KEY),
-    operationSettings: options.operationSettings,
+    settings: options.settings,
   });
   return { app, auth };
 }
@@ -51,4 +50,23 @@ export function testApp(
 export async function createTestUser(email = `user-${randomUUID()}@example.com`): Promise<string> {
   const [row] = await testDb().insert(users).values({ name: "Test", email }).returning({ id: users.id });
   return row!.id;
+}
+
+/**
+ * Procedures that answer who called, for credential tests: `probe.me`
+ * (`finance:read`), `probe.write` (`finance:write`, web, no key),
+ * `probe.agentOnly` (`agent:state`) and `probe.service` (the service key).
+ */
+export const probeRouter = router({
+  probe: router({
+    me: financeRead.query(({ ctx }) => ctx.user),
+    write: webWriteNoKey.mutation(() => null),
+    agentOnly: agentRead.query(() => null),
+    service: serviceRead.query(() => ({ kind: "service" as const })),
+  }),
+});
+
+/** The API error code of a response (`error.data.apiCode`). */
+export async function apiCodeOf(response: Response): Promise<string | undefined> {
+  return ((await response.json()) as { error?: { data?: { apiCode?: string } } }).error?.data?.apiCode;
 }

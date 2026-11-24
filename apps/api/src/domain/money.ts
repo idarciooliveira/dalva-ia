@@ -1,10 +1,16 @@
-import { currencyExponent, type Money } from "@mpf/finance-contract";
+import { currencyExponent } from "@mpf/shared";
+
+/** Integer ISO minor units in a currency. */
+export interface Money {
+  amountMinor: number;
+  currency: string;
+}
 
 import { DomainError, invalid } from "./errors";
 
 /**
  * The database stores every currency as value × 100 (as Convex did), whatever
- * its ISO exponent. The contract speaks ISO 4217 minor units. This module is
+ * its ISO exponent. The API speaks ISO 4217 minor units. This module is
  * the only place that converts between the two.
  *
  * - 2-decimal currencies (USD, EUR, AOA, ...) pass through unchanged.

@@ -1,8 +1,7 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { formatMinorAmount } from "@mpf/finance-contract";
-import type { Account, RouteInput, UserRoutes } from "@mpf/finance-contract";
+import { formatMinorAmount } from "@mpf/shared";
 
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useSignOut } from "@/hooks/use-session";
@@ -12,6 +11,8 @@ import { accountsQuery, defaultCategoriesQuery } from "@/lib/api/queries";
 import { queryKeys } from "@/lib/api/keys";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fingerprint } from "@/lib/api/idempotency";
+import type { RouterInputs } from "@/lib/api/trpc";
+import type { Account } from "@/lib/api/types";
 import { parseDecimalInput } from "@/lib/money";
 import { FormError, FullPageError } from "@/components/error-state";
 import { StepIndicator } from "@/components/onboarding/step-indicator";
@@ -46,7 +47,7 @@ function OnboardingPage() {
   return <OnboardingWizard initialCurrency={baseCurrency ?? "USD"} resumed={baseCurrency !== undefined} />;
 }
 
-type AccountInput = RouteInput<UserRoutes["accounts"]["create"]>;
+type AccountInput = RouterInputs["accounts"]["create"];
 /** What onboarding last saved for a draft, so a later Continue only sends the difference. */
 type SavedAccount = { accountId: string; input: AccountInput };
 

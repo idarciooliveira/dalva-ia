@@ -1,27 +1,16 @@
 /**
- * Helpers for `/api/v1` tests: seed users and rows, mint tokens, and call the
- * app in-process through the contract's own client (so every success is
- * parsed with the route's response schema) or raw, for what the typed client
- * would refuse to send.
+ * Helpers for API tests: seed users and rows, mint tokens, and call the app
+ * in-process through a tRPC client (`clientFor(app, token).group.op(input)`)
+ * or raw, for what the typed client would refuse to send.
  */
-import {
-  API_BASE_PATH,
-  AUTHORIZATION_HEADER,
-  bearerAuthorization,
-  createFinanceClient,
-  createFinanceServiceClient,
-  errorEnvelopeSchema,
-  IDEMPOTENCY_KEY_HEADER,
-  FinanceApiError,
-  successEnvelope,
-  type ErrorCode,
-  type RouteDef,
-  type TokenScope,
-} from "@mpf/finance-contract";
+import { randomUUID } from "node:crypto";
+
+import { createTRPCUntypedClient, httpLink, TRPCClientError } from "@trpc/client";
+import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import { eq } from "drizzle-orm";
 import { expect } from "vitest";
 
-import { TOKEN_SCOPES } from "../src/auth/tokens";
+import { TOKEN_SCOPES, type TokenScope } from "../src/auth/tokens";
 import {
   accounts,
   categories,
@@ -35,7 +24,8 @@ import {
   userProfiles,
   users,
 } from "../src/db/schema";
-import { DomainError } from "../src/domain/errors";
+import { DomainError, type ErrorCode } from "../src/domain/errors";
+import { type AppRouter, appRouter } from "../src/trpc/router";
 import { createTestUser, TEST_SERVICE_KEY, testApp, testTokens } from "./app";
 import { testDb } from "./db";
 
@@ -211,84 +201,172 @@ export const transactionRows = () => testDb().select().from(transactions);
 export const tokenFor = (userId: string, scopes: TokenScope[] = ALL_SCOPES, options: { ttl?: number; channelIdentityId?: string } = {}) =>
   testTokens.mint(userId, scopes, options.ttl ?? 600, { channelIdentityId: options.channelIdentityId });
 
-/** The contract's client, calling `app` in-process with `token`. */
-export function clientFor(app: TestApp, token: string) {
-  return createFinanceClient({ baseUrl: "https://finance.test", getToken: () => token, fetch: inProcess(app) });
+/** A failed call, in the API's error vocabulary (`error.data.apiCode`). */
+export class ApiError extends Error {
+  override name = "ApiError";
+  constructor(
+    readonly code: ErrorCode,
+    message: string,
+    readonly status: number,
+    readonly details?: unknown,
+  ) {
+    super(message);
+  }
+}
+
+type Inputs = inferRouterInputs<AppRouter>;
+type Outputs = inferRouterOutputs<AppRouter>;
+export interface CallOptions {
+  idempotencyKey?: string;
+}
+/** `client.transactions.create(input)`: every procedure as one function, query or mutation. */
+export type ApiClient = {
+  [G in keyof Inputs]: {
+    [O in keyof Inputs[G]]: undefined extends Inputs[G][O]
+      ? (input?: Inputs[G][O], options?: CallOptions) => Promise<Outputs[G][O]>
+      : (input: Inputs[G][O], options?: CallOptions) => Promise<Outputs[G][O]>;
+  };
+};
+
+const procedures = appRouter._def.procedures as unknown as Record<string, { _def: { type: "query" | "mutation" | "subscription" } }>;
+
+function typeOf(path: string): "query" | "mutation" {
+  const procedure = procedures[path];
+  return procedure?._def.type === "query" ? "query" : "mutation";
 }
 
 /** `fetch` that calls `app` in-process. */
-function inProcess(app: TestApp): typeof fetch {
+export function inProcess(app: TestApp): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     return await app.request(`${url.pathname}${url.search}`, init);
   }) as typeof fetch;
 }
 
-/** The contract's service client (the agent's service key), calling `app` in-process. */
-export function serviceClientFor(app: TestApp, serviceKey = TEST_SERVICE_KEY) {
-  return createFinanceServiceClient({ baseUrl: "https://finance.test", getServiceKey: () => serviceKey, fetch: inProcess(app) });
+function toApiError(error: unknown): unknown {
+  if (!(error instanceof TRPCClientError)) return error;
+  const data = error.data as { apiCode?: ErrorCode; httpStatus?: number; details?: unknown } | undefined;
+  return new ApiError(data?.apiCode ?? "internal", error.message, data?.httpStatus ?? 0, data?.details);
 }
+
+/** A client calling `app` in-process with `Authorization: Bearer <credential>` (a user token or the service key). */
+function clientWith(app: TestApp, credential: string): ApiClient {
+  const client = createTRPCUntypedClient<AppRouter>({
+    links: [
+      httpLink({
+        url: "https://finance.test/api/trpc",
+        fetch: inProcess(app),
+        headers: ({ op }) => {
+          const key = op.context.idempotencyKey as string | undefined;
+          return { authorization: `Bearer ${credential}`, ...(op.type === "mutation" ? { "idempotency-key": key ?? randomUUID() } : {}) };
+        },
+      }),
+    ],
+  });
+  return new Proxy({} as ApiClient, {
+    get: (_target, group: string) =>
+      new Proxy(
+        {},
+        {
+          get: (_inner, op: string) => async (input?: unknown, options: CallOptions = {}) => {
+            const path = `${group}.${op}`;
+            const context = options.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : {};
+            try {
+              return typeOf(path) === "query" ? await client.query(path, input, { context }) : await client.mutation(path, input, { context });
+            } catch (error) {
+              throw toApiError(error);
+            }
+          },
+        },
+      ),
+  });
+}
+
+/** The user's client, calling `app` in-process with `token`. */
+export const clientFor = (app: TestApp, token: string) => clientWith(app, token);
+
+/** The agent's service-key client, calling `app` in-process. */
+export const serviceClientFor = (app: TestApp, serviceKey = TEST_SERVICE_KEY) => clientWith(app, serviceKey);
 
 export interface RawResponse {
   status: number;
   headers: Headers;
+  /** The tRPC answer as `{ ok, data }` / `{ ok: false, error: { code, message, details } }` (`code` is `apiCode`). */
   body: { ok: boolean; data?: unknown; error?: { code: ErrorCode; message: string; details?: unknown } };
 }
 
-/** Raw HTTP call to `/api/v1${path}`. `token` becomes a bearer header, `cookie` a session cookie. */
+/**
+ * Raw HTTP call to `/api/trpc/<path>`: GET with `?input=` for queries, POST
+ * with a JSON body for mutations (`type` overrides it, for procedures of a
+ * test router). `token` becomes a bearer header, `cookie` a session cookie.
+ */
 export async function raw(
   app: TestApp,
-  method: string,
   path: string,
+  input?: unknown,
   options: {
     token?: string;
     cookie?: string;
-    body?: unknown;
     rawBody?: string;
     idempotencyKey?: string;
     headers?: Record<string, string>;
+    type?: "query" | "mutation";
   } = {},
 ): Promise<RawResponse> {
   const headers: Record<string, string> = { ...options.headers };
-  if (options.token) headers[AUTHORIZATION_HEADER] = bearerAuthorization(options.token);
-  if (options.cookie) headers.Cookie = options.cookie;
-  if (options.idempotencyKey) headers[IDEMPOTENCY_KEY_HEADER] = options.idempotencyKey;
-  let body: string | undefined = options.rawBody;
-  if (options.body !== undefined) {
-    body = JSON.stringify(options.body);
-    headers["Content-Type"] = "application/json";
+  if (options.token) headers.authorization = `Bearer ${options.token}`;
+  if (options.cookie) headers.cookie = options.cookie;
+  if (options.idempotencyKey) headers["idempotency-key"] = options.idempotencyKey;
+  const type = options.type ?? typeOf(path);
+  let response: Response;
+  if (type === "query") {
+    const query = input === undefined ? "" : `?input=${encodeURIComponent(JSON.stringify(input))}`;
+    response = await app.request(`/api/trpc/${path}${query}`, { headers });
+  } else {
+    headers["content-type"] = "application/json";
+    const body = options.rawBody ?? (input === undefined ? undefined : JSON.stringify(input));
+    response = await app.request(`/api/trpc/${path}`, { method: "POST", headers, body });
   }
-  const response = await app.request(`${API_BASE_PATH}${path}`, { method, headers, body });
-  return { status: response.status, headers: response.headers, body: (await response.json()) as RawResponse["body"] };
+  const json = (await response.json()) as { result?: { data: unknown }; error?: { message: string; data?: { apiCode: ErrorCode; details?: unknown } } };
+  const body: RawResponse["body"] = json.error
+    ? {
+        ok: false,
+        error: {
+          code: json.error.data?.apiCode ?? "internal",
+          message: json.error.message,
+          ...(json.error.data?.details === undefined ? {} : { details: json.error.data.details }),
+        },
+      }
+    : { ok: true, data: json.result?.data };
+  return { status: response.status, headers: response.headers, body };
 }
 
 /* Assertions --------------------------------------------------------------- */
 
-/** A raw success response that conforms to the route's response schema; returns its `data`. */
-export function expectConforms(route: RouteDef, response: RawResponse) {
-  expect(response.status).toBe(200);
-  const parsed = successEnvelope(route.response).safeParse(response.body);
-  if (!parsed.success) throw new Error(`Contract violation: ${JSON.stringify(parsed.error.issues)}`);
-  return parsed.data.data;
+/** A raw success; returns its `data`. */
+export function expectOk(response: RawResponse) {
+  expect(response.status, JSON.stringify(response.body)).toBe(200);
+  expect(response.body.ok).toBe(true);
+  return response.body.data;
 }
 
-/** A raw response that is the contract's error envelope with `code` and `status`. */
+/** A raw failure with `code` and `status`. */
 export function expectError(response: RawResponse, code: ErrorCode, status: number) {
-  expect(errorEnvelopeSchema.safeParse(response.body).success).toBe(true);
+  expect(response.body.ok).toBe(false);
   expect(response.body.error?.code).toBe(code);
   expect(response.status).toBe(status);
 }
 
 /** Await a client call that must fail with `code` (and `status`). */
-export async function expectApiError(promise: Promise<unknown>, code: ErrorCode, status?: number): Promise<FinanceApiError> {
+export async function expectApiError(promise: Promise<unknown>, code: ErrorCode, status?: number): Promise<ApiError> {
   const error = await promise.then(
     () => {
       throw new Error(`Expected ${code}, but the call succeeded`);
     },
     (e: unknown) => e,
   );
-  expect(error).toBeInstanceOf(FinanceApiError);
-  const apiError = error as FinanceApiError;
+  expect(error).toBeInstanceOf(ApiError);
+  const apiError = error as ApiError;
   expect({ code: apiError.code, message: apiError.message }).toMatchObject({ code });
   if (status !== undefined) expect(apiError.status).toBe(status);
   return apiError;

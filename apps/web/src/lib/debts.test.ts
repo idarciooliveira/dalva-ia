@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { Debt } from "@mpf/finance-contract";
+import type { Debt } from "@/lib/api/types";
 
 import {
   clearedDebtFields,

@@ -1,8 +1,8 @@
 /**
- * Who is calling, with what permissions. `resolvePrincipal` runs once per
- * request (on `/api/v1/*`) and stores the result in the context; the contract
- * router (and `requireUser` on hand-written routes) reads it. Nothing
- * downstream looks at cookies or headers.
+ * Who is calling, with what permissions. `principalFrom` turns a request into
+ * a principal once, when the tRPC context is built (`src/trpc/mount.ts`);
+ * procedures read `ctx.principal` / `ctx.user`. Nothing downstream looks at
+ * cookies or headers.
  *
  * Sources, tried in order; the first one that recognises its credential decides:
  * - service key: `Authorization: Bearer <FINANCE_API_SERVICE_KEY>`, the
@@ -14,18 +14,22 @@
  * A request that carries `Authorization` is never authenticated by cookie, so
  * a bad or unknown bearer credential can't fall back to a browser session.
  */
-import { parseBearerToken, type TokenScope } from "@mpf/finance-contract";
 import { isAPIError } from "better-auth/api";
 import { getSessionCookie } from "better-auth/cookies";
-import type { Context, MiddlewareHandler } from "hono";
+import type { Context } from "hono";
 
 import { type Auth, COOKIE_PREFIX } from "../auth/auth";
 import type { ServiceKey } from "../auth/service-key";
-import type { UserTokens } from "../auth/tokens";
+import type { TokenScope, UserTokens } from "../auth/tokens";
 import { isUuid } from "../db/ids";
-import { errorResponse } from "./errors";
 
 export type Scope = TokenScope;
+
+/** The token of an `Authorization: Bearer <token>` header value. */
+export function parseBearerToken(header: string | null | undefined): string | null {
+  const match = /^Bearer\s+(\S+)$/i.exec(header ?? "");
+  return match?.[1] ?? null;
+}
 
 export interface UserPrincipal {
   kind: "user";
@@ -48,7 +52,7 @@ export interface ServicePrincipal {
 
 export type Principal = UserPrincipal | ServicePrincipal;
 
-export type AppEnv = { Variables: { principal: Principal | null } };
+export type AppEnv = { Variables: Record<string, never> };
 
 export type SourceResult =
   /** This source's credential isn't on the request. */
@@ -72,8 +76,8 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * Origin is anything but `publicUrl` is refused. Browsers send Origin on every
  * cross-origin write; requests without one are not from another site's page.
  *
- * Renewed or cleared cookies are attached with `c.header`, so routes must
- * answer through the context (`c.json`, `c.body`): a raw `Response` drops them.
+ * Renewed or cleared cookies are attached with `c.header`; `mount.ts` makes
+ * them reach tRPC's own response.
  */
 export function sessionSource(auth: Auth, options: { publicUrl: string }): PrincipalSource {
   return async (c) => {
@@ -138,40 +142,13 @@ export function userTokenSource(tokens: UserTokens): PrincipalSource {
   };
 }
 
-/**
- * Resolve the caller and store it as `principal` (null when anonymous). Only
- * an invalid credential is answered here (401); anonymous requests go on, and
- * each route decides with a guard. Errors (e.g. the database is down) reach
- * the app's error handler as 500: never treated as anonymous.
- */
-export function resolvePrincipal(sources: readonly PrincipalSource[]): MiddlewareHandler<AppEnv> {
-  return async (c, next) => {
-    c.set("principal", null);
-    for (const source of sources) {
-      const result = await source(c);
-      if (result.status === "absent") continue;
-      if (result.status === "invalid") return errorResponse(c, "unauthorized", result.message ?? "Invalid or expired credentials");
-      c.set("principal", result.principal);
-      break;
-    }
-    await next();
-  };
-}
+export const INVALID_CREDENTIALS = "Invalid or expired credentials";
 
-/** Route guard: a user principal holding every scope in `scopes`. */
-export function requireUser(...scopes: Scope[]): MiddlewareHandler<AppEnv> {
-  return async (c, next) => {
-    const principal = c.get("principal");
-    if (!principal || principal.kind !== "user") return errorResponse(c, "unauthorized", "Authentication required");
-    const missing = scopes.filter((scope) => !principal.scopes.includes(scope));
-    if (missing.length > 0) return errorResponse(c, "forbidden", `Missing scope: ${missing.join(" ")}`);
-    await next();
-  };
-}
-
-/** The guarded caller. Call only behind `requireUser`. */
-export function userPrincipal(c: Context<AppEnv>): UserPrincipal {
-  const principal = c.get("principal");
-  if (!principal || principal.kind !== "user") throw new Error("userPrincipal() used without requireUser()");
-  return principal;
+/** The first source that recognises its credential decides; `absent` when none does. */
+export async function principalFrom(c: Context<AppEnv>, sources: readonly PrincipalSource[]): Promise<SourceResult> {
+  for (const source of sources) {
+    const result = await source(c);
+    if (result.status !== "absent") return result;
+  }
+  return { status: "absent" };
 }

@@ -48,12 +48,12 @@ test.describe("Settings → Telegram", () => {
     // Unique across parallel workers and browser projects sharing the database.
     const externalUserId = `${Date.now()}${randomInt(1_000_000)}`;
     const chat = { channel: "telegram", externalUserId, chatId: externalUserId };
-    const redeemed = await serviceCall("/channel-links/redeem", { ...chat, code, username: "e2e_user" });
+    const redeemed = await serviceCall("channelLinks.redeem", { ...chat, code, username: "e2e_user" });
     expect(redeemed.status).toBe(200);
 
     // The page polls while the code is pending and switches to the linked view without a reload.
     await expect(page.getByText("Connected as @e2e_user")).toBeVisible({ timeout: 15_000 });
-    expect((await serviceCall("/channel-identities/resolve", chat)).status).toBe(200);
+    expect((await serviceCall("channelIdentities.resolve", chat)).status).toBe(200);
 
     const readOnly = page.getByRole("switch", { name: "Read-only" });
     await expect(readOnly).not.toBeChecked();
@@ -78,6 +78,6 @@ test.describe("Settings → Telegram", () => {
     await page.getByRole("button", { name: /^unlink$/i }).click();
 
     await expect(page.getByRole("button", { name: "Connect Telegram" })).toBeVisible();
-    expect((await serviceCall("/channel-identities/resolve", chat)).status).toBe(404);
+    expect((await serviceCall("channelIdentities.resolve", chat)).status).toBe(404);
   });
 });

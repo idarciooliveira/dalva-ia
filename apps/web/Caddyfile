@@ -19,8 +19,8 @@
 		-Server
 	}
 
-	# Better Auth and the contract routes. The API caps bodies at 1 MiB itself.
-	@api path /api/auth/* /api/v1/*
+	# Better Auth and the API (tRPC). The API caps bodies itself.
+	@api path /api/auth/* /api/trpc/*
 	handle @api {
 		request_body {
 			max_size 2MB

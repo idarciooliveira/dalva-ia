@@ -37,7 +37,7 @@ const one = (tool: string, args?: Record<string, ArgCheck>): ToolExpectation[] =
 export const cases: EvalCase[] = [
   {
     message: "quanto gastei em comida este mês?",
-    expect: [[{ tool: "get_spending_by_category", args: { month: thisMonth } }, { tool: "search_transactions", args: { categoryId: "cat_food" } }]],
+    expect: [[{ tool: "get_spending_by_category", args: { month: thisMonth } }, { tool: "search_transactions", args: { categoryId: "00000002-0000-4000-8000-000000000001" } }]],
   },
   { message: "what's my net worth?", expect: [one("get_net_worth")] },
   { message: "mostra as últimas 5 despesas", expect: [one("search_transactions", { type: "expense", limit: 5 })] },
@@ -63,7 +63,7 @@ export const cases: EvalCase[] = [
     expect: [
       [
         { tool: "get_spending_by_category", args: { month: october } },
-        { tool: "search_transactions", args: { categoryId: "cat_transport", dateFrom: inOctober } },
+        { tool: "search_transactions", args: { categoryId: "00000002-0000-4000-8000-000000000002", dateFrom: inOctober } },
       ],
     ],
   },
@@ -76,7 +76,7 @@ export const cases: EvalCase[] = [
       ],
     ],
   },
-  { message: "list my last 3 transactions on the Visa card", expect: [one("search_transactions", { accountId: "acc_visa", limit: 3 })] },
+  { message: "list my last 3 transactions on the Visa card", expect: [one("search_transactions", { accountId: "00000001-0000-4000-8000-000000000007", limit: 3 })] },
   {
     message: "Quanto gastei no mês passado?",
     expect: [
@@ -106,22 +106,22 @@ export const cases: EvalCase[] = [
   {
     // The account is named ("em dinheiro" = the cash account): the prompt forbids guessing one.
     message: "gastei 5000 kz no almoço hoje, paguei em dinheiro",
-    expect: [one("create_transaction", { type: "expense", amount: amount(5000), accountId: "acc_cash", categoryId: "cat_food" })],
+    expect: [one("create_transaction", { type: "expense", amount: amount(5000), accountId: "00000001-0000-4000-8000-000000000003", categoryId: "00000002-0000-4000-8000-000000000001" })],
     proposes: true,
   },
   {
     message: "recebi o salário de 300 mil no BAI",
-    expect: [one("create_transaction", { type: "income", amount: amount(300_000), accountId: "acc_bai", categoryId: "cat_salary" })],
+    expect: [one("create_transaction", { type: "income", amount: amount(300_000), accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000004" })],
     proposes: true,
   },
   {
     message: "transfere 20000 do BAI para a poupança",
-    expect: [one("create_transfer", { amount: amount(20_000), fromAccountId: "acc_bai", toAccountId: "acc_poup" })],
+    expect: [one("create_transfer", { amount: amount(20_000), fromAccountId: "00000001-0000-4000-8000-000000000001", toAccountId: "00000001-0000-4000-8000-000000000002" })],
     proposes: true,
   },
   {
     message: "apaga a última despesa",
-    expect: [one("search_transactions"), one("delete_transaction", { id: "tx_1" })],
+    expect: [one("search_transactions"), one("delete_transaction", { id: "00000004-0000-4000-8000-000000000001" })],
     proposes: true,
   },
   {
@@ -133,22 +133,22 @@ export const cases: EvalCase[] = [
   },
   {
     message: "I spent 12.99 dollars on Spotify with my Wise account",
-    expect: [one("create_transaction", { type: "expense", amount: amount(12.99), accountId: "acc_usd" })],
+    expect: [one("create_transaction", { type: "expense", amount: amount(12.99), accountId: "00000001-0000-4000-8000-000000000004" })],
     proposes: true,
   },
   {
     message: "add 50000 to my car goal from the BAI account",
-    expect: [one("add_goal_contribution", { goalId: "goal_car", amount: amount(50_000), fromAccountId: "acc_bai" })],
+    expect: [one("add_goal_contribution", { goalId: "00000005-0000-4000-8000-000000000001", amount: amount(50_000), fromAccountId: "00000001-0000-4000-8000-000000000001" })],
     proposes: true,
   },
   {
     message: "paguei 95 mil da prestação do crédito automóvel com o BAI",
-    expect: [one("record_debt_payment", { debtId: "debt_car", amount: amount(95_000), fromAccountId: "acc_bai" })],
+    expect: [one("record_debt_payment", { debtId: "00000006-0000-4000-8000-000000000001", amount: amount(95_000), fromAccountId: "00000001-0000-4000-8000-000000000001" })],
     proposes: true,
   },
   {
     message: "the Kero Talatona expense was actually 20000, please fix it",
-    expect: [one("update_transaction", { id: "tx_1", amount: amount(20_000) })],
+    expect: [one("update_transaction", { id: "00000004-0000-4000-8000-000000000001", amount: amount(20_000) })],
     proposes: true,
   },
   {
@@ -161,7 +161,7 @@ export const cases: EvalCase[] = [
   {
     // Saved claims: the reply must not say it's done before the user confirms.
     message: "regista uma receita de 25000 do freelance no BAI ontem",
-    expect: [one("create_transaction", { type: "income", amount: amount(25_000), accountId: "acc_bai", date: "2026-11-10" })],
+    expect: [one("create_transaction", { type: "income", amount: amount(25_000), accountId: "00000001-0000-4000-8000-000000000001", date: "2026-11-10" })],
     proposes: true,
     replyNot: /\b(registei|guardei|já (está|foi) (registad|guardad)|I('ve| have) (saved|recorded)|(has been|was) (saved|recorded))/i,
   },

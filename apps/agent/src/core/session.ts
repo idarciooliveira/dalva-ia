@@ -1,4 +1,6 @@
-import { AGENT_APPEND_MAX_MESSAGES, AGENT_SESSION_MAX_MESSAGES, type AgentMessage, type AgentSession } from "@mpf/finance-contract";
+import { AGENT_APPEND_MAX_MESSAGES, AGENT_SESSION_MAX_MESSAGES } from "@mpf/shared";
+
+import type { AgentMessage, AgentSession } from "./finance";
 
 import type { InboundEvent, RichText } from "../channels/channel";
 import { errorFields, type Logger } from "../log";
@@ -58,7 +60,7 @@ export class SessionRecorder {
   async history(limit: number, signal?: AbortSignal): Promise<AgentMessage[]> {
     const session = await this.session(false, signal);
     if (session.messageCount === 0) return [];
-    const { items } = await this.finance.agentMessages.list({ sessionId: session.id, limit }, { signal });
+    const { items } = await this.finance.agentMessages.list.query({ sessionId: session.id, limit }, { signal });
     return items;
   }
 
@@ -77,7 +79,7 @@ export class SessionRecorder {
       for (let start = 0; start < messages.length; ) {
         const batch = messages.slice(start, start + AGENT_APPEND_MAX_MESSAGES);
         try {
-          await this.finance.agentMessages.append({ sessionId: session.id, messages: batch }, { signal });
+          await this.finance.agentMessages.append.mutate({ sessionId: session.id, messages: batch }, { signal });
         } catch (error) {
           if (retried || !isFinanceError(error, "conflict", "not_found")) throw error;
           retried = true;
@@ -94,7 +96,7 @@ export class SessionRecorder {
 
   private async session(startNew = false, signal?: AbortSignal): Promise<AgentSession> {
     if (this.current && !startNew) return this.current;
-    const { session } = await this.finance.agentSessions.current(
+    const { session } = await this.finance.agentSessions.current.mutate(
       {
         channel: this.event.channel,
         chatId: this.event.chatId,

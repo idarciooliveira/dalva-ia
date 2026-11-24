@@ -1,5 +1,3 @@
-import { API_BASE_PATH } from "@mpf/finance-contract";
-
 export type Reachability = "ok" | "unreachable";
 
 export interface FinanceProbeOptions {
@@ -12,8 +10,9 @@ export interface FinanceProbeOptions {
 }
 
 /**
- * Cheap reachability check: an unauthenticated GET on the API base. Any HTTP
- * answer (even 401/404) means the API is up. No credentials are sent.
+ * Cheap reachability check: the API's unauthenticated `/health`. Any answer
+ * below 500 means the API is up (503 while its database is down). No
+ * credentials are sent.
  */
 export function createFinanceProbe(options: FinanceProbeOptions): () => Promise<Reachability> {
   const doFetch = options.fetch ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
@@ -28,7 +27,7 @@ export function createFinanceProbe(options: FinanceProbeOptions): () => Promise<
     inflight ??= (async () => {
       let value: Reachability;
       try {
-        const response = await doFetch(`${options.baseUrl}${API_BASE_PATH}`, {
+        const response = await doFetch(`${options.baseUrl.replace(/\/+$/, "")}/health`, {
           method: "GET",
           signal: AbortSignal.timeout(timeoutMs),
         });

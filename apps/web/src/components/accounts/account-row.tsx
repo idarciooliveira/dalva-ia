@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { Account } from "@mpf/finance-contract";
 import {
   MoreVertical,
   Pencil,
@@ -20,6 +19,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
 import { useApiMutation } from "@/lib/api/mutations";
+import type { Account } from "@/lib/api/types";
 import { apiErrorMessage, isApiError } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 import { formatMinor } from "@/lib/money";

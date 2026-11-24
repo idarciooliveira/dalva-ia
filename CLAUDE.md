@@ -13,7 +13,7 @@ dalva-personal-finance-app/
 |- apps/web/                  @mpf/web              Frontend (TanStack Start + React 19)
 |- apps/api/                  @mpf/api              Backend (Bun + Hono + Drizzle + Postgres + Better Auth)
 |- apps/agent/                @mpf/agent            Telegram agent (Bun + Hono)
-|- packages/finance-contract/ @mpf/finance-contract API contract: zod schemas, route map, typed client
+|- packages/shared/          @mpf/shared           Money, date and agent-limit helpers shared by web, API and agent
 |- deploy/                                          Production compose stack
 |- scripts/                                         Local setup and dev helpers
 `- docs/                                            Product, design and deploy docs
@@ -34,7 +34,7 @@ bun run build:web    # Build the web app
 bun run typecheck    # Typecheck all packages
 bun run lint         # Lint all packages
 bun run test         # Run unit tests in watch mode
-bun run test:once    # Run unit tests once (contract, API, agent, web)
+bun run test:once    # Run unit tests once (shared, API, agent, web)
 bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh dalva_e2e_<port> database)
 bun run db:generate  # Generate a Drizzle migration after changing apps/api/src/db/schema.ts
 bun run db:migrate   # Apply migrations
@@ -42,7 +42,7 @@ bun run db:migrate   # Apply migrations
 
 ## apps/web -- Frontend
 
-**Stack:** TanStack Start (SSR) + TanStack Router (file-based routing) + React 19 + TanStack React Query + the typed `apps/api` client from `@mpf/finance-contract`.
+**Stack:** TanStack Start (SSR) + TanStack Router (file-based routing) + React 19 + TanStack React Query + `@trpc/tanstack-react-query` against `apps/api` (`type AppRouter` from `@mpf/api/trpc`).
 
 **UI:** shadcn/ui v4 (`radix-nova` style) + Tailwind CSS v4 (CSS-first) + Radix UI + Lucide icons + Recharts.
 
@@ -60,9 +60,9 @@ bun run db:migrate   # Apply migrations
   - shared create transaction / create transfer dialogs
 - Onboarding lives at `/onboarding` and must complete before authenticated users can access the main app.
 - Auth is Better Auth (`src/lib/auth-client.ts`): same-origin cookie session at `/api/auth/*`. `useSession()` reads it, `useSignOut()` signs out; sign in/up/out call `resetUserCache()` so no data of the previous user stays cached.
-- Data comes from `apps/api` through the contract client (`src/lib/api/`): reads with `useQuery(accountsQuery(...))` (options factories in `queries.ts`, keys in `keys.ts`), writes with `useApiMutation("accounts", "create")`.
-- `useApiMutation` sends one `Idempotency-Key` per submit (reused on retries of the same input) and invalidates what `INVALIDATES` in `mutations.ts` lists for that write. Add an entry for every new write.
-- Show failures with `apiErrorMessage()`: `ErrorState` for a page's data, `FormError` inside dialogs (`src/components/error-state.tsx`).
+- Data comes from `apps/api` through tRPC (`src/lib/api/`): reads with `useQuery(categoriesQuery(...))` (factories over `trpc.<group>.<op>.queryOptions` in `queries.ts`, `ledger.ts`, `dashboard.ts`; invalidation prefixes in `keys.ts`), writes with `useApiMutation("categories", "create")`. Types come from `type AppRouter` in `@mpf/api/trpc` (records in `types.ts`), never a runtime import of `apps/api`.
+- `idempotencyLink` (`trpc.ts`) sends one `Idempotency-Key` per write, reused while the same input is retried before a success. `useApiMutation` invalidates what `INVALIDATES` in `mutations.ts` lists for that write. Add an entry for every new write.
+- Show failures with `apiErrorMessage()`: `ErrorState` for a page's data, `FormError` inside dialogs (`src/components/error-state.tsx`). It reads the API code from `error.data.apiCode`.
 - Money from the API is `{ amountMinor, currency }` in ISO minor units: format with `formatMinor` and parse with `parseDecimalInput` (`src/lib/money.ts`), or `CurrencyInput` with `fractionDigits` + `parseCurrencyInput`. `formatCurrency(cents)` is only for the mock budget card.
 - Transactions, transfers and the dashboard read through `src/lib/api/ledger.ts` and `src/lib/api/dashboard.ts`. Rows owned by goals or debts (`managedBy` on search items) offer no edit or delete. Edits send only changed fields; `null` clears a nullable one.
 - Goal and debt account pickers list only accounts in the base currency (`accountsForBaseCurrency` in `src/lib/accounts.ts`): the API refuses others.
@@ -193,8 +193,11 @@ bunx playwright test --project=chromium
 
 ### Backend Implementation Patterns
 
-- Every `/api/v1` route comes from the `@mpf/finance-contract` route map; `src/http/router.ts` handles credentials, scopes, `Idempotency-Key`, body validation and the `{ ok, data }` envelope
-- Callers are resolved by `src/http/principal.ts`: session cookie (web), bearer user token (agent, per linked chat) or service key (agent service routes)
+- The API is tRPC at `/api/trpc` (`src/trpc/`). `src/trpc/router.ts` is the only contract: zod input/output schemas live next to the procedures, `type AppRouter` is exported as `@mpf/api/trpc`
+- Every procedure uses a builder from `src/trpc/init.ts` (`financeRead`/`financeWrite`, `webRead`/`webWrite`, `webWriteNoKey`, `agentRead`/`agentWrite`, `serviceRead`/`serviceWrite`): credentials, scopes, `Idempotency-Key`, the transaction (`ctx.tx`) and error mapping. List new procedures in `ACCESS` (`src/trpc/init.test.ts`)
+- Throw `DomainError`; clients get its code on `error.data.apiCode`
+- The agent calls the API through a vanilla tRPC client (`apps/agent/src/core/finance.ts`): failures surface as `FinanceError` with the API code; pending actions run `finance[group][op].mutate(input, { context: { idempotencyKey } })`
+- Callers are resolved by `src/http/principal.ts`: session cookie (web), bearer user token (agent, per linked chat) or service key (agent service procedures)
 - Never accept `userId` from the client; every query filters by the principal's user
 - Every write runs in one `SERIALIZABLE` transaction with retry on `40001` (`src/db/tx.ts`)
 - Amounts are `bigint` minor units; `src/domain/money.ts` converts to and from ISO minor units
@@ -218,38 +221,35 @@ bunx playwright test --project=chromium
 | `apps/api/src/db/schema.ts` | Data model and conventions |
 | `apps/api/src/db/tx.ts` | Serializable transaction helper with retry |
 | `apps/api/src/auth/auth.ts` | Better Auth setup |
-| `apps/api/src/http/router.ts` | Contract router |
+| `apps/api/src/trpc/init.ts` | Context and procedure builders |
+| `apps/api/src/trpc/router.ts` | The API: every router, `type AppRouter` |
 | `apps/api/src/http/principal.ts` | Credential resolution |
 | `apps/api/src/domain/*.ts` | Domain logic per module |
-| `apps/api/src/http/v1/*.ts` | Route handlers per module |
+| `apps/api/src/trpc/*.ts` | Routers per module, schemas next to the procedures |
 | `apps/api/src/jobs/retention.ts` | Retention jobs (croner) |
 | `apps/api/test/api.ts` | Seed and client helpers for tests |
-| `packages/finance-contract/src/schemas.ts` | Request and response schemas |
-| `packages/finance-contract/src/routes.ts` | Route map |
 
 ### Testing
 
 **Stack:** Vitest against a real Postgres. Each test file gets its own database (`apps/api/test/global-setup.ts`).
 
-- Domain tests in `src/domain/*.test.ts`, route tests in `src/http/v1/*.test.ts`
-- Use the helpers in `test/api.ts`: `seedUser`, `seedAccount`, `tokenFor`, `clientFor`, `twoUsers()` for isolation checks, `expectApiError`
+- Domain tests in `src/domain/*.test.ts`, procedure tests in `src/trpc/*.test.ts`
+- Use the helpers in `test/api.ts`: `seedUser`, `seedAccount`, `tokenFor`, `clientFor` (`client.group.op(input)`), `raw`, `twoUsers()` for isolation checks, `expectApiError`
 - Prefer partial assertions like `toMatchObject()`
 
 ### Development Workflow -- Test-First
 
-1. Update the contract in `packages/finance-contract` if the API shape changes
-2. Write or update tests in `apps/api`
-3. Run them and confirm they fail when appropriate
-4. Implement the domain and route changes
-5. Re-run `bun run test:once` and `bun run typecheck`
+1. Write or update tests in `apps/api`
+2. Run them and confirm they fail when appropriate
+3. Implement the domain and the procedure (its schemas in the same file)
+4. Re-run `bun run test:once` and `bun run typecheck`
 
 ## Development Workflow -- Full Feature Lifecycle
 
 For non-trivial product work:
 
-1. Contract and backend first
-   - update `packages/finance-contract`
-   - add tests and implement in `apps/api`
+1. Backend first
+   - add tests and implement in `apps/api` (domain + procedure); web and agent get the types from `AppRouter`
 2. Frontend next
    - add/update routes and components
    - add an `INVALIDATES` entry for every new write

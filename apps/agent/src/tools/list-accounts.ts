@@ -12,7 +12,7 @@ export const listAccounts = (context: ToolContext) =>
     inputSchema: z.object({ includeArchived: includeArchivedInput }),
     execute: ({ includeArchived }) =>
       guarded(context, async () => {
-        const { items } = await context.finance.accounts.list({ includeArchived: includeArchived ?? false }, call(context));
+        const { items } = await context.finance.accounts.list.query({ includeArchived: includeArchived ?? false }, call(context));
         const visible = includeArchived ? items : items.filter((account) => !account.archived);
         const { items: accounts, truncated } = bounded(visible, MAX_ACCOUNTS);
         return compact({

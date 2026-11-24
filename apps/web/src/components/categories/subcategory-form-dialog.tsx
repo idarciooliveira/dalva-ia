@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Category, Subcategory } from "@mpf/finance-contract";
+import type { Category, Subcategory } from "@/lib/api/types";
 import { FileText, FolderOpen } from "lucide-react";
 
 import { Button } from "@/components/ui/button";

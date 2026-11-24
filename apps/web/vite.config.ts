@@ -10,7 +10,7 @@ import viteReact from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 const config = defineConfig(({ mode }) => {
-  // apps/api (Better Auth at /api/auth, contract routes at /api/v1). Web and API share one
+  // apps/api (Better Auth at /api/auth, the API at /api/trpc). Web and API share one
   // origin, as behind the production proxy, so the session cookie is first-party.
   // DALVA_API_URL comes from the shell or apps/web/.env*; otherwise the PORT in apps/api/.env*.
   const env = loadEnv(mode, process.cwd(), 'DALVA_')

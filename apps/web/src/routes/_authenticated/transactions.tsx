@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import type { Transaction } from "@mpf/finance-contract";
+import type { Transaction } from "@/lib/api/types";
 import { useEffect, useMemo, useState } from "react";
 import { Plus, ArrowLeftRight, Search } from "lucide-react";
 

@@ -1,4 +1,4 @@
-import type { Debt } from "@mpf/finance-contract";
+import type { Debt } from "@/lib/api/types";
 import { CreditCard } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Category } from "@mpf/finance-contract";
+import type { Category } from "@/lib/api/types";
 import { Palette, Check, Image } from "lucide-react";
 
 import { Button } from "@/components/ui/button";

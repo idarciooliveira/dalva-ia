@@ -31,7 +31,7 @@ export function getRouter() {
       mutations: {
         // Safe: a retry sends the same Idempotency-Key, so the server replays instead of writing twice.
         retry: (failureCount, error) =>
-          failureCount < 1 && (isApiError(error, "network_error") || isApiError(error, "timeout")),
+          failureCount < 1 && isApiError(error, "network_error"),
       },
     },
   });

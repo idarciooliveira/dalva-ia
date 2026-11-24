@@ -21,7 +21,7 @@ export const addGoalContribution = (context: ToolContext, write: WriteContext) =
     execute: (input) =>
       propose(context, write, async () => {
         const look = lookups(context);
-        const { goal } = await context.finance.goals.get({ id: input.goalId }, call(context));
+        const { goal } = await context.finance.goals.get.query({ id: input.goalId }, call(context));
         if (goal.archived) throw new ProposalError("invalid_input", "That goal is archived.");
         const currency = goal.targetAmount.currency;
         checkCurrency(input.currency, currency, "This goal");

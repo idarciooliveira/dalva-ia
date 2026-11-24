@@ -150,8 +150,8 @@ describe("agent turn", () => {
 
   test("history loads legacy (unversioned) records, skips unknown versions and orphaned tool messages", async () => {
     const { model, run, finance, user, logger } = setup([{ text: "ok" }]);
-    const { session } = await user.agentSessions.current({ channel: "telegram", chatId: USER, idleTimeoutMinutes: 30 });
-    await user.agentMessages.append({
+    const { session } = await user.agentSessions.current.mutate({ channel: "telegram", chatId: USER, idleTimeoutMinutes: 30 });
+    await user.agentMessages.append.mutate({
       sessionId: session.id,
       messages: [
         { role: "tool", content: JSON.stringify({ v: 1, toolResults: [{ id: "x", name: "list_accounts", output: {} }] }) },
@@ -211,7 +211,7 @@ describe("agent turn", () => {
   test("a revoked link aborts the turn with the Finance API error", async () => {
     const { run, finance } = setup([{ tools: [{ name: "list_accounts", input: {} }] }, { text: "never" }]);
     finance.fail("GET /accounts", "unauthorized");
-    await expect(run("saldo?")).rejects.toMatchObject({ name: "FinanceApiError", code: "unauthorized" });
+    await expect(run("saldo?")).rejects.toMatchObject({ name: "FinanceError", code: "unauthorized" });
     expect(finance.messages).toHaveLength(0);
   });
 
@@ -321,7 +321,7 @@ describe("session recording", () => {
 });
 
 describe("write turns", () => {
-  const create = { type: "expense", amount: "5000", accountId: "acc_bai", categoryId: "cat_food", language: "pt" };
+  const create = { type: "expense", amount: "5000", accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000001", language: "pt" };
 
   test("read-only chats get no write tools and are told so in the context", async () => {
     const { model, run } = setup([{ text: "Só leitura." }], { canWrite: false });

@@ -186,11 +186,11 @@ describe("commands", () => {
     const { finance, run, lastReply, telegram } = setup();
     finance.link(USER);
     finance.accounts.push(
-      { id: "acc_1", name: "Checking & Co", type: "bank", balance: { amountMinor: 123456789, currency: "USD" } },
-      { id: "acc_2", name: "Card", type: "credit_card", balance: { amountMinor: -5005, currency: "USD" } },
-      { id: "acc_3", name: "Tokyo", type: "cash", balance: { amountMinor: 1500000, currency: "JPY" } },
-      { id: "acc_4", name: "Kuwait", type: "bank", balance: { amountMinor: 1234, currency: "KWD" } },
-      { id: "acc_5", name: "Old", type: "bank", balance: { amountMinor: 1, currency: "USD" }, archived: true },
+      { id: "00000001-0000-4000-8000-000000000009", name: "Checking & Co", type: "bank", balance: { amountMinor: 123456789, currency: "USD" } },
+      { id: "00000001-0000-4000-8000-000000000014", name: "Card", type: "credit_card", balance: { amountMinor: -5005, currency: "USD" } },
+      { id: "00000001-0000-4000-8000-000000000013", name: "Tokyo", type: "cash", balance: { amountMinor: 1500000, currency: "JPY" } },
+      { id: "00000001-0000-4000-8000-000000000012", name: "Kuwait", type: "bank", balance: { amountMinor: 1234, currency: "KWD" } },
+      { id: "00000001-0000-4000-8000-000000000011", name: "Old", type: "bank", balance: { amountMinor: 1, currency: "USD" }, archived: true },
     );
     await run("/balance");
     const html = lastReply();

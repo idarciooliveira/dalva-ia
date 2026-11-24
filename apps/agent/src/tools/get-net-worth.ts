@@ -9,7 +9,7 @@ export const getNetWorth = (context: ToolContext) =>
     inputSchema: z.object({}),
     execute: () =>
       guarded(context, async () => {
-        const report = await context.finance.reports.netWorth({}, call(context));
+        const report = await context.finance.reports.netWorth.query({}, call(context));
         return {
           hasData: report.hasData,
           assets: money(report.totalAssets),

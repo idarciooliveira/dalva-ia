@@ -1,4 +1,4 @@
-import type { Goal } from "@mpf/finance-contract";
+import type { Goal } from "@/lib/api/types";
 
 export const DEFAULT_GOAL_COLOR = "#a3e635";
 

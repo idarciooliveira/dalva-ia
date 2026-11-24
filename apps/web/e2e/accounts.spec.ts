@@ -130,14 +130,15 @@ test.describe("Accounts page — failures (apps/api)", () => {
     await page.getByRole("link", { name: "Accounts" }).click();
     await expect(page.getByText("Main Checking")).toBeVisible();
 
-    await page.route("**/api/v1/accounts", (route) =>
-      route.request().method() === "POST"
-        ? route.fulfill({
-            status: 500,
-            contentType: "application/json",
-            body: JSON.stringify({ ok: false, error: { code: "internal", message: "Internal error" } }),
-          })
-        : route.fallback(),
+    // Accounts are written through tRPC: its error shape, with the v1 code in `data.apiCode`.
+    await page.route("**/api/trpc/accounts.create", (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: { message: "Internal error", code: -32603, data: { code: "INTERNAL_SERVER_ERROR", httpStatus: 500, apiCode: "internal" } },
+        }),
+      }),
     );
     await page.getByRole("button", { name: /add account/i }).click();
     await page.getByLabel("Account name").fill("Doomed");
@@ -148,7 +149,7 @@ test.describe("Accounts page — failures (apps/api)", () => {
     await expect(page.getByLabel("Account name")).toHaveAttribute("aria-invalid", "true");
 
     // The API is back: the same dialog saves.
-    await page.unroute("**/api/v1/accounts");
+    await page.unroute("**/api/trpc/accounts.create");
     await dialog.getByRole("button", { name: "Create account" }).click();
     await expect(dialog).toBeHidden();
     await expect(page.getByRole("listitem", { name: "Doomed", exact: true })).toBeVisible();

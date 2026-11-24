@@ -1,18 +1,15 @@
+import { currencyExponent, MoneyError, parseDecimalAmount } from "@mpf/shared";
+import { z } from "zod";
+
 import {
-  currencyExponent,
-  MoneyError,
-  parseDecimalAmount,
-  routes,
   type Account,
   type AgentActionOperation,
   type AgentPendingAction,
   type Category,
   type FinanceClient,
-  type RouteDef,
+  isFinanceError,
   type Subcategory,
-} from "@mpf/finance-contract";
-import { z } from "zod";
-
+} from "../core/finance";
 import { shortText, SummaryTooLongError } from "../core/summary";
 import { call, toToolError, type ToolContext, type ToolError } from "./shared";
 
@@ -55,7 +52,7 @@ export class Proposals {
    */
   async create(proposal: Proposal, signal?: AbortSignal): Promise<AgentPendingAction> {
     const sessionId = await this.options.sessionId(signal);
-    const { action } = await this.options.finance.agentPendingActions.create(
+    const { action } = await this.options.finance.agentPendingActions.create.mutate(
       {
         sessionId,
         operation: proposal.operation,
@@ -102,32 +99,28 @@ const ONE_AT_A_TIME: ToolError = {
     "Only one change can be proposed per message. Propose the next one after the user answers the current proposal (if your other proposal in this message failed, fix it and try again).",
 };
 
-const routeOf = (operation: AgentActionOperation): RouteDef => {
-  const [group, op] = operation.split(".") as [string, string];
-  return (routes as unknown as Record<string, Record<string, RouteDef>>)[group]![op]!;
-};
-
-/** Field paths and the schema's own messages only: no input values. */
-function issuesText(error: z.ZodError): string {
-  return error.issues
+/** Field paths and the schema's own messages only (the API's `validation_failed` issues): no input values. */
+function issuesText(details: unknown): string | null {
+  const issues = (details as { issues?: Array<{ path?: unknown; message?: unknown }> } | undefined)?.issues;
+  if (!Array.isArray(issues) || issues.length === 0) return null;
+  return issues
     .slice(0, 5)
-    .map((issue) => (issue.path.length ? `${issue.path.join(".")}: ${issue.message}` : issue.message))
+    .map((issue) => (typeof issue.path === "string" && issue.path ? `${issue.path}: ${String(issue.message)}` : String(issue.message)))
     .join("; ");
 }
 
 /**
- * Run a write tool: take the turn's slot, build the request, check it against
- * the operation's contract schema, then store it as a pending action. The slot
- * is given back when nothing was stored, so the model can fix its input.
+ * Run a write tool: take the turn's slot, build the request, then store it as
+ * a pending action; the API checks the input against the operation's own
+ * schema. The slot is given back when nothing was stored, so the model can fix
+ * its input.
  */
 export async function propose(context: ToolContext, write: WriteContext, build: () => Promise<Proposal>): Promise<ProposalResult> {
   const { proposals } = write;
   if (!proposals.claim()) return ONE_AT_A_TIME;
   try {
     const proposal = await build();
-    const parsed = routeOf(proposal.operation).request.safeParse(proposal.input);
-    if (!parsed.success) return { error: "invalid_input", message: `Invalid request: ${issuesText(parsed.error)}` };
-    const action = await proposals.create({ ...proposal, input: parsed.data as Record<string, unknown> }, context.signal);
+    const action = await proposals.create(proposal, context.signal);
     if (action.status === "pending") return { status: "awaiting_confirmation", summary: action.summary };
     return {
       status: `already_${action.status}`,
@@ -136,6 +129,8 @@ export async function propose(context: ToolContext, write: WriteContext, build: 
     };
   } catch (error) {
     if (error instanceof ProposalError) return { error: error.code, message: error.message };
+    const issues = isFinanceError(error, "validation_failed") ? issuesText(error.details) : null;
+    if (issues) return { error: "invalid_input", message: `Invalid request: ${issues}` };
     if (error instanceof SummaryTooLongError) {
       return {
         error: "too_long",
@@ -223,7 +218,7 @@ export function lookups(context: ToolContext) {
   const accounts = new Map<string, Promise<Account>>();
   return {
     account(id: string): Promise<Account> {
-      if (!accounts.has(id)) accounts.set(id, finance.accounts.get({ id }, call(context)).then((r) => r.account));
+      if (!accounts.has(id)) accounts.set(id, finance.accounts.get.query({ id }, call(context)).then((r) => r.account));
       return accounts.get(id)!;
     },
     /** An account the user can still write to. */
@@ -233,11 +228,11 @@ export function lookups(context: ToolContext) {
       return account;
     },
     categories(): Promise<Category[]> {
-      categories ??= finance.categories.list({ includeArchived: true }, call(context)).then((r) => r.items);
+      categories ??= finance.categories.list.query({ includeArchived: true }, call(context)).then((r) => r.items);
       return categories;
     },
     subcategories(): Promise<Subcategory[]> {
-      subcategories ??= finance.subcategories.list({ includeArchived: true }, call(context)).then((r) => r.items);
+      subcategories ??= finance.subcategories.list.query({ includeArchived: true }, call(context)).then((r) => r.items);
       return subcategories;
     },
     /** Names for a category and subcategory (any state), for summaries. */

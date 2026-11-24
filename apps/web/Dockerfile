@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Build from the repo root: docker build -f apps/web/Dockerfile .
 # Context filter: apps/web/Dockerfile.dockerignore (BuildKit picks it over the root .dockerignore).
-# /api/auth/* and /api/v1/* to the API and /webhooks/telegram to the agent.
+# /api/auth/* and /api/trpc/* to the API and /webhooks/telegram to the agent.
 
 ARG BUN_VERSION=1.4.0
 
@@ -12,7 +12,7 @@ COPY package.json bun.lock ./
 COPY apps/agent/package.json apps/agent/
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
-COPY packages/finance-contract/package.json packages/finance-contract/
+COPY packages/shared/package.json packages/shared/
 RUN bun install --frozen-lockfile --filter '@mpf/web' --ignore-scripts
 COPY tsconfig.json ./
 COPY packages packages

@@ -71,7 +71,7 @@ jobs:
           filters: |
             agent:
               - apps/agent/**
-              - packages/finance-contract/**
+              - packages/shared/**
               - package.json
               - bun.lock
               - tsconfig.json
@@ -81,7 +81,7 @@ jobs:
               - .github/workflows/images.yml
             api:
               - apps/api/**
-              - packages/finance-contract/**
+              - packages/shared/**
               - package.json
               - bun.lock
               - tsconfig.json

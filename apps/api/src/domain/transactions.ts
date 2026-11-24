@@ -1,5 +1,5 @@
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
-import { isoDateSchema, type TransactionManagedBy } from "@mpf/finance-contract";
+import { isoDateSchema } from "@mpf/shared";
 
 import { isUuid } from "../db/ids";
 import { debtPayments, goalContributions, transactions } from "../db/schema";
@@ -7,6 +7,9 @@ import type { Tx } from "../db/tx";
 import { addToBalances, getAccount } from "./accounts";
 import { getCategory, getSubcategory } from "./categories";
 import { conflict, invalid, notFound } from "./errors";
+
+/** What owns a row that `transactions.update` / `delete` refuse: change it there. */
+export type TransactionManagedBy = "transfer" | "goal_contribution" | "debt_payment";
 
 export type Transaction = typeof transactions.$inferSelect;
 export type TransactionType = Transaction["type"];

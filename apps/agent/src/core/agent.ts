@@ -1,4 +1,4 @@
-import type { AgentPendingAction } from "@mpf/finance-contract";
+import type { AgentPendingAction } from "./finance";
 import { generateText, isStepCount, type LanguageModel, type ModelMessage } from "ai";
 
 import { cachedSystemMessage, withCacheBreakpoint } from "../llm/model";

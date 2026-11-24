@@ -1,4 +1,4 @@
-import type { Channel } from "@mpf/finance-contract";
+import type { Channel } from "../core/finance";
 
 /**
  * Channel-agnostic types. Platform SDKs and payload shapes stay inside

@@ -1,7 +1,4 @@
-import { queryOptions } from "@tanstack/react-query";
-
-import { api } from "./client";
-import { queryKeys } from "./keys";
+import { trpc } from "./trpc";
 
 /*
  * Dashboard reads. Reports sit under `queryKeys.reports.all()` (transaction,
@@ -15,53 +12,26 @@ import { queryKeys } from "./keys";
 /** As many rows as the summary report's `recentTransactions`. */
 const RECENT_ROWS = 10;
 
-export const dashboardKeys = {
-  recent: (month: string) => [...queryKeys.transactions.all(), "recent", month] as const,
-  summary: (month: string) => [...queryKeys.reports.all(), "summary", month] as const,
-  spending: (month: string) => [...queryKeys.reports.all(), "spending", month] as const,
-  cashflow: (month: string, trendMonths: number) => [...queryKeys.reports.all(), "cashflow", month, trendMonths] as const,
-  netWorth: () => [...queryKeys.reports.all(), "net-worth"] as const,
-};
-
 /** Income, expenses, adjustments and the latest rows of a month ("YYYY-MM"). */
-export const transactionSummaryQuery = (month: string) =>
-  queryOptions({
-    queryKey: dashboardKeys.summary(month),
-    queryFn: ({ signal }) => api.reports.transactionSummary({ month }, { signal }),
-  });
+export const transactionSummaryQuery = (month: string) => trpc.reports.transactionSummary.queryOptions({ month });
 
 /**
  * The month's latest rows, each in its account's currency, as the summary report
  * lists them. For when that report refuses (`conflict`: accounts in another
  * currency): these rows need no common currency.
  */
-export const recentTransactionsQuery = (month: string) =>
-  queryOptions({
-    queryKey: dashboardKeys.recent(month),
-    queryFn: ({ signal }) => {
-      const [year, monthNumber] = month.split("-").map(Number) as [number, number];
-      const lastDay = new Date(year, monthNumber, 0).getDate();
-      return api.transactions.search(
-        { dateFrom: `${month}-01`, dateTo: `${month}-${String(lastDay).padStart(2, "0")}`, limit: RECENT_ROWS },
-        { signal },
-      );
-    },
+export function recentTransactionsQuery(month: string) {
+  const [year, monthNumber] = month.split("-").map(Number) as [number, number];
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  return trpc.transactions.search.queryOptions({
+    dateFrom: `${month}-01`,
+    dateTo: `${month}-${String(lastDay).padStart(2, "0")}`,
+    limit: RECENT_ROWS,
   });
+}
 
-export const spendingByCategoryQuery = (month: string) =>
-  queryOptions({
-    queryKey: dashboardKeys.spending(month),
-    queryFn: ({ signal }) => api.reports.spendingByCategory({ month }, { signal }),
-  });
+export const spendingByCategoryQuery = (month: string) => trpc.reports.spendingByCategory.queryOptions({ month });
 
-export const cashflowQuery = (month: string, trendMonths: number) =>
-  queryOptions({
-    queryKey: dashboardKeys.cashflow(month, trendMonths),
-    queryFn: ({ signal }) => api.reports.cashflow({ month, trendMonths }, { signal }),
-  });
+export const cashflowQuery = (month: string, trendMonths: number) => trpc.reports.cashflow.queryOptions({ month, trendMonths });
 
-export const netWorthQuery = () =>
-  queryOptions({
-    queryKey: dashboardKeys.netWorth(),
-    queryFn: ({ signal }) => api.reports.netWorth({}, { signal }),
-  });
+export const netWorthQuery = () => trpc.reports.netWorth.queryOptions();

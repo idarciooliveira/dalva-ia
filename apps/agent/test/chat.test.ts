@@ -173,7 +173,7 @@ describe("rate limiter", () => {
 });
 
 describe("chat: proposing a change", () => {
-  const create = { type: "expense", amount: "5000", accountId: "acc_bai", categoryId: "cat_food", subcategoryId: "sub_rest", language: "pt" };
+  const create = { type: "expense", amount: "5000", accountId: "00000001-0000-4000-8000-000000000001", categoryId: "00000002-0000-4000-8000-000000000001", subcategoryId: "00000003-0000-4000-8000-000000000001", language: "pt" };
   const summary = "Despesa · 5 000,00 AOA · Alimentação › Restaurantes · BAI Conta Ordem · hoje";
 
   test("the turn ends with a Confirm/Cancel message; pressing Confirm saves it and edits that message", async () => {

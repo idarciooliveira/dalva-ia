@@ -1,14 +1,12 @@
 /** Sign-up, sign-in, sign-out and session handling, through HTTP like the web app will use them. */
-import { errorEnvelopeSchema } from "@mpf/finance-contract";
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vitest";
 
-import { testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../../test/app";
+import { apiCodeOf, probeRouter, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL } from "../../test/app";
 import { testDb } from "../../test/db";
 import { createApp } from "../app";
 import { createDatabase } from "../db/client";
 import { authAccounts, authSessions, users } from "../db/schema";
-import { requireUser, userPrincipal } from "../http/principal";
 import { createLogger } from "../log";
 import { createAuth } from "./auth";
 import { createSignInLimiter } from "./sign-in-limit";
@@ -18,10 +16,8 @@ type App = ReturnType<typeof testApp>["app"];
 const PASSWORD = "correct horse battery";
 
 function setup(options: { publicUrl?: string } = {}) {
-  const { app, auth } = testApp(options);
-  // Test-only protected routes: the principal middleware is all this PR adds to /api/v1.
-  app.get("/api/v1/__test/me", requireUser("finance:read"), (c) => c.json({ ok: true, data: userPrincipal(c) }));
-  app.get("/api/v1/__test/agent-only", requireUser("agent:state"), (c) => c.json({ ok: true, data: null }));
+  // Probe procedures that answer who called (test/app.ts).
+  const { app, auth } = testApp({ ...options, router: probeRouter });
   return { app, auth, origin: options.publicUrl ?? TEST_PUBLIC_URL };
 }
 
@@ -46,11 +42,9 @@ async function signUp(app: App, email = "ana@example.com", password = PASSWORD) 
   return sessionCookie(res);
 }
 
-const me = (app: App, headers: Record<string, string> = {}) => app.request("/api/v1/__test/me", { headers });
+const me = (app: App, headers: Record<string, string> = {}) => app.request("/api/trpc/probe.me", { headers });
 
-async function errorCode(res: Response) {
-  return errorEnvelopeSchema.parse(await res.json()).error.code;
-}
+const errorCode = apiCodeOf;
 
 describe("sign-up", () => {
   it("creates the user, a scrypt credential and a session, and signs in", async () => {
@@ -325,7 +319,7 @@ describe("legacy password hashes (Convex Auth)", () => {
 
     const ok = await post(app, "/sign-in/email", { email: "old@example.com", password: LUCIA_HASHES[1]!.password });
     expect(ok.status).toBe(200);
-    expect(await (await me(app, { cookie: sessionCookie(ok) })).json()).toMatchObject({ data: { userId: user!.id } });
+    expect(await (await me(app, { cookie: sessionCookie(ok) })).json()).toMatchObject({ result: { data: { userId: user!.id } } });
 
     const wrong = await post(app, "/sign-in/email", { email: "old@example.com", password: "Pässwörd-ﬁ 124" });
     expect(wrong.status).toBe(401);

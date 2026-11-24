@@ -1,4 +1,4 @@
-import { formatMinorAmount } from "@mpf/finance-contract";
+import { formatMinorAmount } from "@mpf/shared";
 
 /**
  * Confirmation text for a proposed change, built by code from the validated

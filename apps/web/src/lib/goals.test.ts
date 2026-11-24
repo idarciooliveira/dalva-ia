@@ -1,4 +1,4 @@
-import type { Goal } from "@mpf/finance-contract";
+import type { Goal } from "@/lib/api/types";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_GOAL_COLOR, goalChanges } from "./goals";

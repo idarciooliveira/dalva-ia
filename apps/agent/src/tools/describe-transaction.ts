@@ -1,4 +1,4 @@
-import type { Transaction } from "@mpf/finance-contract";
+import type { Transaction } from "../core/finance";
 
 import { categoryLabel, formatAmount, formatDay, quoted, shortText, type Language } from "../core/summary";
 import type { Lookups } from "./proposals";

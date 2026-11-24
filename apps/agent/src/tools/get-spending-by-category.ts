@@ -12,7 +12,7 @@ export const getSpendingByCategory = (context: ToolContext) =>
     inputSchema: z.object({ month: monthInput.optional() }),
     execute: ({ month }) =>
       guarded(context, async () => {
-        const report = await context.finance.reports.spendingByCategory({ month: month ?? currentMonth(context.today) }, call(context));
+        const report = await context.finance.reports.spendingByCategory.query({ month: month ?? currentMonth(context.today) }, call(context));
         const { items, truncated } = bounded(report.categories, MAX_CATEGORIES);
         return compact({
           month: report.month,

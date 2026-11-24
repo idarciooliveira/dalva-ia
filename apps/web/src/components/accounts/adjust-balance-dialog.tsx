@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { Account } from "@mpf/finance-contract";
 import { Landmark } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -13,6 +12,7 @@ import {
 import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
 import { FormError } from "@/components/error-state";
 import { useApiMutation } from "@/lib/api/mutations";
+import type { Account } from "@/lib/api/types";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { formatMinor, fractionDigits, maskPlaceholder } from "@/lib/money";
 import { getCurrencySymbol } from "@/lib/currencies";

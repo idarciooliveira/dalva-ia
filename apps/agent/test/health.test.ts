@@ -11,7 +11,7 @@ describe("finance probe", () => {
     expect(await probe()).toBe("ok");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(String(url)).toBe("https://finance.test/api/v1");
+    expect(String(url)).toBe("https://finance.test/health");
     expect(new Headers(init?.headers).get("Authorization")).toBeNull();
     now = 60_000;
     await probe();

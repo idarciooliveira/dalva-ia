@@ -1,8 +1,7 @@
-import type { AgentActionStatus, AgentPendingAction, FinanceClient } from "@mpf/finance-contract";
 
 import { decodeButtonPayload, type ChannelAdapter, type InboundEvent, type RichText } from "../channels/channel";
 import { errorFields, type Logger } from "../log";
-import { isFinanceError } from "./finance";
+import { type AgentActionStatus, type AgentPendingAction, type FinanceClient, isFinanceError } from "./finance";
 import { encodeAssistantText } from "./history";
 import type { ResolvedUser } from "./identity";
 import { texts } from "./messages";
@@ -85,12 +84,12 @@ const ACTION_TEXTS = {
 
 type Outcome = { status: "executed"; result: unknown } | { status: "failed"; code: string; uncertain?: boolean };
 
-/** The finance client method for an operation name (`transactions.create`). */
+/** The procedure an operation names (`transactions.create`), run with the action id as its `Idempotency-Key`. */
 function operationCall(finance: FinanceClient, operation: string) {
   const [group, op] = operation.split(".") as [string, string];
-  const fn = (finance as unknown as Record<string, Record<string, unknown>>)[group]?.[op];
-  if (typeof fn !== "function") throw new Error(`Unknown operation ${operation}`);
-  return fn as (input: unknown, options: { idempotencyKey: string }) => Promise<unknown>;
+  const procedure = (finance as unknown as Record<string, Record<string, { mutate: (input: unknown, options: object) => Promise<unknown> }>>)[group]?.[op];
+  if (!procedure) throw new Error(`Unknown operation ${operation}`);
+  return (input: unknown, options: { idempotencyKey: string }) => procedure.mutate(input, { context: { idempotencyKey: options.idempotencyKey } });
 }
 
 /** A stored failure whose write may still have landed (ambiguous attempts, or a rerun refused too late). */
@@ -180,7 +179,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
   /** The action's current state, after a `conflict`. Null when it's gone. */
   async function current(): Promise<AgentPendingAction | null> {
     try {
-      return (await finance.agentPendingActions.get({ id })).action;
+      return (await finance.agentPendingActions.get.query({ id })).action;
     } catch (error) {
       if (isFinanceError(error, "not_found")) return null;
       throw error;
@@ -195,7 +194,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
   if (decoded.action === "cancel") {
     let action: AgentPendingAction | null;
     try {
-      action = (await finance.agentPendingActions.cancel({ id })).action;
+      action = (await finance.agentPendingActions.cancel.mutate({ id })).action;
     } catch (error) {
       if (isFinanceError(error, "not_found")) return gone();
       if (!isFinanceError(error, "conflict")) throw error;
@@ -212,7 +211,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
 
   let action: AgentPendingAction | null;
   try {
-    action = (await finance.agentPendingActions.confirm({ id })).action;
+    action = (await finance.agentPendingActions.confirm.mutate({ id })).action;
   } catch (error) {
     if (isFinanceError(error, "not_found")) return gone();
     if (isFinanceError(error, "forbidden")) {
@@ -280,7 +279,7 @@ async function complete(finance: FinanceClient, id: string, outcome: Outcome, lo
   const result = outcome.status === "executed" ? (outcome.result ?? null) : { error: outcome.code, ...(outcome.uncertain ? { uncertain: true } : {}) };
   for (let attempt = 0; attempt <= EXECUTE_RETRIES; attempt++) {
     try {
-      await finance.agentPendingActions.complete({ id, status: outcome.status, result: result as never });
+      await finance.agentPendingActions.complete.mutate({ id, status: outcome.status, result: result as never });
       return;
     } catch (error) {
       if (isAmbiguous(error) && attempt < EXECUTE_RETRIES) continue;

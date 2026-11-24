@@ -1,4 +1,7 @@
-import type { Account, RouteInput, Transaction, UserRoutes } from "@mpf/finance-contract";
+import type { Transaction } from "@/lib/api/types";
+import type { RouterInputs } from "@/lib/api/trpc";
+
+import type { Account } from "@/lib/api/types";
 
 import { ACCOUNT_THEMES } from "@/lib/accounts";
 
@@ -46,7 +49,7 @@ interface TransactionDraft {
  * category is refused before this runs.
  */
 export function transactionChanges(original: Transaction, draft: TransactionDraft) {
-  const changes: Omit<RouteInput<UserRoutes["transactions"]["update"]>, "id"> = {};
+  const changes: Omit<RouterInputs["transactions"]["update"], "id"> = {};
   if (draft.type !== original.type) changes.type = draft.type;
   // A move to another account always carries the amount: it may be in another currency.
   if (
@@ -84,7 +87,7 @@ export function transferChanges(
   original: { amount: { amountMinor: number; currency: string }; fromAccountId: string; toAccountId: string; date: string; description?: string; note?: string },
   draft: { amount: { amountMinor: number; currency: string }; fromAccountId: string; toAccountId: string; date: string; description: string; note: string },
 ) {
-  const changes: Omit<RouteInput<UserRoutes["transfers"]["update"]>, "id"> = {};
+  const changes: Omit<RouterInputs["transfers"]["update"], "id"> = {};
   const accountsChanged = draft.fromAccountId !== original.fromAccountId || draft.toAccountId !== original.toAccountId;
   if (
     accountsChanged ||

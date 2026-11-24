@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Debt, DebtType } from "@mpf/finance-contract";
+import type { Debt, DebtType } from "@/lib/api/types";
 import { Calendar, CreditCard, Landmark, Percent, Wallet } from "lucide-react";
 
 import { AccountPickerHint } from "@/components/account-picker-hint";

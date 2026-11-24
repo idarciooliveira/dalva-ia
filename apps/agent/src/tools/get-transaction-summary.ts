@@ -12,7 +12,7 @@ export const getTransactionSummary = (context: ToolContext) =>
     inputSchema: z.object({ month: monthInput.optional() }),
     execute: ({ month }) =>
       guarded(context, async () => {
-        const summary = await context.finance.reports.transactionSummary({ month: month ?? currentMonth(context.today) }, call(context));
+        const summary = await context.finance.reports.transactionSummary.query({ month: month ?? currentMonth(context.today) }, call(context));
         return {
           month: summary.month,
           income: money(summary.totalIncome),

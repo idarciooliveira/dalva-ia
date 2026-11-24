@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { Account } from "@mpf/finance-contract";
 import {
   Landmark,
   FileText,
@@ -26,6 +25,7 @@ import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-inpu
 import { FormError } from "@/components/error-state";
 import { useAuthProfile } from "@/hooks/use-auth-profile";
 import { useApiMutation } from "@/lib/api/mutations";
+import type { Account } from "@/lib/api/types";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fractionDigits, maskPlaceholder } from "@/lib/money";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES, type AccountType } from "@/lib/accounts";

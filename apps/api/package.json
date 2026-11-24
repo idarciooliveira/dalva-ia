@@ -3,6 +3,11 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
+  "exports": {
+    "./trpc": {
+      "types": "./src/trpc/router.ts"
+    }
+  },
   "scripts": {
     "dev": "bun --watch src/main.ts",
     "start": "bun src/main.ts",
@@ -15,7 +20,9 @@
     "db:migrate": "bun src/db/migrate-cli.ts"
   },
   "dependencies": {
-    "@mpf/finance-contract": "workspace:*",
+    "@hono/trpc-server": "^0.4.2",
+    "@mpf/shared": "workspace:*",
+    "@trpc/server": "^11.31.1",
     "better-auth": "^1.7.25",
     "croner": "^9.1.0",
     "drizzle-orm": "^0.45.4",
@@ -24,6 +31,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@trpc/client": "^11.31.1",
     "@types/node": "^22.10.2",
     "drizzle-kit": "^0.31.11",
     "typescript": "^5.8.0",

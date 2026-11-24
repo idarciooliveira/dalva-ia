@@ -1,4 +1,4 @@
-import { AGENT_SESSION_MAX_MESSAGES } from "@mpf/finance-contract";
+import { AGENT_SESSION_MAX_MESSAGES } from "@mpf/shared";
 import { and, asc, count, desc, eq, inArray, isNull, lt, lte } from "drizzle-orm";
 
 import type { Database } from "../db/client";

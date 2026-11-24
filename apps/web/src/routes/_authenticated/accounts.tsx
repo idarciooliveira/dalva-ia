@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { Account } from "@mpf/finance-contract";
+import type { Account } from "@/lib/api/types";
 import { useState } from "react";
 import { Plus, Wallet, Archive } from "lucide-react";
 

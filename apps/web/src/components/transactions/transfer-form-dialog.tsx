@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Account, Transfer } from "@mpf/finance-contract";
+import type { Transfer } from "@/lib/api/types";
+import type { Account } from "@/lib/api/types";
 import { Calculator, CalendarDays, FileText, Landmark, StickyNote, ArrowDown } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
