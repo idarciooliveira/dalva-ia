@@ -26,7 +26,15 @@ export const transactionOperations = {
       cursor: input.cursor,
       limit: input.limit,
     });
-    return { items: await transactionDtos(tx, user.userId, page.items), nextCursor: page.nextCursor };
+    const items = await transactionDtos(tx, user.userId, page.items);
+    const kinds = await transactions.managedKinds(tx, user.userId, page.items);
+    return {
+      items: items.map((item) => {
+        const managedBy = kinds.get(item.id);
+        return managedBy ? { ...item, managedBy } : item;
+      }),
+      nextCursor: page.nextCursor,
+    };
   }),
 
   get: operation(routes.transactions.get, async (tx, user, input) => {
@@ -79,7 +87,7 @@ export const transactionOperations = {
       amount,
       accountId: input.accountId === undefined ? undefined : account.id,
       categoryId: optionalId(input.categoryId, "categoryId"),
-      subcategoryId: optionalId(input.subcategoryId, "subcategoryId"),
+      subcategoryId: input.subcategoryId === null ? null : optionalId(input.subcategoryId, "subcategoryId"),
       date: input.date,
       description: input.description,
       note: input.note,

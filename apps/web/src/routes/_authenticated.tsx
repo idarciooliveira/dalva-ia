@@ -101,7 +101,7 @@ function AuthenticatedLayout() {
         <TransferFormDialog
           open={transferDialogOpen}
           onOpenChange={setTransferDialogOpen}
-          transfer={null}
+          transferId={null}
         />
       </TooltipProvider>
     </AuthProfileContext.Provider>

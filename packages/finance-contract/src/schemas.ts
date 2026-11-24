@@ -248,9 +248,19 @@ export const transactionsSearchRequestSchema = z
     message: "dateFrom must not be after dateTo",
     path: ["dateFrom"],
   });
-/** Newest first. `nextCursor` is null on the last page. */
+/**
+ * Rows that `transactions.update` / `transactions.delete` refuse (`conflict`):
+ * transfer legs (change them with `transfers.*`), goal-contribution transfers
+ * and debt-payment transactions (change them through their own endpoints).
+ */
+export const transactionManagedBySchema = z.enum(["transfer", "goal_contribution", "debt_payment"]);
+
+/**
+ * Newest first. `nextCursor` is null on the last page. `managedBy` (additive,
+ * may be absent from older servers) flags the rows `transactions.get` would flag.
+ */
 export const transactionsSearchResponseSchema = z.object({
-  items: z.array(transactionSchema),
+  items: z.array(transactionSchema.extend({ managedBy: transactionManagedBySchema.optional() })),
   nextCursor: z.string().nullable(),
 });
 
@@ -354,12 +364,6 @@ export const transactionCreateRequestSchema = z
   });
 export const transactionResponseSchema = z.object({ transaction: transactionSchema });
 
-/**
- * Rows that `transactions.update` / `transactions.delete` refuse (`conflict`):
- * transfer legs (change them with `transfers.*`), goal-contribution transfers
- * and debt-payment transactions (change them through their own endpoints).
- */
-export const transactionManagedBySchema = z.enum(["transfer", "goal_contribution", "debt_payment"]);
 export const transactionGetRequestSchema = z.strictObject({ id: transactionIdSchema });
 export const transactionGetResponseSchema = z.object({
   transaction: transactionSchema,
@@ -367,9 +371,11 @@ export const transactionGetResponseSchema = z.object({
 });
 
 /**
- * Partial update; omitted fields are unchanged and fields cannot be cleared.
- * The sign rule for `amount` depends on the transaction's effective type, so
- * the server enforces it (positive unless the result is an adjustment).
+ * Partial update; omitted fields are unchanged. `null` clears `subcategoryId`,
+ * `description`, `note` and `payee` (additive: the Convex HTTP API treats
+ * `null` as omitted). The sign rule for `amount` depends on the transaction's
+ * effective type, so the server enforces it (positive unless the result is an
+ * adjustment).
  */
 export const transactionUpdateRequestSchema = z
   .strictObject({
@@ -378,11 +384,11 @@ export const transactionUpdateRequestSchema = z
     amount: nonZeroMoneySchema.optional(),
     accountId: accountIdSchema.optional(),
     categoryId: categoryIdSchema.optional(),
-    subcategoryId: subcategoryIdSchema.optional(),
+    subcategoryId: subcategoryIdSchema.nullable().optional(),
     date: isoDateSchema.optional(),
-    description: descriptionField.optional(),
-    note: noteField.optional(),
-    payee: payeeField.optional(),
+    description: descriptionField.nullable().optional(),
+    note: noteField.nullable().optional(),
+    payee: payeeField.nullable().optional(),
   })
   .superRefine((v, ctx) => {
     if (!hasChangesBesidesId(v)) ctx.addIssue({ code: "custom", message: NO_CHANGES });
@@ -424,7 +430,10 @@ export const transferResponseSchema = z.object({ transfer: transferSchema });
  */
 export const transferGetRequestSchema = z.strictObject({ id: transactionIdSchema });
 
-/** `id` may be either leg of the transfer. */
+/**
+ * `id` may be either leg of the transfer. `null` clears `description` and
+ * `note` on both legs (additive: the Convex HTTP API treats `null` as omitted).
+ */
 export const transferUpdateRequestSchema = z
   .strictObject({
     id: transactionIdSchema,
@@ -432,8 +441,8 @@ export const transferUpdateRequestSchema = z
     fromAccountId: accountIdSchema.optional(),
     toAccountId: accountIdSchema.optional(),
     date: isoDateSchema.optional(),
-    description: descriptionField.optional(),
-    note: noteField.optional(),
+    description: descriptionField.nullable().optional(),
+    note: noteField.nullable().optional(),
   })
   .superRefine((v, ctx) => {
     if (!hasChangesBesidesId(v)) ctx.addIssue({ code: "custom", message: NO_CHANGES });
@@ -1232,3 +1241,5 @@ export type AgentPendingAction = z.output<typeof agentPendingActionSchema>;
 export type AgentActionOperation = z.output<typeof agentActionOperationSchema>;
 export type AgentActionStatus = z.output<typeof agentActionStatusSchema>;
 export type TransactionManagedBy = z.output<typeof transactionManagedBySchema>;
+/** A `transactions.search` row: a transaction plus the optional `managedBy` flag. */
+export type TransactionListItem = z.output<typeof transactionsSearchResponseSchema>["items"][number];

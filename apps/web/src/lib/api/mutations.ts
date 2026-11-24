@@ -4,6 +4,7 @@ import type { CallOptions, RouteDef, RouteInput, RouteOutput, UserRoutes } from 
 import { useState } from "react";
 
 import { api } from "./client";
+import { isApiError } from "./errors";
 import { createIdempotencyKeys } from "./idempotency";
 import { queryKeys } from "./keys";
 
@@ -13,6 +14,8 @@ type WriteOp<G extends Group> = {
 }[keyof UserRoutes[G]];
 type Def<G extends Group, O extends keyof UserRoutes[G]> = UserRoutes[G][O] extends RouteDef ? UserRoutes[G][O] : never;
 type MutationName = { [G in Group]: `${G}.${WriteOp<G> & string}` }[Group];
+
+const LEDGER_WRITE = [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all];
 
 /**
  * What each write makes stale. A write invalidates these prefixes on success and
@@ -24,11 +27,20 @@ const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> 
   "profile.completeOnboarding": [queryKeys.profile],
   // Balances feed net worth and the account filters of the transaction pages.
   "accounts.create": [queryKeys.accounts.all, queryKeys.reports.all],
-  "accounts.update": [queryKeys.accounts.all, queryKeys.transactions.all],
+  // The type moves a balance between assets and debts in net worth.
+  "accounts.update": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
   "accounts.adjust": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
   "accounts.archive": [queryKeys.accounts.all, queryKeys.reports.all],
   "accounts.restore": [queryKeys.accounts.all, queryKeys.reports.all],
   "accounts.delete": [queryKeys.accounts.all, queryKeys.reports.all],
+  // Transactions and transfers move account balances, so net worth, the monthly
+  // reports and every list (and open transfer) change with them.
+  "transactions.create": LEDGER_WRITE,
+  "transactions.update": LEDGER_WRITE,
+  "transactions.delete": LEDGER_WRITE,
+  "transfers.create": LEDGER_WRITE,
+  "transfers.update": LEDGER_WRITE,
+  "transfers.delete": LEDGER_WRITE,
   "categories.seedDefaults": [queryKeys.categories.all],
   "categories.create": [queryKeys.categories.all],
   "categories.update": [queryKeys.categories.all, queryKeys.transactions.all, queryKeys.reports.all],
@@ -112,6 +124,8 @@ type Options<G extends Group, O extends WriteOp<G>> = Omit<
  *   again before a success (React Query retries, a second click), so the server
  *   replays the first write instead of applying it twice.
  * - On success, invalidates `INVALIDATES[group.op]` before the caller's `onSuccess`.
+ *   So does `not_found`: the record is already gone (changed elsewhere), and the
+ *   lists still showing it are stale.
  */
 export function useApiMutation<G extends Group, O extends WriteOp<G>>(group: G, op: O, options: Options<G, O> = {}) {
   const queryClient = useQueryClient();
@@ -132,6 +146,10 @@ export function useApiMutation<G extends Group, O extends WriteOp<G>>(group: G, 
     onSuccess: async (...args) => {
       await invalidateAfter(queryClient, name);
       await options.onSuccess?.(...args);
+    },
+    onError: async (...args) => {
+      if (isApiError(args[0], "not_found")) void invalidateAfter(queryClient, name);
+      await options.onError?.(...args);
     },
   });
 }

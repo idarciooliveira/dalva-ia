@@ -1,6 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
 import { SlidersHorizontal } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -21,6 +19,8 @@ import {
   SheetFooter,
   SheetDescription,
 } from "@/components/ui/sheet";
+import { FormError } from "@/components/error-state";
+import { accountsQuery, categoriesQuery } from "@/lib/api/queries";
 
 export interface TransactionFilters {
   dateFrom: string;
@@ -28,6 +28,11 @@ export interface TransactionFilters {
   accountId: string; // "" = all
   categoryId: string; // "" = all
   type: "" | "income" | "expense" | "adjustment" | "transfer"; // "" = all
+}
+
+/** The start date is after the end date: the API would refuse the search. */
+export function hasInvalidDateRange(filters: TransactionFilters): boolean {
+  return filters.dateFrom !== "" && filters.dateTo !== "" && filters.dateFrom > filters.dateTo;
 }
 
 export const defaultFilters: TransactionFilters = {
@@ -99,12 +104,9 @@ export function TransactionFiltersSheet({
   filters,
   onChange,
 }: TransactionFiltersSheetProps) {
-  const { data: accounts } = useQuery(
-    convexQuery(api.accounts.listAccounts, {}),
-  );
-  const { data: categories } = useQuery(
-    convexQuery(api.categories.listCategories, {}),
-  );
+  // Archived accounts and categories still hold history worth filtering by.
+  const { data: accounts } = useQuery({ ...accountsQuery({ includeArchived: true }), enabled: open });
+  const { data: categories } = useQuery({ ...categoriesQuery({ includeArchived: true }), enabled: open });
 
   function update(partial: Partial<TransactionFilters>) {
     onChange({ ...filters, ...partial });
@@ -155,28 +157,34 @@ export function TransactionFiltersSheet({
                   value={filters.dateTo}
                   onChange={(e) => update({ dateTo: e.target.value })}
                   className="h-9 text-sm"
+                  aria-invalid={hasInvalidDateRange(filters) || undefined}
+                  aria-describedby={hasInvalidDateRange(filters) ? "filter-date-error" : undefined}
                 />
               </div>
+              {hasInvalidDateRange(filters) && (
+                <FormError id="filter-date-error" className="mt-0 text-xs" message="The start date is after the end date." />
+              )}
             </div>
           </div>
 
           {/* Account */}
           <div className="space-y-1.5">
-            <Label className="text-xs">Account</Label>
+            <Label id="filter-account-label" className="text-xs">Account</Label>
             <Select
               value={filters.accountId || "__all__"}
               onValueChange={(v) =>
                 update({ accountId: v === "__all__" ? "" : v })
               }
             >
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger aria-labelledby="filter-account-label" className="h-9 text-sm">
                 <SelectValue placeholder="All accounts" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">All accounts</SelectItem>
-                {(accounts ?? []).map((a) => (
-                  <SelectItem key={a._id} value={a._id}>
+                {(accounts?.items ?? []).map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
                     {a.name}
+                    {a.archived ? " (archived)" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -185,21 +193,22 @@ export function TransactionFiltersSheet({
 
           {/* Category */}
           <div className="space-y-1.5">
-            <Label className="text-xs">Category</Label>
+            <Label id="filter-category-label" className="text-xs">Category</Label>
             <Select
               value={filters.categoryId || "__all__"}
               onValueChange={(v) =>
                 update({ categoryId: v === "__all__" ? "" : v })
               }
             >
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger aria-labelledby="filter-category-label" className="h-9 text-sm">
                 <SelectValue placeholder="All categories" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">All categories</SelectItem>
-                {(categories ?? []).map((c) => (
-                  <SelectItem key={c._id} value={c._id}>
+                {(categories?.items ?? []).map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
                     {c.name}
+                    {c.archived ? " (archived)" : ""}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -208,7 +217,7 @@ export function TransactionFiltersSheet({
 
           {/* Type */}
           <div className="space-y-1.5">
-            <Label className="text-xs">Type</Label>
+            <Label id="filter-type-label" className="text-xs">Type</Label>
             <Select
               value={filters.type || "__all__"}
               onValueChange={(v) =>
@@ -218,7 +227,7 @@ export function TransactionFiltersSheet({
                 })
               }
             >
-              <SelectTrigger className="h-9 text-sm">
+              <SelectTrigger aria-labelledby="filter-type-label" className="h-9 text-sm">
                 <SelectValue placeholder="All" />
               </SelectTrigger>
               <SelectContent>
