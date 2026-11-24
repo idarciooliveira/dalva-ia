@@ -146,16 +146,22 @@ export function userTokenSource(tokens: UserTokens): PrincipalSource {
  */
 export function resolvePrincipal(sources: readonly PrincipalSource[]): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
-    c.set("principal", null);
-    for (const source of sources) {
-      const result = await source(c);
-      if (result.status === "absent") continue;
-      if (result.status === "invalid") return errorResponse(c, "unauthorized", result.message ?? "Invalid or expired credentials");
-      c.set("principal", result.principal);
-      break;
-    }
+    const result = await principalFrom(c, sources);
+    if (result.status === "invalid") return errorResponse(c, "unauthorized", result.message ?? INVALID_CREDENTIALS);
+    c.set("principal", result.status === "ok" ? result.principal : null);
     await next();
   };
+}
+
+export const INVALID_CREDENTIALS = "Invalid or expired credentials";
+
+/** The first source that recognises its credential decides; `absent` when none does. Shared by `/api/v1` and `/api/trpc`. */
+export async function principalFrom(c: Context<AppEnv>, sources: readonly PrincipalSource[]): Promise<SourceResult> {
+  for (const source of sources) {
+    const result = await source(c);
+    if (result.status !== "absent") return result;
+  }
+  return { status: "absent" };
 }
 
 /** Route guard: a user principal holding every scope in `scopes`. */

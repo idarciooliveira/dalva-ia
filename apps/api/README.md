@@ -80,6 +80,25 @@ Goals and debts (`src/domain/{goals,debts}.ts`), in the base currency:
 
 Tests use `test/api.ts`: `seedUser`, `seedAccount`, `seedCategory`, `seedSubcategory`, `seedTransaction` (rows only, no balance; `null` account for legacy rows), `seedDebt`, `seedDebtPayment`, `seedContribution`, `seedChannelIdentity`, `tokenFor(userId, scopes?)`, `clientFor(app, token)` (the contract client, which parses every success with the response schema), `serviceClientFor(app)` (service key), `linkedChat(app)` (a user linked through the real code/redeem/resolve flow, with its agent token), `raw(app, method, path, { token | cookie, body, idempotencyKey })`, `expectApiError(promise, code, status)` and `twoUsers()` for isolation checks. `testApp({ operations })` swaps in fake operations (e.g. one that writes then throws).
 
+## tRPC (`/api/trpc`, proof of concept)
+
+Accounts are also served by tRPC v11 at `/api/trpc`, mounted with `@hono/trpc-server` next to the contract routes. Same domain code, same credentials, same behaviour. Clients import `type AppRouter` from `@mpf/api/trpc` (a types-only export: a runtime import of server code doesn't resolve).
+
+```text
+src/trpc/init.ts       Context and procedure builders: financeRead, financeWrite, webRead, webWrite
+src/trpc/errors.ts     DomainError -> TRPCError; error.data carries apiCode (the v1 code) and details
+src/trpc/schemas.ts    Shared zod primitives (id, money, dates)
+src/trpc/accounts.ts   Accounts router, schemas next to the procedures
+src/trpc/router.ts     appRouter, type AppRouter
+src/trpc/mount.ts      Hono mount: Cache-Control, 64 KiB body cap, context from the principal sources
+```
+
+- Order as on `/api/v1`: credential (401) → web-only (403) → scope (403) → `Idempotency-Key` (400) → transaction [channel identity re-check → idempotency claim → input (400) → procedure].
+- Queries run in `readTx`, mutations in `withTx` (`ctx.tx`). Throw `DomainError`; never take a user id from the input (`ctx.user.userId`).
+- Finance writes need `Idempotency-Key` (header, one mutation per request; batched writes are refused). The hash covers the procedure path and the raw input; storage is `api_idempotency_keys`, as on `/api/v1`. A replay answers `Idempotent-Replayed: true`.
+- Errors: HTTP status from the tRPC code; `error.data.apiCode` is the v1 code (`not_found`, `conflict`, ...), `error.data.details` the v1 details. Unexpected errors answer `Internal error` and are logged.
+- Tests: `src/trpc/accounts.test.ts`, with `trpcFor(app, { token | cookie })` and `expectTrpcError` (`test/trpc.ts`).
+
 ## Idempotency
 
 Finance writes need `Idempotency-Key` (8-128 of `[A-Za-z0-9._:-]`). `(user, key) -> sha256(operation + canonical input) + response` is stored in `api_idempotency_keys` inside the write's transaction (`src/http/idempotency.ts`). Same key and request: the stored response, `Idempotent-Replayed: true`. Same key, different request or operation: `conflict`. A failed write stores nothing. Concurrent requests with one key serialize: one runs, the others replay it. The key is claimed with `INSERT ... ON CONFLICT DO NOTHING` and the row is only read when the key exists: a `SELECT` under SERIALIZABLE takes index-page read locks, and with clustered UUIDv7 ids every user's write then collided with every other's (about one 500 in ten at 40 concurrent writers). Keep reads of shared, append-heavy tables off the hot write path for the same reason. Keys count as unused after 7 days; `purgeExpiredIdempotencyKeys` deletes them in batches (a retention job).

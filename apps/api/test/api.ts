@@ -217,7 +217,7 @@ export function clientFor(app: TestApp, token: string) {
 }
 
 /** `fetch` that calls `app` in-process. */
-function inProcess(app: TestApp): typeof fetch {
+export function inProcess(app: TestApp): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     return await app.request(`${url.pathname}${url.search}`, init);

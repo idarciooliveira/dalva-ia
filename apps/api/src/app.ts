@@ -13,6 +13,7 @@ import { errorResponse } from "./http/errors";
 import { contractRouter } from "./http/router";
 import { createOperations, type OperationSettings, serviceOperations as v1ServiceOperations } from "./http/v1";
 import { errorFields, type Logger } from "./log";
+import { mountTrpc } from "./trpc/mount";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -100,15 +101,13 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
     c.header("Cache-Control", "no-store");
     await next();
   });
-  app.use(
-    `${API_BASE_PATH}/*`,
-    resolvePrincipal([
-      // First: the service key is a bearer credential too (see principal.ts).
-      serviceKeySource(options.serviceKey ? createServiceKey(options.serviceKey) : undefined),
-      userTokenSource(options.tokens),
-      sessionSource(options.auth, { publicUrl: options.publicUrl }),
-    ]),
-  );
+  const principalSources = [
+    // First: the service key is a bearer credential too (see principal.ts).
+    serviceKeySource(options.serviceKey ? createServiceKey(options.serviceKey) : undefined),
+    userTokenSource(options.tokens),
+    sessionSource(options.auth, { publicUrl: options.publicUrl }),
+  ];
+  app.use(`${API_BASE_PATH}/*`, resolvePrincipal(principalSources));
   app.use(
     `${API_BASE_PATH}/*`,
     contractRouter({
@@ -119,6 +118,9 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       tokens: options.tokens,
     }),
   );
+
+  // tRPC proof of concept (accounts only), same credentials as the contract routes.
+  mountTrpc(app, { db: options.db, logger: options.logger, sources: principalSources });
 
   app.notFound((c) => errorResponse(c, "not_found", "Not found"));
   app.onError((error, c) => {
