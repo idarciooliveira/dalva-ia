@@ -13,14 +13,14 @@ import {
   CardAction,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  type RecentTransactionsData,
-  formatCurrency,
-  formatDate,
-} from "@/lib/mock-dashboard-data";
+import type { RecentTransactionItem } from "@/lib/dashboard-data";
+import { formatDate } from "@/lib/format";
+import { formatMinor } from "@/lib/money";
+import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";
 
 interface RecentTransactionsCardProps {
-  data: RecentTransactionsData;
+  transactions: RecentTransactionItem[];
+  status?: CardStatus;
 }
 
 const typeIcons = {
@@ -37,8 +37,8 @@ const typeColors = {
   transfer: "text-muted-foreground bg-muted",
 } as const;
 
-export function RecentTransactionsCard({ data }: RecentTransactionsCardProps) {
-  if (data.transactions.length === 0) {
+export function RecentTransactionsCard({ transactions, status }: RecentTransactionsCardProps) {
+  if (showsStatus(status) || transactions.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -52,11 +52,15 @@ export function RecentTransactionsCard({ data }: RecentTransactionsCardProps) {
           </CardAction>
         </CardHeader>
         <CardContent>
-          <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-3 text-center sm:min-h-36 sm:px-4">
-            <p className="text-sm text-muted-foreground">
-              Your latest transactions will appear here once you add a record.
-            </p>
-          </div>
+          {showsStatus(status) ? (
+            <CardStatusBody status={status} />
+          ) : (
+            <div className="flex min-h-32 items-center justify-center rounded-xl border border-dashed border-border bg-muted/20 px-3 text-center sm:min-h-36 sm:px-4">
+              <p className="text-sm text-muted-foreground">
+                Your latest transactions will appear here once you add a record.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
     );
@@ -76,10 +80,10 @@ export function RecentTransactionsCard({ data }: RecentTransactionsCardProps) {
       </CardHeader>
       <CardContent>
         <div className="flex flex-col divide-y divide-border">
-          {data.transactions.map((txn) => {
+          {transactions.map((txn) => {
             const Icon = typeIcons[txn.type];
             const colorClass = typeColors[txn.type];
-            const isPositive = txn.amount > 0;
+            const isPositive = txn.amountMinor > 0;
 
             return (
               <div
@@ -111,8 +115,8 @@ export function RecentTransactionsCard({ data }: RecentTransactionsCardProps) {
                           : "text-red-500"
                     }`}
                   >
-                    {isPositive ? "+" : "-"}
-                    {formatCurrency(Math.abs(txn.amount), data.currency)}
+                    {isPositive ? "+" : txn.amountMinor < 0 ? "-" : ""}
+                    {formatMinor(Math.abs(txn.amountMinor), txn.currency)}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {formatDate(txn.date)}

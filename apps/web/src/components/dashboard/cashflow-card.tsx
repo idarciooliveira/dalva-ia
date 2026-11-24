@@ -1,6 +1,4 @@
 import { useQuery } from "@tanstack/react-query";
-import { convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
@@ -15,8 +13,19 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { formatCurrency, formatCurrencyCompact } from "@/lib/format";
 import { Skeleton } from "@/components/ui/skeleton";
+import { cashflowQuery } from "@/lib/api/dashboard";
+import { formatMinor, fractionDigits } from "@/lib/money";
+import { CardError } from "./card-error";
+
+/** Major units (the chart's scale) as a compact axis label: "$5K". */
+function formatCompact(value: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0, notation: "compact" }).format(value);
+  } catch {
+    return `${currency} ${Math.round(value)}`;
+  }
+}
 
 const chartConfig = {
   income: {
@@ -34,20 +43,12 @@ interface CashflowCardProps {
   month: string;
   /** Number of trailing months for the trend chart (default 6). */
   trendMonths?: number;
-  /** Currency code for formatting. */
-  currency?: string;
 }
 
-export function CashflowCard({
-  month,
-  trendMonths = 6,
-  currency = "USD",
-}: CashflowCardProps) {
-  const { data, isLoading } = useQuery(
-    convexQuery(api.transactions.getCashflow, { month, trendMonths }),
-  );
+export function CashflowCard({ month, trendMonths = 6 }: CashflowCardProps) {
+  const { data, isPending, isError, error, refetch } = useQuery(cashflowQuery(month, trendMonths));
 
-  if (isLoading) {
+  if (isPending) {
     return (
       <Card>
         <CardHeader>
@@ -67,16 +68,33 @@ export function CashflowCard({
     );
   }
 
-  const currentMonth = data?.currentMonth ?? { income: 0, expenses: 0, net: 0 };
-  const trend = data?.trend ?? [];
-  const isPositive = currentMonth.net >= 0;
+  // A failed background refetch keeps the cached data on screen.
+  if (isError && !data) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            Monthly Cashflow
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <CardError error={error} onRetry={() => void refetch()} />
+        </CardContent>
+      </Card>
+    );
+  }
 
-  // Convert cents to dollars for chart display
-  const chartData = trend.map((m) => ({
+  const { income, expenses, net } = data.currentMonth;
+  const currency = net.currency;
+  const scale = 10 ** fractionDigits(currency);
+  const isPositive = net.amountMinor >= 0;
+  // The chart plots major units; every report amount is in the base currency.
+  const chartData = data.trend.map((m) => ({
     month: m.month,
-    income: m.income / 100,
-    expenses: m.expenses / 100,
+    income: m.income.amountMinor / scale,
+    expenses: m.expenses.amountMinor / scale,
   }));
+  const hasActivity = chartData.some((m) => m.income !== 0 || m.expenses !== 0);
 
   return (
     <Card>
@@ -92,14 +110,14 @@ export function CashflowCard({
             <span className="text-xs text-muted-foreground">Income</span>
             <p className="flex items-center gap-1 text-xs font-medium text-foreground sm:text-sm">
               <ArrowUpRight className="size-3.5 text-wise-positive" />
-              {formatCurrency(currentMonth.income, currency)}
+              {formatMinor(income.amountMinor, currency)}
             </p>
           </div>
           <div>
             <span className="text-xs text-muted-foreground">Expenses</span>
             <p className="flex items-center gap-1 text-xs font-medium text-foreground sm:text-sm">
               <ArrowDownRight className="size-3.5 text-destructive" />
-              {formatCurrency(currentMonth.expenses, currency)}
+              {formatMinor(expenses.amountMinor, currency)}
             </p>
           </div>
           <div>
@@ -108,13 +126,13 @@ export function CashflowCard({
               className={`text-xs font-semibold sm:text-sm ${isPositive ? "text-wise-positive" : "text-destructive"}`}
             >
               {isPositive ? "+" : ""}
-              {formatCurrency(currentMonth.net, currency)}
+              {formatMinor(net.amountMinor, currency)}
             </p>
           </div>
         </div>
 
         {/* Bar chart */}
-        {chartData.length > 0 ? (
+        {hasActivity ? (
           <ChartContainer
             config={chartConfig}
               className="aspect-[1.8/1] w-full sm:aspect-[2/1]"
@@ -131,9 +149,7 @@ export function CashflowCard({
                 tickLine={false}
                 axisLine={false}
                 fontSize={12}
-                tickFormatter={(value: number) =>
-                  formatCurrencyCompact(value * 100, currency)
-                }
+                tickFormatter={(value: number) => formatCompact(value, currency)}
                 width={50}
               />
               <ChartTooltip
@@ -146,10 +162,7 @@ export function CashflowCard({
                       return (
                         <span>
                           {label}:{" "}
-                          {formatCurrency(
-                            (value as number) * 100,
-                            currency,
-                          )}
+                          {formatMinor(Math.round((value as number) * scale), currency)}
                         </span>
                       );
                     }}

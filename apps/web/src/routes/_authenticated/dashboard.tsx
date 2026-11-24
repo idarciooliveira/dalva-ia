@@ -1,7 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { convexQuery } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
+import { useMemo } from "react";
 
 import { useAuthProfile } from "@/hooks/use-auth-profile";
 import { AccountCardsSection } from "@/components/dashboard/account-card";
@@ -12,12 +11,21 @@ import { RecentTransactionsCard } from "@/components/dashboard/recent-transactio
 import { BudgetSummaryCard } from "@/components/dashboard/budget-summary-card";
 import { GoalsProgressCard } from "@/components/dashboard/goals-progress-card";
 import { DebtPaydownCard } from "@/components/dashboard/debt-paydown-card";
-import { buildRecentTransactionsData } from "@/lib/dashboard-data";
-
+import { cardStatus } from "@/components/dashboard/card-error";
+import { accountsQuery, categoriesQuery } from "@/lib/api/queries";
 import {
-  mockBudgetSummary,
-} from "@/lib/mock-dashboard-data";
-import type { GoalsProgressData } from "@/lib/mock-dashboard-data";
+  dashboardGoalsQuery,
+  debtSummaryQuery,
+  netWorthQuery,
+  recentTransactionsQuery,
+  transactionSummaryQuery,
+} from "@/lib/api/dashboard";
+import { buildRecentTransactions, namesById } from "@/lib/dashboard-data";
+import { apiErrorMessage } from "@/lib/api/errors";
+import type { DebtPaydownData, GoalsProgressData, NetWorthData } from "@/lib/mock-dashboard-data";
+
+// Budgets have no backend module yet: this card stays on mock data.
+import { mockBudgetSummary } from "@/lib/mock-dashboard-data";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   component: DashboardPage,
@@ -31,56 +39,80 @@ function DashboardPage() {
   const profile = useAuthProfile();
   const greeting = getGreeting();
   const firstName = profile.name?.split(" ")[0] ?? "there";
-
-  const { data: accounts } = useQuery(
-    convexQuery(api.accounts.listAccounts, {}),
-  );
-
-  const { data: categories } = useQuery(
-    convexQuery(api.categories.listCategories, {}),
-  );
-
-  // Get current month string (e.g. "2026-04")
+  // Reports, goals and debts are in the base currency.
+  const baseCurrency = profile.baseCurrency ?? "USD";
   const currentMonth = getCurrentMonth();
 
-  const { data: summary } = useQuery(
-    convexQuery(api.transactions.getTransactionSummary, {
-      month: currentMonth,
-    }),
+  // Archived accounts too: their names label older recent rows. The cards show active ones.
+  const accountsResult = useQuery(accountsQuery({ includeArchived: true }));
+  const activeAccounts = useMemo(
+    () => (accountsResult.data?.items ?? []).filter((a) => !a.archived),
+    [accountsResult.data],
   );
+  const categoriesResult = useQuery(categoriesQuery({ includeArchived: true }));
+  const summaryResult = useQuery(transactionSummaryQuery(currentMonth));
+  // The summary carries the month's latest rows. When it is refused (accounts in
+  // another currency), the search serves them: they need no common currency.
+  const summaryFailed = summaryResult.isError && summaryResult.data === undefined;
+  const recentResult = useQuery({ ...recentTransactionsQuery(currentMonth), enabled: summaryFailed });
+  const recentSource = summaryFailed ? recentResult : summaryResult;
+  const netWorthResult = useQuery(netWorthQuery());
+  const goalsResult = useQuery(dashboardGoalsQuery());
+  const debtsResult = useQuery(debtSummaryQuery());
 
-  const totalIncome = summary?.totalIncome ?? 0;
-  const totalExpenses = summary?.totalExpenses ?? 0;
-
-  // Build recent transactions data from real query
-  const recentTransactionsData = buildRecentTransactionsData(
-    summary?.recentTransactions ?? [],
-    accounts ?? [],
-    categories ?? [],
-  );
-
-  // Fetch real savings goals
-  const { data: goalsRaw } = useQuery(
-    convexQuery(api.savingsGoals.listGoals, {}),
-  );
-
-  const goalsProgressData: GoalsProgressData = {
-    goals: (goalsRaw ?? []).map((g) => ({
-      id: g._id,
-      name: g.name,
-      targetAmount: g.targetAmount,
-      currentAmount: g.currentAmount,
-      percentComplete: Math.min(
-        100,
-        Math.round((g.currentAmount / g.targetAmount) * 100),
+  const summary = summaryResult.data;
+  const recentTransactions = useMemo(
+    () =>
+      buildRecentTransactions(
+        summaryResult.data?.recentTransactions ?? recentResult.data?.items ?? [],
+        namesById(accountsResult.data?.items),
+        namesById(categoriesResult.data?.items),
       ),
+    [summaryResult.data, recentResult.data, accountsResult.data, categoriesResult.data],
+  );
+
+  const netWorth: NetWorthData = netWorthResult.data
+    ? {
+        hasData: netWorthResult.data.hasData,
+        totalAssets: netWorthResult.data.totalAssets.amountMinor,
+        totalDebts: netWorthResult.data.totalDebts.amountMinor,
+        netWorth: netWorthResult.data.netWorth.amountMinor,
+        currency: netWorthResult.data.netWorth.currency,
+      }
+    : { hasData: false, totalAssets: 0, totalDebts: 0, netWorth: 0, currency: baseCurrency };
+
+  const goalsProgress: GoalsProgressData = {
+    goals: (goalsResult.data?.items ?? []).map((g) => ({
+      id: g.id,
+      name: g.name,
+      targetAmount: g.targetAmount.amountMinor,
+      currentAmount: g.currentAmount.amountMinor,
+      percentComplete:
+        g.targetAmount.amountMinor > 0
+          ? Math.min(100, Math.round((g.currentAmount.amountMinor / g.targetAmount.amountMinor) * 100))
+          : 0,
       targetDate: g.targetDate,
     })),
-    currency: "USD",
+    currency: goalsResult.data?.items[0]?.targetAmount.currency ?? baseCurrency,
   };
 
-  const { data: debtSummary } = useQuery(convexQuery(api.debts.getDebtSummary, {}));
-  const { data: netWorth } = useQuery(convexQuery(api.dashboard.getNetWorth, {}));
+  const debts = debtsResult.data;
+  const debtPaydown: DebtPaydownData = debts
+    ? {
+        debts: debts.debts.map((d) => ({
+          id: d.id,
+          name: d.name,
+          creditor: d.creditor,
+          originalAmount: d.originalAmount.amountMinor,
+          currentBalance: d.currentBalance.amountMinor,
+          percentPaid: Math.max(0, Math.min(100, d.percentPaid)),
+        })),
+        totalRemaining: debts.totalRemaining.amountMinor,
+        totalOriginal: debts.totalOriginal.amountMinor,
+        recentPayment: debts.recentPayment.amountMinor,
+        currency: debts.totalOriginal.currency,
+      }
+    : { debts: [], totalRemaining: 0, totalOriginal: 0, recentPayment: 0, currency: baseCurrency };
 
   return (
     <div className="dashboard-glass-bg dashboard-glass flex-1 overflow-auto">
@@ -90,9 +122,7 @@ function DashboardPage() {
           <h1 className="font-heading text-xl font-semibold text-foreground sm:text-2xl">
             {greeting}, {firstName}
           </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Here&apos;s your financial overview.
-          </p>
+          <p className="mt-1 text-sm text-muted-foreground">Here&apos;s your financial overview.</p>
         </div>
 
         {/* ============================================================ */}
@@ -104,13 +134,19 @@ function DashboardPage() {
           {/* --- Left column --- */}
           <div className="flex flex-col gap-4 sm:gap-5 lg:gap-6">
             <AccountCardsSection
-              accounts={accounts ?? []}
-              income={totalIncome}
-              expenses={totalExpenses}
-              currency="USD"
+              accounts={activeAccounts}
+              status={cardStatus(accountsResult)}
+              income={summary ? summary.totalIncome.amountMinor : null}
+              expenses={summary ? summary.totalExpenses.amountMinor : null}
+              currency={summary?.totalIncome.currency ?? baseCurrency}
+              totalsError={
+                summaryResult.isError && !summary
+                  ? apiErrorMessage(summaryResult.error, "Couldn't load this month's totals.")
+                  : undefined
+              }
               holderName={profile.name?.toUpperCase() ?? "DALVA USER"}
             />
-            <RecentTransactionsCard data={recentTransactionsData} />
+            <RecentTransactionsCard transactions={recentTransactions} status={cardStatus(recentSource)} />
           </div>
 
           {/* --- Right column --- */}
@@ -124,32 +160,12 @@ function DashboardPage() {
         {/*  BOTTOM ROW: All remaining widgets                           */}
         {/* ============================================================ */}
         <div className="mt-4 grid gap-3 sm:mt-6 sm:gap-4 sm:grid-cols-2">
-          <NetWorthCard
-            data={
-              netWorth ?? {
-                hasData: false,
-                totalAssets: 0,
-                totalDebts: 0,
-                netWorth: 0,
-                currency: "USD",
-              }
-            }
-          />
+          <NetWorthCard data={netWorth} status={cardStatus(netWorthResult)} />
           <BudgetSummaryCard data={mockBudgetSummary} />
         </div>
         <div className="mt-3 grid gap-3 sm:mt-4 sm:gap-4 sm:grid-cols-2">
-          <GoalsProgressCard data={goalsProgressData} />
-          <DebtPaydownCard
-            data={
-              debtSummary ?? {
-                debts: [],
-                totalRemaining: 0,
-                totalOriginal: 0,
-                recentPayment: 0,
-                currency: "USD",
-              }
-            }
-          />
+          <GoalsProgressCard data={goalsProgress} status={cardStatus(goalsResult)} />
+          <DebtPaydownCard data={debtPaydown} status={cardStatus(debtsResult)} />
         </div>
       </div>
     </div>
