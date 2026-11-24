@@ -3,17 +3,6 @@ import { FinanceApiError } from "@mpf/finance-contract";
 export const GENERIC_ERROR = "Something went wrong. Please try again.";
 export const OFFLINE_ERROR = "Can't reach DALVA right now. Check your connection and try again.";
 
-/**
- * Thrown for reads and writes of the pages still on Convex (transactions,
- * transfers, dashboard) until PR 10 moves them.
- */
-export class LegacyBackendError extends Error {
-  override name = "LegacyBackendError";
-  constructor() {
-    super("This section is moving to the new backend and is unavailable for now.");
-  }
-}
-
 function firstIssue(details: unknown): string | undefined {
   const issues = (details as { issues?: Array<{ message?: unknown }> } | undefined)?.issues;
   const message = Array.isArray(issues) ? issues[0]?.message : undefined;
@@ -22,7 +11,6 @@ function firstIssue(details: unknown): string | undefined {
 
 /** A message for the user. Server messages are shown only for codes that carry user-facing text. */
 export function apiErrorMessage(error: unknown, fallback: string = GENERIC_ERROR): string {
-  if (error instanceof LegacyBackendError) return error.message;
   // The session check: no answer, or the proxy without the API behind it.
   if (error instanceof TypeError) return OFFLINE_ERROR;
   if (isSessionError(error)) return error.status >= 500 ? OFFLINE_ERROR : fallback;

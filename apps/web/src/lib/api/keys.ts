@@ -1,9 +1,6 @@
 import type { RouteInput, UserRoutes } from "@mpf/finance-contract";
 
-/**
- * Query keys for the API. Every API key starts with "api" so it never collides
- * with the legacy `["convexQuery", ...]` keys; `all` keys are invalidation prefixes.
- */
+/** Query keys for the API. `all` keys are invalidation prefixes. */
 export const queryKeys = {
   session: () => ["session"] as const,
   profile: () => ["api", "profile"] as const,

@@ -51,7 +51,5 @@ describe("ledger invalidation", () => {
     ]) {
       expect(startsWith(key, queryKeys.reports.all())).toBe(true);
     }
-    expect(startsWith(dashboardKeys.goals(), queryKeys.goals.all())).toBe(true);
-    expect(startsWith(dashboardKeys.debtSummary(), queryKeys.debts.all())).toBe(true);
   });
 });

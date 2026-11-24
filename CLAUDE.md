@@ -37,7 +37,7 @@ bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh d
 
 ## apps/web -- Frontend
 
-**Stack:** TanStack Start (SSR) + TanStack Router (file-based routing) + React 19 + TanStack React Query + Convex React client.
+**Stack:** TanStack Start (SSR) + TanStack Router (file-based routing) + React 19 + TanStack React Query + the typed `apps/api` client from `@mpf/finance-contract`.
 
 **UI:** shadcn/ui v4 (`radix-nova` style) + Tailwind CSS v4 (CSS-first) + Radix UI + Lucide icons + Recharts.
 
@@ -58,7 +58,7 @@ bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh d
 - Data comes from `apps/api` through the contract client (`src/lib/api/`): reads with `useQuery(accountsQuery(...))` (options factories in `queries.ts`, keys in `keys.ts`), writes with `useApiMutation("accounts", "create")`.
 - `useApiMutation` sends one `Idempotency-Key` per submit (reused on retries of the same input) and invalidates what `INVALIDATES` in `mutations.ts` lists for that write. Add an entry for every new write.
 - Show failures with `apiErrorMessage()`: `ErrorState` for a page's data, `FormError` inside dialogs (`src/components/error-state.tsx`).
-- Money from the API is `{ amountMinor, currency }` in ISO minor units: format with `formatMinor` and parse with `parseDecimalInput` (`src/lib/money.ts`), or `CurrencyInput` with `fractionDigits` + `parseCurrencyInput`. `formatCurrency(cents)` is for the Convex pages only.
+- Money from the API is `{ amountMinor, currency }` in ISO minor units: format with `formatMinor` and parse with `parseDecimalInput` (`src/lib/money.ts`), or `CurrencyInput` with `fractionDigits` + `parseCurrencyInput`. `formatCurrency(cents)` is only for the mock budget card.
 - Transactions, transfers and the dashboard read through `src/lib/api/ledger.ts` and `src/lib/api/dashboard.ts`. Rows owned by goals or debts (`managedBy` on search items) offer no edit or delete. Edits send only changed fields; `null` clears a nullable one.
 - Goal and debt account pickers list only accounts in the base currency (`accountsForBaseCurrency` in `src/lib/accounts.ts`): the API refuses others.
 - Settings → Telegram gets the bot username from `chatLinks.list` (`botUsernames`, API setting `TELEGRAM_BOT_USERNAME`) and polls the list while a link code is pending.
@@ -91,7 +91,7 @@ bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh d
 | File | Purpose |
 | ---- | ------- |
 | `apps/web/src/styles.css` | Global design tokens and theme variables |
-| `apps/web/src/router.tsx` | TanStack Router + React Query + Convex client wiring |
+| `apps/web/src/router.tsx` | TanStack Router + React Query wiring |
 | `apps/web/src/routes/__root.tsx` | Root document, stylesheet, anti-flash theme script, devtools |
 | `apps/web/src/routes/_authenticated.tsx` | Persistent authenticated layout and shared quick actions |
 | `apps/web/src/routes/onboarding.tsx` | 3-step onboarding flow |
@@ -135,7 +135,7 @@ apps/web/src/routes/
 ### Backend Integration
 
 - The web app talks to `apps/api` on the same origin: the Vite proxy in dev (`/api` → `DALVA_API_URL`, default `http://localhost:4000`), the reverse proxy in production
-- The web app no longer connects to Convex (see `src/lib/legacy-convex.tsx`); Convex types still come from `@mpf/backend` for the pages not moved yet
+- The web app has no Convex dependency; every page reads and writes through `apps/api`
 
 ### E2E Testing (Playwright)
 
