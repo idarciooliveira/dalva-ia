@@ -1,13 +1,10 @@
 # syntax=docker/dockerfile:1
 # Build from the repo root: docker build -f apps/web/Dockerfile .
 # Context filter: apps/web/Dockerfile.dockerignore (BuildKit picks it over the root .dockerignore).
-#
-# The SPA, served by Caddy, which is also the stack's single entry: it proxies
 # /api/auth/* and /api/v1/* to the API and /webhooks/telegram to the agent.
 
 ARG BUN_VERSION=1.4.0
 
-# ---- build: static SPA (dist/client) ----
 FROM oven/bun:${BUN_VERSION}-slim AS build
 WORKDIR /repo
 # Every workspace manifest, so the lockfile resolves and --frozen-lockfile holds.
@@ -20,11 +17,9 @@ RUN bun install --frozen-lockfile --filter '@mpf/web' --ignore-scripts
 COPY tsconfig.json ./
 COPY packages packages
 COPY apps/web apps/web
-# No build-time settings: the SPA reads everything (bot username included) from the API.
 WORKDIR /repo/apps/web
 RUN bun --bun run build
 
-# ---- runtime: Caddy, non-root, read-only friendly ----
 FROM caddy:2.11.9-alpine AS runtime
 # No admin API, no autosave, no certificates: Caddy needs nothing writable but /tmp.
 ENV XDG_CONFIG_HOME=/tmp/caddy-config \

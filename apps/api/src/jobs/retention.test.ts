@@ -1,4 +1,3 @@
-/** Retention jobs: data rules, batching, the advisory lock and the scheduler. */
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -233,7 +232,6 @@ describe("job: purge_idempotency_keys", () => {
 });
 
 describe("jobs racing requests", () => {
-  /** Run `write` in a request transaction that stays open until the job below has queued behind it. */
   async function whileRequestHolds(write: Parameters<typeof withTx>[1], job: () => Promise<number>) {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
@@ -251,7 +249,6 @@ describe("jobs racing requests", () => {
     await holding;
     const running = job();
     try {
-      // Only release once the job's statement is waiting on the request's row lock.
       await expect
         .poll(async () => {
           const [row] = await testDb().execute<{ n: number }>(sql`
@@ -301,7 +298,6 @@ describe("jobs racing requests", () => {
   });
 });
 
-/** Advisory locks held in this worker's database (workers share the server). */
 async function advisoryLocksHeld() {
   const [row] = await testDb().execute<{ n: number }>(sql`
     select count(*)::int as n from pg_locks
@@ -316,15 +312,12 @@ describe("advisory lock", () => {
     const other = createDatabase({ url: testDatabaseUrl(), max: 1 });
     try {
       const held = await withAdvisoryLock(other.db, "dalva:job:purge_agent_events", async () => {
-        // The other instance holds it: this one skips, and deletes nothing.
         expect(await runJob(testDb(), job("purge_agent_events"), NOW)).toEqual({ status: "skipped" });
         expect(await testDb().select().from(agentInboundEvents)).toHaveLength(1);
-        // Locks are per job: another job still runs.
         expect(await runJob(testDb(), job("purge_link_codes"), NOW)).toEqual({ status: "done", rows: 0 });
         return "held";
       });
       expect(held).toEqual({ ran: true, value: "held" });
-      // Released: the job runs again.
       expect(await runJob(testDb(), job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 1 });
     } finally {
       await other.close();
@@ -336,7 +329,6 @@ describe("advisory lock", () => {
     const tiny = createDatabase({ url: testDatabaseUrl(), max: 1 });
     try {
       expect(await runJob(tiny.db, job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 1 });
-      // The connection went back to the pool unlocked (another session can take the lock).
       expect(await runJob(testDb(), job("purge_agent_events"), NOW)).toEqual({ status: "done", rows: 0 });
       expect(await advisoryLocksHeld()).toBe(0);
     } finally {
@@ -360,7 +352,7 @@ describe("scheduler", () => {
     let calls = 0;
     const slow: RetentionJob = {
       name: "test_job",
-      schedule: "* * * * * *", // every second
+      schedule: "* * * * * *",
       batch: 10,
       steps: [
         async () => {
@@ -376,10 +368,10 @@ describe("scheduler", () => {
     let done = false;
     void stopped.then(() => (done = true));
     await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(done).toBe(false); // waits for the run in progress
+    expect(done).toBe(false);
     release();
     await stopped;
-    expect(calls).toBe(1); // `protect`: no second run while the first was going, and none after stop
+    expect(calls).toBe(1);
     expect(lines).toContainEqual(expect.objectContaining({ msg: "job_done", job: "test_job", rows: 3 }));
   });
 
@@ -393,7 +385,7 @@ describe("scheduler", () => {
         async () => {
           batches++;
           await new Promise((resolve) => setTimeout(resolve, 20));
-          return 1; // always a full batch
+          return 1;
         },
       ],
     };

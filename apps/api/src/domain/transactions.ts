@@ -1,18 +1,3 @@
-/**
- * Income, expense and adjustment transactions. Every function takes the
- * caller's user id and only touches that user's rows; missing and foreign
- * rows are both "not found". Amounts are stored minor units (value × 100).
- *
- * Each write keeps the account balance in step: create applies the row's
- * delta, update reverses the old one and applies the new one, delete reverses
- * it. Rows owned by another flow (transfer legs, goal-contribution transfers,
- * debt-payment rows) are refused with `conflict`: changing them here would
- * leave the paired leg or the owning record out of sync.
- *
- * `account_id` is null on legacy rows whose account Convex deleted (see the
- * schema header): their balance effect is skipped, as Convex skipped a
- * missing account.
- */
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { isoDateSchema, type TransactionManagedBy } from "@mpf/finance-contract";
 
@@ -25,19 +10,14 @@ import { conflict, invalid, notFound } from "./errors";
 
 export type Transaction = typeof transactions.$inferSelect;
 export type TransactionType = Transaction["type"];
-/** Types the transaction endpoints write. Transfers have their own. */
 type WritableTransactionType = Exclude<TransactionType, "transfer">;
 
-/** The user's transaction `id`. */
 export const ownedTransaction = (userId: string, id: string) => and(eq(transactions.id, id), eq(transactions.userId, userId));
 
-/** Newest first: date, then creation order (the id breaks ties within one transaction). */
 export const NEWEST_FIRST = [desc(transactions.date), desc(transactions.createdAt), desc(transactions.id)] as const;
 
 export const TRANSFER_MANAGED_MESSAGE = "Transfer legs must be changed through the transfer endpoints";
 export const DEBT_PAYMENT_MANAGED_MESSAGE = "Debt payment transactions must be changed through the debt payment endpoints";
-
-/* Lookups ------------------------------------------------------------------ */
 
 export async function getTransaction(tx: Tx, userId: string, id: string, what = "Transaction"): Promise<Transaction> {
   const [row] = await tx.select().from(transactions).where(ownedTransaction(userId, id)).limit(1);
@@ -45,11 +25,9 @@ export async function getTransaction(tx: Tx, userId: string, id: string, what = 
   return row;
 }
 
-/** A leg of a transfer (goal-contribution transfers included). */
 const isTransferLeg = (row: Transaction) =>
   row.type === "transfer" || row.transferGroupId !== null || row.linkedTransactionId !== null;
 
-/** Transfer legs, and the source or liability rows of a debt payment. */
 export async function managedTransactionKind(tx: Tx, userId: string, row: Transaction): Promise<"transfer" | "debt_payment" | null> {
   if (isTransferLeg(row)) return "transfer";
   const [payment] = await tx
@@ -65,7 +43,6 @@ export async function managedTransactionKind(tx: Tx, userId: string, row: Transa
   return payment ? "debt_payment" : null;
 }
 
-/** Whether a goal contribution owns this transfer (through either leg). */
 export async function ownedByContribution(tx: Tx, userId: string, row: Transaction): Promise<boolean> {
   const legs = row.linkedTransactionId ? [row.id, row.linkedTransactionId] : [row.id];
   const [contribution] = await tx
@@ -76,11 +53,6 @@ export async function ownedByContribution(tx: Tx, userId: string, row: Transacti
   return contribution !== undefined;
 }
 
-/**
- * `ownedByContribution` and `managedTransactionKind` for a page of rows in two
- * queries: which flow owns each row, the goal contribution first (it is a
- * transfer too). Rows no flow owns are absent.
- */
 export async function managedKinds(
   tx: Tx,
   userId: string,
@@ -121,7 +93,6 @@ export async function managedKinds(
   return kinds;
 }
 
-/** The user's transaction, unless another flow owns it (`conflict`). */
 export async function getEditableTransaction(tx: Tx, userId: string, id: string): Promise<Transaction> {
   const row = await getTransaction(tx, userId, id);
   const kind = await managedTransactionKind(tx, userId, row);
@@ -130,14 +101,10 @@ export async function getEditableTransaction(tx: Tx, userId: string, id: string)
   return row;
 }
 
-/* Rules -------------------------------------------------------------------- */
-
-/** Signed effect of a row on its account's balance. Transfers are handled by the transfer flow. */
 function balanceDelta(type: TransactionType, amount: number): number {
   return type === "expense" ? -amount : amount;
 }
 
-/** Income and expense amounts are positive integers; only adjustments are signed. */
 function assertAmount(type: TransactionType, amount: number) {
   if (!Number.isSafeInteger(amount)) throw invalid("amount", "Amount must be an integer");
   if (type !== "adjustment" && amount <= 0) throw invalid("amount.amountMinor", "Amount must be positive");
@@ -147,10 +114,6 @@ function assertWritableType(type: TransactionType | undefined) {
   if (type === "transfer") throw invalid("type", "Use the transfer create for transfers");
 }
 
-/**
- * The category and subcategory must be the user's, and the subcategory must
- * sit under the row's category (the one given, else the current one).
- */
 async function checkClassification(
   tx: Tx,
   userId: string,
@@ -171,11 +134,8 @@ function assertNoCategoryOnAdjustment(categoryId: string | null | undefined, sub
   if (subcategoryId) throw invalid("subcategoryId", "Adjustments cannot have a subcategory");
 }
 
-/* Writes ------------------------------------------------------------------- */
-
 export interface TransactionFields {
   type: WritableTransactionType;
-  /** Stored minor units. */
   amount: number;
   accountId: string;
   categoryId?: string;
@@ -186,7 +146,6 @@ export interface TransactionFields {
   payee?: string;
 }
 
-/** Insert the row and apply its delta to the account. */
 export async function createTransaction(tx: Tx, userId: string, args: TransactionFields): Promise<Transaction> {
   assertWritableType(args.type);
   assertAmount(args.type, args.amount);
@@ -213,7 +172,6 @@ export async function createTransaction(tx: Tx, userId: string, args: Transactio
   return row!;
 }
 
-/** What an update may change: `null` clears the subcategory and the free-text fields. */
 export type TransactionChanges = Partial<Omit<TransactionFields, "subcategoryId" | "description" | "note" | "payee">> & {
   subcategoryId?: string | null;
   description?: string | null;
@@ -221,15 +179,8 @@ export type TransactionChanges = Partial<Omit<TransactionFields, "subcategoryId"
   payee?: string | null;
 };
 
-/** The change if given (`null` included), else the stored value. */
 const changed = <T>(change: T | undefined, stored: T): T => (change === undefined ? stored : change);
 
-/**
- * Change the fields given; `null` clears a nullable one. Reverses the old balance
- * effect on the old account and applies the new one on the new account.
- * A new category without a subcategory drops the old subcategory, which
- * belongs to the old category.
- */
 export async function updateTransaction(
   tx: Tx,
   userId: string,
@@ -239,7 +190,6 @@ export async function updateTransaction(
   return await updateLoadedTransaction(tx, userId, await getEditableTransaction(tx, userId, id), changes);
 }
 
-/** `updateTransaction` for a row the caller loaded with `getEditableTransaction` in this transaction. */
 export async function updateLoadedTransaction(
   tx: Tx,
   userId: string,
@@ -283,30 +233,17 @@ export async function updateLoadedTransaction(
   return updated!;
 }
 
-/** Delete the row and reverse its balance effect. */
 export async function deleteTransaction(tx: Tx, userId: string, id: string): Promise<void> {
   await deleteTransactionRows(tx, userId, [await getEditableTransaction(tx, userId, id)]);
 }
 
-/**
- * Delete rows the caller loaded and reverse their balance effects, without
- * the managed-row check: for the debt-payment flow removing its own rows.
- * Not for transfer legs (`deleteTransferLegs`).
- */
 export async function deleteTransactionRows(tx: Tx, userId: string, rows: Transaction[]): Promise<void> {
   if (rows.length === 0) return;
   await tx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, rows.map((r) => r.id))));
   await addToBalances(tx, userId, rows.map((r): [string | null, number] => [r.accountId, -balanceDelta(r.type, r.amount)]));
 }
 
-/* Search ------------------------------------------------------------------- */
-
-/**
- * Keyset position: the last row returned, by `(date, created_at, id)`, the
- * listing order. `created_at` is kept in microseconds since the epoch, as a
- * decimal string: Postgres stores microseconds and a JS Date only holds
- * milliseconds, which would skip or repeat rows created within one.
- */
+/** `created_at` is a microsecond string: a JS Date holds milliseconds and would skip or repeat rows created within one. */
 export interface SearchPosition {
   date: string;
   createdAtMicros: string;
@@ -319,7 +256,6 @@ export function encodeSearchCursor(position: SearchPosition): string {
   return Buffer.from(JSON.stringify([position.date, position.createdAtMicros, position.id])).toString("base64url");
 }
 
-/** `validation_failed` for anything this module didn't encode. */
 export function decodeSearchCursor(cursor: string): SearchPosition {
   try {
     const value: unknown = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
@@ -336,20 +272,12 @@ export function decodeSearchCursor(cursor: string): SearchPosition {
       return { date: value[0], createdAtMicros: value[1], id: value[2] };
     }
   } catch {
-    // fall through
   }
   throw invalid("cursor", "Invalid cursor");
 }
 
-/** `%`, `_` and `\` match themselves in the `q` substring search. */
 const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, "\\$&")}%`;
 
-/**
- * The user's transactions, newest first, with an opaque keyset cursor.
- * Every filter runs in the query, so a page is short only when it is the
- * last one, and `nextCursor` is null exactly then. `q` is a case-insensitive
- * substring of description, note or payee.
- */
 export async function searchTransactions(
   tx: Tx,
   userId: string,

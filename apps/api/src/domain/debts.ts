@@ -1,20 +1,3 @@
-/**
- * Debts and debt payments. Every function takes the
- * caller's user id and only touches that user's rows; missing and foreign
- * rows are both "not found". Amounts are stored minor units (value × 100), in
- * the user's base currency.
- *
- * A payment is an `expense` on the paying account ("Debt payment: <debt>")
- * and, when the debt has a linked account and the principal is positive, an
- * `adjustment` of minus the principal on it ("Debt principal payment:
- * <debt>"). The principal comes off `current_balance`. The transaction
- * endpoints refuse to change those rows; removing the payment (or deleting
- * the debt) deletes them and reverses their balance effects.
- *
- * Legacy payments (see the schema header) may have a null `from_account_id`
- * or `source_transaction_id`, and their rows a null `account_id`: whatever is
- * gone is skipped.
- */
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import { debtPayments, debts, transactions } from "../db/schema";
@@ -27,19 +10,11 @@ export type Debt = typeof debts.$inferSelect;
 export type DebtType = Debt["debtType"];
 export type DebtPayment = typeof debtPayments.$inferSelect;
 
-/** Convex read at most this many debts per user, and payments per debt. */
 const DEBTS_LIMIT = 100;
 const PAYMENTS_LIMIT = 500;
 
 const ownedDebt = (userId: string, id: string) => and(eq(debts.id, id), eq(debts.userId, userId));
 
-/* Debts -------------------------------------------------------------------- */
-
-/**
- * The user's debts, archived ones only with `includeArchived`. Open debts
- * first, paid-off ones last; within each, by due date with undated debts
- * after dated ones, then oldest first.
- */
 export async function listDebts(tx: Tx, userId: string, args: { includeArchived?: boolean } = {}): Promise<Debt[]> {
   return await tx
     .select()
@@ -75,7 +50,6 @@ export interface DebtFields {
   name: string;
   debtType: DebtType;
   lender?: string;
-  /** Stored minor units. */
   originalAmount: number;
   currentBalance: number;
   interestRate?: number;
@@ -105,7 +79,6 @@ export async function createDebt(tx: Tx, userId: string, args: DebtFields): Prom
   return debt!;
 }
 
-/** Changes only the fields given (none can be cleared). Changed amounts are checked against the stored ones. */
 export async function updateDebt(
   tx: Tx,
   userId: string,
@@ -113,8 +86,6 @@ export async function updateDebt(
   fields: Partial<DebtFields>,
 ): Promise<Debt> {
   const debt = await getDebt(tx, userId, id);
-  // Only when an amount changes: removing a payment may leave the balance above the original amount
-  // (as Convex did), and that must not block renaming the debt.
   if (fields.originalAmount !== undefined || fields.currentBalance !== undefined) {
     assertAmounts(fields.originalAmount ?? debt.originalAmount, fields.currentBalance ?? debt.currentBalance);
   }
@@ -125,14 +96,12 @@ export async function updateDebt(
   return updated!;
 }
 
-/** `true` archives (soft delete), `false` restores. No amount checks: a legacy row can always be archived. */
 export async function setDebtArchived(tx: Tx, userId: string, id: string, archived: boolean): Promise<Debt> {
   const [debt] = await tx.update(debts).set({ archived }).where(ownedDebt(userId, id)).returning();
   if (!debt) throw notFound("Debt");
   return debt;
 }
 
-/** The transactions the payments created that are still there. */
 async function paymentRows(tx: Tx, userId: string, payments: DebtPayment[]): Promise<Transaction[]> {
   const ids = payments.flatMap((p) => [p.sourceTransactionId, p.liabilityTransactionId]).filter((id): id is string => id !== null);
   if (ids.length === 0) return [];
@@ -142,7 +111,6 @@ async function paymentRows(tx: Tx, userId: string, payments: DebtPayment[]): Pro
     .where(and(eq(transactions.userId, userId), inArray(transactions.id, ids)));
 }
 
-/** Delete the debt and all its payments, with their transactions and balance effects. */
 export async function deleteDebt(tx: Tx, userId: string, id: string): Promise<void> {
   await getDebt(tx, userId, id);
   const payments = await tx
@@ -154,9 +122,6 @@ export async function deleteDebt(tx: Tx, userId: string, id: string): Promise<vo
   await tx.delete(debts).where(ownedDebt(userId, id));
 }
 
-/* Payments ----------------------------------------------------------------- */
-
-/** The debt's payments, newest first. */
 export async function listDebtPayments(tx: Tx, userId: string, debtId: string): Promise<DebtPayment[]> {
   await getDebt(tx, userId, debtId);
   return await tx
@@ -169,22 +134,14 @@ export async function listDebtPayments(tx: Tx, userId: string, debtId: string): 
 
 export interface DebtPaymentFields {
   debtId: string;
-  /** Stored minor units, positive. */
   amount: number;
-  /** Defaults to `amount`. */
   principalAmount?: number;
-  /** Defaults to 0. */
   interestAmount?: number;
   date: string;
   note?: string;
   fromAccountId: string;
 }
 
-/**
- * Record the payment: the expense on the paying account, the principal
- * adjustment on the linked account, and the principal off the debt's
- * balance. The principal can't exceed what is left.
- */
 export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymentFields): Promise<DebtPayment> {
   if (!Number.isSafeInteger(args.amount) || args.amount <= 0) throw invalid("amount", "Amount must be positive");
   const debt = await getDebt(tx, userId, args.debtId);
@@ -242,7 +199,6 @@ export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymen
   return payment!;
 }
 
-/** Delete the payment and its transactions, reversing their balance effects, and put the principal back on the debt. */
 export async function removeDebtPayment(tx: Tx, userId: string, id: string): Promise<void> {
   const [payment] = await tx
     .select()

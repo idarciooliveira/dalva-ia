@@ -1,4 +1,3 @@
-/** Channel linking through the service routes. */
 import { FinanceApiError } from "@mpf/finance-contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -71,7 +70,7 @@ describe("channelLinks.redeem", () => {
     const { code } = await createCode(app, userId);
     const service = serviceClientFor(app);
     await service.channelLinks.redeem({ ...chat("1001"), code });
-    await testDb().update(channelIdentities).set({ unlinkedAt: new Date() }); // even after unlinking
+    await testDb().update(channelIdentities).set({ unlinkedAt: new Date() });
     const again = await expectApiError(service.channelLinks.redeem({ ...chat("1001"), code }), "not_found", 404);
     expect(again.message).toBe(INVALID_LINK_CODE);
     const other = await expectApiError(service.channelLinks.redeem({ ...chat("2002"), code }), "not_found", 404);
@@ -118,7 +117,6 @@ describe("channelLinks.redeem", () => {
     const { code } = await createCode(app, bob);
     await expectApiError(service.channelLinks.redeem({ ...chat("1001"), code }), "conflict", 409);
     expect((await identityRows()).map((i) => i.userId)).toEqual([alice]);
-    // The code was not consumed: once alice unlinks, bob can use it.
     await service.channelIdentities.unlink({ channel: TG, externalUserId: "1001" });
     const { identity } = await service.channelLinks.redeem({ ...chat("1001"), code });
     const [stored] = await testDb().select().from(channelIdentities).where(eq(channelIdentities.id, identity.id));
@@ -129,7 +127,6 @@ describe("channelLinks.redeem", () => {
     const { app } = testApp();
     const userId = await seedUser();
     const { code } = await createCode(app, userId);
-    // Simulate a link that landed between code creation and redeem.
     await testDb()
       .insert(channelIdentities)
       .values({
@@ -209,7 +206,6 @@ describe("channelIdentities.resolve", () => {
     const finance = clientFor(app, resolved.token);
     const { items } = await finance.accounts.list();
     expect(items.map((a) => a.id)).toEqual([account]);
-    // EUR amounts in the contract are ISO minor units (cents); stored value × 100 is the same here.
     const adjusted = await finance.accounts.adjust({ id: account, amount: { amountMinor: 500, currency: "EUR" } });
     expect(adjusted.account.balance.amountMinor).toBe(10_500);
   });
@@ -220,7 +216,6 @@ describe("channelIdentities.resolve", () => {
     const account = await seedAccount(userId, { balance: 100 });
 
     const resolved = await service.channelIdentities.resolve(chat("1001"));
-    // Read-only keeps the agent's conversation state.
     expect(resolved.scopes).toEqual(["finance:read", "agent:state"]);
     expect(resolved.identity.scopes).toEqual(["finance:read"]);
     const finance = clientFor(app, resolved.token);
@@ -281,7 +276,6 @@ describe("channelIdentities.resolve", () => {
     const error = await expectApiError(asUserToken.channelIdentities.resolve(chat("1001")), "unauthorized", 401);
     expect(error).toBeInstanceOf(FinanceApiError);
     await expectApiError(asUserToken.channelIdentities.unlink({ channel: TG, externalUserId: "1001" }), "unauthorized", 401);
-    // Still linked.
     await service.channelIdentities.resolve(chat("1001"));
   });
 

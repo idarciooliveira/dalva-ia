@@ -1,13 +1,3 @@
-/**
- * Reports. Sums are in stored minor units, across accounts, without any
- * currency conversion: callers check the currencies of what was summed
- * (`*AccountIds`, `assetCurrencies`) before labelling a total.
- *
- * Months are `YYYY-MM`; a month is the half-open range from its first day to
- * the next month's first day, so no bound is ever a day that doesn't exist.
- * Totals cover every row of the range (Convex summed the first 200, 500 or
- * 2000 rows it read). Transfers are excluded from every total.
- */
 import { and, asc, desc, eq, inArray, not, sql, type SQL } from "drizzle-orm";
 
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
@@ -17,31 +7,24 @@ import type { Tx } from "../db/tx";
 import { invalid } from "./errors";
 import { NEWEST_FIRST, type Transaction, type TransactionType } from "./transactions";
 
-/** Account types whose balances are owed, not owned: not counted as assets. */
 const LIABILITY_ACCOUNT_TYPES = ["credit_card", "loan"] as const;
 
 const RECENT_TRANSACTIONS = 10;
 const TOP_DEBTS = 5;
 
-/* Months ------------------------------------------------------------------- */
-
 const pad = (n: number, width: number) => String(n).padStart(width, "0");
 
-/** Month `offset` months after `month` (negative: before). Before year 1 there are no dates: `validation_failed`. */
 function addMonths(month: string, offset: number): string {
   const total = Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1 + offset;
   if (total < 12) throw invalid("month", "Month out of range");
   return `${pad(Math.floor(total / 12), 4)}-${pad((total % 12) + 1, 2)}`;
 }
 
-/** `count` consecutive months ending at `month`, oldest first. */
 function monthsEndingAt(month: string, count: number): string[] {
   return Array.from({ length: count }, (_, i) => addMonths(month, i - (count - 1)));
 }
 
-/** First day of `first` up to (excluding) the first day of the month after `last`. */
 function dateRange(first: string, last = first): SQL {
-  // addMonths(first, 0) refuses a month before year 1.
   return sql`${transactions.date} >= ${`${addMonths(first, 0)}-01`}::date and ${transactions.date} < ${`${addMonths(last, 1)}-01`}::date`;
 }
 
@@ -50,11 +33,6 @@ const total = (amount: AnyPgColumn, where?: SQL) =>
   (where ? sql<number>`coalesce(sum(${amount}) filter (where ${where}), 0)` : sql<number>`coalesce(sum(${amount}), 0)`).mapWith(Number);
 const ofType = (type: TransactionType) => sql`${transactions.type} = ${type}`;
 
-/**
- * Accounts of the rows a report sums: the range, restricted to the types it
- * adds up. Null for rows whose account is gone (legacy), whose currency is
- * unknown.
- */
 async function accountIdsIn(tx: Tx, userId: string, range: SQL, types: readonly TransactionType[]): Promise<Array<string | null>> {
   const rows = await tx
     .selectDistinct({ accountId: transactions.accountId })
@@ -63,13 +41,10 @@ async function accountIdsIn(tx: Tx, userId: string, range: SQL, types: readonly 
   return rows.map((r) => r.accountId);
 }
 
-/* Transaction summary ------------------------------------------------------ */
-
 const SUMMARY_TYPES = ["income", "expense", "adjustment"] as const;
 
 export const summaryAccountIds = (tx: Tx, userId: string, month: string) => accountIdsIn(tx, userId, dateRange(month), SUMMARY_TYPES);
 
-/** Income, expense and (signed) adjustment totals of the month, and its 10 newest rows (transfer legs included). */
 export async function transactionSummary(
   tx: Tx,
   userId: string,
@@ -93,11 +68,8 @@ export async function transactionSummary(
   return { ...totals!, recentTransactions };
 }
 
-/* Spending by category ----------------------------------------------------- */
-
 export const spendingAccountIds = (tx: Tx, userId: string, month: string) => accountIdsIn(tx, userId, dateRange(month), ["expense"]);
 
-/** Expenses of the month per category, largest first; uncategorised spending is one `categoryId: null` entry. */
 export async function spendingByCategory(
   tx: Tx,
   userId: string,
@@ -110,7 +82,6 @@ export async function spendingByCategory(
     .leftJoin(categories, and(eq(categories.id, transactions.categoryId), eq(categories.userId, userId)))
     .where(and(eq(transactions.userId, userId), dateRange(month), eq(transactions.type, "expense")))
     .groupBy(transactions.categoryId, categories.name)
-    // Ties in the order Convex met the categories: by their first expense of the month.
     .orderBy(
       desc(amount),
       sql`min(${transactions.date})`,
@@ -126,12 +97,9 @@ export async function spendingByCategory(
   };
 }
 
-/* Cashflow ----------------------------------------------------------------- */
-
 export const cashflowAccountIds = (tx: Tx, userId: string, month: string, trendMonths: number) =>
   accountIdsIn(tx, userId, dateRange(addMonths(month, 1 - trendMonths), month), ["income", "expense"]);
 
-/** Income and expenses of `month` and of each of the `trendMonths` months ending at it (oldest first). */
 export async function cashflow(
   tx: Tx,
   userId: string,
@@ -158,13 +126,6 @@ export async function cashflow(
   return { currentMonth: { income: current.income, expenses: current.expenses, net: current.income - current.expenses }, trend };
 }
 
-/* Net worth ---------------------------------------------------------------- */
-
-/**
- * Balances of unarchived non-liability accounts, minus the remaining balance
- * of unarchived debts. Liability accounts are left out so a debt linked to one
- * isn't counted twice.
- */
 export async function netWorth(
   tx: Tx,
   userId: string,
@@ -191,14 +152,6 @@ export async function netWorth(
   };
 }
 
-/* Debt summary ------------------------------------------------------------- */
-
-/**
- * Totals of unarchived debts, the latest recorded payment, and the five
- * largest remaining balances (paid-off debts included). `recentPaymentAccountId`
- * is the account the latest payment came out of: undefined without payments,
- * null when that account is gone (legacy).
- */
 export async function debtSummary(
   tx: Tx,
   userId: string,
@@ -220,7 +173,6 @@ export async function debtSummary(
     .where(live)
     .orderBy(desc(debts.currentBalance), asc(debts.createdAt), asc(debts.id))
     .limit(TOP_DEBTS);
-  // Latest recorded, as Convex (`_creationTime`), not latest dated.
   const [recent] = await tx
     .select({ amount: debtPayments.amount, fromAccountId: debtPayments.fromAccountId })
     .from(debtPayments)
@@ -237,7 +189,6 @@ export async function debtSummary(
       creditor: d.lender ?? "Unknown lender",
       originalAmount: d.originalAmount,
       currentBalance: d.currentBalance,
-      // Clamped: a balance can grow past the original amount (interest) or below zero.
       percentPaid:
         d.originalAmount === 0
           ? 0

@@ -1,4 +1,3 @@
-/** Settings → Telegram through the web-only routes. */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -81,7 +80,6 @@ describe("chatLinks (web)", () => {
     const rows = await testDb().select().from(channelLinkCodes);
     expect(rows).toHaveLength(1);
     expect(rows[0]!.consentAt.getTime()).toBeGreaterThan(0);
-    // No Idempotency-Key, so no replay record holding the raw code.
     expect(await testDb().select().from(apiIdempotencyKeys)).toHaveLength(0);
   });
 
@@ -101,7 +99,6 @@ describe("chatLinks (web)", () => {
   it("replaces used codes too, so old rows never pile up", async () => {
     const { app } = testApp();
     const { userId, web } = await newUser(app);
-    // At most one row per user and channel (unique): a used one stands in for the pile Convex could hold.
     await testDb()
       .insert(channelLinkCodes)
       .values({ userId, channel: TG, codeHash: "used-0", expiresAt: new Date(Date.now() + 60_000), usedAt: new Date(), consentAt: new Date() });

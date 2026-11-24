@@ -13,7 +13,6 @@ export const Route = createFileRoute("/forgot-password")({
   component: ForgotPasswordPage,
 });
 
-/* -------------------------------------------------------------------------- */
 /*  Schema                                                                    */
 /* -------------------------------------------------------------------------- */
 
@@ -23,7 +22,6 @@ const forgotSchema = z.object({
 
 type ForgotValues = z.infer<typeof forgotSchema>;
 
-/* -------------------------------------------------------------------------- */
 /*  Page                                                                      */
 /* -------------------------------------------------------------------------- */
 
@@ -46,13 +44,11 @@ function ForgotPasswordPage() {
       title="Reset your password"
       subtitle="Enter the email associated with your account and we'll send you a reset link."
     >
-      {/* Form */}
       <form
         onSubmit={handleSubmit(onSubmit)}
         className="mt-8 space-y-5"
         noValidate
       >
-        {/* Email */}
         <div className="space-y-2">
           <Label htmlFor="email">Email</Label>
           <Input
@@ -72,7 +68,6 @@ function ForgotPasswordPage() {
           )}
         </div>
 
-        {/* Submit */}
         <Button
           type="submit"
           variant="accent"
@@ -83,7 +78,6 @@ function ForgotPasswordPage() {
         </Button>
       </form>
 
-      {/* Back to login */}
       <div className="mt-6 text-center">
         <Link
           to="/login"

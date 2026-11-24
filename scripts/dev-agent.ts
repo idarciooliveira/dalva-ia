@@ -1,7 +1,4 @@
 #!/usr/bin/env bun
-// `bun run dev:agent`: start the Telegram agent once the local apps/api answers.
-// FINANCE_API_URL and FINANCE_API_SERVICE_KEY come from apps/api/.env.local or .env
-// (PORT, FINANCE_API_SERVICE_KEY), overriding the agent's env files.
 import { apiEnv, root } from "./lib/api-env";
 
 const api = apiEnv();
