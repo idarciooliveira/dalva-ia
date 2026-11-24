@@ -5,7 +5,6 @@ import { routeTree } from "./routeTree.gen";
 
 import { queryKeys } from "@/lib/api/keys";
 import { isApiError, isTransientError } from "@/lib/api/errors";
-import { bindTrpcQueryClient } from "@/lib/api/trpc";
 import { resetDataOnUserChange } from "@/lib/auth-client";
 
 export function getRouter() {
@@ -32,12 +31,10 @@ export function getRouter() {
       mutations: {
         // Safe: a retry sends the same Idempotency-Key, so the server replays instead of writing twice.
         retry: (failureCount, error) =>
-          failureCount < 1 && (isApiError(error, "network_error") || isApiError(error, "timeout")),
+          failureCount < 1 && isApiError(error, "network_error"),
       },
     },
   });
-
-  bindTrpcQueryClient(queryClient);
 
   // No query of one user may serve another (sign out, or a sign-in in another tab).
   if (typeof window !== "undefined") resetDataOnUserChange(queryClient);

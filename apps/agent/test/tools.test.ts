@@ -45,22 +45,22 @@ describe("read tools", () => {
   test("list_accounts: compact, decimal amounts, archived hidden by default", async () => {
     const { run } = setup();
     const result = await run("list_accounts");
-    expect(result.accounts[0]).toEqual({ id: "acc_bai", name: "BAI Conta Ordem", type: "bank", balance: { amount: "845320.50", currency: "AOA" } });
-    expect(result.accounts.find((a: any) => a.id === "acc_old")).toBeUndefined();
-    expect(result.accounts.find((a: any) => a.id === "acc_usd").balance).toEqual({ amount: "1240.75", currency: "USD" });
+    expect(result.accounts[0]).toEqual({ id: "00000001-0000-4000-8000-000000000001", name: "BAI Conta Ordem", type: "bank", balance: { amount: "845320.50", currency: "AOA" } });
+    expect(result.accounts.find((a: any) => a.id === "00000001-0000-4000-8000-000000000008")).toBeUndefined();
+    expect(result.accounts.find((a: any) => a.id === "00000001-0000-4000-8000-000000000004").balance).toEqual({ amount: "1240.75", currency: "USD" });
   });
 
   test("list_categories nests subcategories", async () => {
     const { run } = setup();
     const result = await run("list_categories", { type: "expense" });
-    const food = result.categories.find((c: any) => c.id === "cat_food");
+    const food = result.categories.find((c: any) => c.id === "00000002-0000-4000-8000-000000000001");
     expect(food).toEqual({
-      id: "cat_food",
+      id: "00000002-0000-4000-8000-000000000001",
       name: "Alimentação",
       type: "expense",
       subcategories: [
-        { id: "sub_market", name: "Supermercado" },
-        { id: "sub_rest", name: "Restaurantes" },
+        { id: "00000003-0000-4000-8000-000000000004", name: "Supermercado" },
+        { id: "00000003-0000-4000-8000-000000000001", name: "Restaurantes" },
       ],
     });
     expect(result.categories.every((c: any) => c.type === "expense")).toBe(true);
@@ -78,7 +78,7 @@ describe("read tools", () => {
     });
     expect(result.transactions).toEqual([
       {
-        id: "tx_2",
+        id: "00000004-0000-4000-8000-000000000005",
         date: "2026-11-09",
         type: "expense",
         amount: { amount: "6500.00", currency: "AOA" },
@@ -169,7 +169,7 @@ describe("read tools", () => {
     const { run, finance } = setup();
     finance.reads.set("/debts", {
       items: [
-        { id: "debt_old", name: "Old loan", debtType: "loan", originalAmount: { amountMinor: 100, currency: "AOA" }, currentBalance: { amountMinor: 0, currency: "AOA" }, archived: true, createdAt: "2024-01-01" },
+        { id: "00000006-0000-4000-8000-000000000003", name: "Old loan", debtType: "loan", originalAmount: { amountMinor: 100, currency: "AOA" }, currentBalance: { amountMinor: 0, currency: "AOA" }, archived: true, createdAt: "2024-01-01" },
       ],
     });
     const result = await run("list_debts", { includeArchived: true });
@@ -189,18 +189,18 @@ describe("read tools", () => {
     flaky.finance.fail("GET /categories", "internal");
     const result = await flaky.run("search_transactions", { text: "yango" });
     expect(flaky.fatal).toHaveLength(0);
-    expect(result.transactions[0]).toMatchObject({ account: "Carteira", category: "cat_transport" });
+    expect(result.transactions[0]).toMatchObject({ account: "Carteira", category: "00000002-0000-4000-8000-000000000002" });
   });
 
   test("list_categories flags categories whose subcategories were cut", async () => {
     const { run, finance } = setup();
-    const many = Array.from({ length: 20 }, (_, i) => ({ id: `sub_x${i}`, categoryId: "cat_fun", name: `Sub ${i}`, archived: false, sortOrder: i }));
+    const many = Array.from({ length: 20 }, (_, i) => ({ id: `sub_x${i}`, categoryId: "00000002-0000-4000-8000-000000000003", name: `Sub ${i}`, archived: false, sortOrder: i }));
     finance.reads.set("/subcategories", { items: many });
     const result = await run("list_categories");
-    const fun = result.categories.find((c: any) => c.id === "cat_fun");
+    const fun = result.categories.find((c: any) => c.id === "00000002-0000-4000-8000-000000000003");
     expect(fun.subcategories).toHaveLength(15);
     expect(fun.subcategoriesTruncated).toBe(true);
-    expect(result.categories.find((c: any) => c.id === "cat_food").subcategoriesTruncated).toBeUndefined();
+    expect(result.categories.find((c: any) => c.id === "00000002-0000-4000-8000-000000000001").subcategoriesTruncated).toBeUndefined();
     expect(result.truncated).toBe(true);
   });
 

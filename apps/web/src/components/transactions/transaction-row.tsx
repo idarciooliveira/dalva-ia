@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import type { TransactionListItem, TransactionManagedBy } from "@mpf/finance-contract";
+import type { TransactionListItem, TransactionManagedBy } from "@/lib/api/types";
 import {
   ArrowUpRight,
   ArrowDownRight,

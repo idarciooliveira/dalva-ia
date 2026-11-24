@@ -1,49 +1,50 @@
-import type { RouteInput, UserRoutes } from "@mpf/finance-contract";
-
 import { trpc, type RouterInputs } from "./trpc";
 
-/** Query keys for the API. `all` keys are invalidation prefixes. */
+/**
+ * Query keys. `all` keys are invalidation prefixes: tRPC keys start with the
+ * procedure path (`[["accounts", "list"], ...]`), so a router's `pathKey()`
+ * covers every query of that router.
+ */
 export const queryKeys = {
   session: () => ["session"] as const,
-  profile: () => ["api", "profile"] as const,
-  // tRPC keys (`[["accounts", ...]]`): accounts are read through /api/trpc.
+  profile: () => trpc.profile.get.queryKey(),
   accounts: {
     all: () => trpc.accounts.pathKey(),
     list: (input: RouterInputs["accounts"]["list"]) => trpc.accounts.list.queryKey(input),
   },
   categories: {
-    all: () => ["api", "categories"] as const,
-    list: (input: RouteInput<UserRoutes["categories"]["list"]>) => ["api", "categories", "list", input] as const,
-    defaults: () => ["api", "categories", "defaults"] as const,
+    all: () => trpc.categories.pathKey(),
+    list: (input: RouterInputs["categories"]["list"]) => trpc.categories.list.queryKey(input),
+    defaults: () => trpc.categories.defaults.queryKey(),
   },
   subcategories: {
-    all: () => ["api", "subcategories"] as const,
-    list: (input: RouteInput<UserRoutes["subcategories"]["list"]>) => ["api", "subcategories", "list", input] as const,
+    all: () => trpc.subcategories.pathKey(),
+    list: (input: RouterInputs["subcategories"]["list"]) => trpc.subcategories.list.queryKey(input),
   },
   goals: {
-    all: () => ["api", "goals"] as const,
-    list: (input: RouteInput<UserRoutes["goals"]["list"]>) => ["api", "goals", "list", input] as const,
+    all: () => trpc.goals.pathKey(),
+    list: (input: RouterInputs["goals"]["list"]) => trpc.goals.list.queryKey(input),
   },
-  // Not under "goals"/"debts": deleting a goal or debt must not refetch its (gone) history.
+  // Own routers: deleting a goal or debt must not refetch its (gone) history.
   goalContributions: {
-    all: () => ["api", "goalContributions"] as const,
-    list: (goalId: string) => ["api", "goalContributions", goalId] as const,
+    all: () => trpc.goalContributions.pathKey(),
+    list: (goalId: string) => trpc.goalContributions.list.queryKey({ goalId }),
   },
   debts: {
-    all: () => ["api", "debts"] as const,
-    list: (input: RouteInput<UserRoutes["debts"]["list"]>) => ["api", "debts", "list", input] as const,
+    all: () => trpc.debts.pathKey(),
+    list: (input: RouterInputs["debts"]["list"]) => trpc.debts.list.queryKey(input),
   },
   debtPayments: {
-    all: () => ["api", "debtPayments"] as const,
-    list: (debtId: string) => ["api", "debtPayments", debtId] as const,
+    all: () => trpc.debtPayments.pathKey(),
+    list: (debtId: string) => trpc.debtPayments.list.queryKey({ debtId }),
   },
   reports: {
-    all: () => ["api", "reports"] as const,
-    debtSummary: () => ["api", "reports", "debtSummary"] as const,
+    all: () => trpc.reports.pathKey(),
+    debtSummary: () => trpc.reports.debtSummary.queryKey(),
   },
   chatLinks: {
-    all: () => ["api", "chatLinks"] as const,
+    all: () => trpc.chatLinks.pathKey(),
   },
-  // Read by pages that move in PR 10; listed now so writes here already invalidate them.
-  transactions: { all: () => ["api", "transactions"] as const },
+  transactions: { all: () => trpc.transactions.pathKey() },
+  transfers: { all: () => trpc.transfers.pathKey() },
 };

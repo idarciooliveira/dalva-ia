@@ -14,7 +14,7 @@ describe("logs", () => {
     const { adapter } = telegramAdapter(logger);
     const finance = fakeFinance();
     finance.link("424242", { displayName: "Ana Secret-Surname" });
-    finance.accounts.push({ id: "acc_1", name: "Hidden Account Name", type: "bank", balance: { amountMinor: 987654, currency: "USD" } });
+    finance.accounts.push({ id: "00000001-0000-4000-8000-000000000009", name: "Hidden Account Name", type: "bank", balance: { amountMinor: 987654, currency: "USD" } });
     finance.codes.set(CODE, "valid");
     const { handle, onFailure } = createHandler({ adapter, clients: finance.clients, logger, sessionIdleMinutes: 30 });
     const pipeline = createPipeline({ adapter, service: finance.clients.service, handle, onFailure, logger });

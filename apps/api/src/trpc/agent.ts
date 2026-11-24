@@ -29,7 +29,7 @@ import { transferCreateInput, transferDeleteInput, transferUpdateInput } from ".
  * Writes a pending action can carry: the finance writes the agent may
  * propose, by procedure path. Account management and the profile are web only.
  */
-const ACTION_INPUTS = {
+export const ACTION_INPUTS = {
   "accounts.adjust": accountAdjustInput,
   "transactions.create": transactionCreateInput,
   "transactions.update": transactionUpdateInput,

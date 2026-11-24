@@ -11,7 +11,7 @@ export const listGoals = (context: ToolContext) =>
     inputSchema: z.object({ includeArchived: includeArchivedInput }),
     execute: ({ includeArchived }) =>
       guarded(context, async () => {
-        const { items } = await context.finance.goals.list({ includeArchived: includeArchived ?? false }, call(context));
+        const { items } = await context.finance.goals.list.query({ includeArchived: includeArchived ?? false }, call(context));
         const visible = includeArchived ? items : items.filter((goal) => !goal.archived);
         const { items: goals, truncated } = bounded(visible, MAX_GOALS);
         return compact({

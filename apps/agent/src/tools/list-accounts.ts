@@ -1,7 +1,6 @@
 import { tool } from "ai";
 import { z } from "zod";
 
-import { viaTrpc } from "../core/trpc";
 import { bounded, call, clip, compact, guarded, includeArchivedInput, money, NAME_MAX, type ToolContext } from "./shared";
 
 const MAX_ACCOUNTS = 50;
@@ -13,7 +12,7 @@ export const listAccounts = (context: ToolContext) =>
     inputSchema: z.object({ includeArchived: includeArchivedInput }),
     execute: ({ includeArchived }) =>
       guarded(context, async () => {
-        const { items } = await viaTrpc(context.finance.trpc.accounts.list.query({ includeArchived: includeArchived ?? false }, call(context)));
+        const { items } = await context.finance.accounts.list.query({ includeArchived: includeArchived ?? false }, call(context));
         const visible = includeArchived ? items : items.filter((account) => !account.archived);
         const { items: accounts, truncated } = bounded(visible, MAX_ACCOUNTS);
         return compact({

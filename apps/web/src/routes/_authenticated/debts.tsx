@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { RouteOutput, UserRoutes } from "@mpf/finance-contract";
+import type { RouterOutputs } from "@/lib/api/trpc";
 import { Archive, CreditCard, Plus } from "lucide-react";
 import { useState } from "react";
 
@@ -138,7 +138,7 @@ function DebtsContent() {
 }
 
 /** Totals of the open (unarchived) debts. Hidden while loading, on error, or with nothing open. */
-function DebtSummary({ data }: { data: RouteOutput<UserRoutes["reports"]["debtSummary"]> | undefined }) {
+function DebtSummary({ data }: { data: RouterOutputs["reports"]["debtSummary"] | undefined }) {
   if (!data || data.totalOriginal.amountMinor === 0) return null;
 
   const currency = data.totalOriginal.currency;

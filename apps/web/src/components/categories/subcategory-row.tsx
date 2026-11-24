@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { Subcategory } from "@mpf/finance-contract";
+import type { Subcategory } from "@/lib/api/types";
 import {
   MoreVertical,
   Archive,

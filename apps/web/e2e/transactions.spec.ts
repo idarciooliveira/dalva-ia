@@ -197,7 +197,7 @@ test.describe("Transactions (apps/api)", () => {
     const main = await accountId(page, "Main Checking");
     // 26 rows: one more than a page.
     for (let i = 1; i <= 25; i++) {
-      await apiWrite(page, "POST", "/transactions", {
+      await apiWrite(page, "transactions.create", {
         type: "expense",
         amount: usd(100 + i),
         accountId: main,
@@ -205,7 +205,7 @@ test.describe("Transactions (apps/api)", () => {
         description: `Coffee ${i}`,
       });
     }
-    await apiWrite(page, "POST", "/transactions", {
+    await apiWrite(page, "transactions.create", {
       type: "income",
       amount: usd(5000),
       accountId: main,
@@ -250,28 +250,28 @@ test.describe("Transactions (apps/api)", () => {
     await registerAndCompleteOnboarding(page);
     const main = await accountId(page, "Main Checking");
     const savings = await createAccount(page, "Savings");
-    await apiWrite(page, "POST", "/transactions", { type: "income", amount: usd(100_000), accountId: main, date: "2026-01-01", description: "Salary" });
+    await apiWrite(page, "transactions.create", { type: "income", amount: usd(100_000), accountId: main, date: "2026-01-01", description: "Salary" });
 
-    const { goal } = await apiWrite<{ goal: { id: string } }>(page, "POST", "/goals", {
+    const { goal } = await apiWrite<{ goal: { id: string } }>(page, "goals.create", {
       name: "Trip",
       targetAmount: usd(50_000),
       isVirtual: false,
       linkedAccountId: savings,
     });
-    await apiWrite(page, "POST", `/goals/${goal.id}/contributions`, {
+    await apiWrite(page, "goalContributions.add", {
       goalId: goal.id,
       amount: usd(10_000),
       date: "2026-01-02",
       note: "Trip savings",
       fromAccountId: main,
     });
-    const { debt } = await apiWrite<{ debt: { id: string } }>(page, "POST", "/debts", {
+    const { debt } = await apiWrite<{ debt: { id: string } }>(page, "debts.create", {
       name: "Car loan",
       debtType: "loan",
       originalAmount: usd(500_000),
       currentBalance: usd(400_000),
     });
-    await apiWrite(page, "POST", `/debts/${debt.id}/payments`, {
+    await apiWrite(page, "debtPayments.record", {
       debtId: debt.id,
       amount: usd(20_000),
       date: "2026-01-03",

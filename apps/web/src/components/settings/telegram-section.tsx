@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ChatLink } from "@mpf/finance-contract";
+import type { ChatLink } from "@/lib/api/types";
 import { Check, Copy, ExternalLink, Link2Off, MessageCircle, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 

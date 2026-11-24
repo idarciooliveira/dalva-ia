@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Goal, GoalContribution } from "@mpf/finance-contract";
+import type { Goal, GoalContribution } from "@/lib/api/types";
 import { Archive, ArchiveRestore, Edit, PlusCircle, Trash2 } from "lucide-react";
 
 import { ErrorState, FormError } from "@/components/error-state";

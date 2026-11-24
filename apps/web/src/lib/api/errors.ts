@@ -1,24 +1,24 @@
-import { FinanceApiError, type FinanceApiErrorCode } from "@mpf/finance-contract";
 import { TRPCClientError } from "@trpc/client";
+import type { ApiErrorCode } from "@mpf/api/trpc";
 
 export const GENERIC_ERROR = "Something went wrong. Please try again.";
 export const OFFLINE_ERROR = "Can't reach DALVA right now. Check your connection and try again.";
 
-/** A failed API call, from the `/api/v1` client or the tRPC client, in the v1 error vocabulary. */
+/** The API's error codes, plus what the client concludes when no API answer came back. */
+export type ApiFailureCode = ApiErrorCode | "network_error" | "aborted" | "invalid_response";
+
 interface ApiFailure {
-  code: FinanceApiErrorCode;
+  code: ApiFailureCode;
   message: string;
   details?: unknown;
   /** HTTP status, or null when no response came back. */
   status: number | null;
 }
 
-function failureOf(error: unknown): ApiFailure | null {
-  if (error instanceof FinanceApiError) {
-    return { code: error.code, message: error.message, details: error.details, status: error.status };
-  }
+/** A failed API call in the API's vocabulary (`error.data.apiCode`), or null for anything else. */
+export function failureOf(error: unknown): ApiFailure | null {
   if (!(error instanceof TRPCClientError)) return null;
-  const data = error.data as { apiCode?: FinanceApiErrorCode; details?: unknown; httpStatus?: number } | undefined;
+  const data = error.data as { apiCode?: ApiErrorCode; details?: unknown; httpStatus?: number } | undefined;
   if (data?.apiCode) return { code: data.apiCode, message: error.message, details: data.details, status: data.httpStatus ?? null };
   // No tRPC error body: no answer at all, an abort, or something in front of the API (the proxy) answered.
   const cause: unknown = error.cause;
@@ -43,7 +43,6 @@ export function apiErrorMessage(error: unknown, fallback: string = GENERIC_ERROR
   if (!failure) return fallback;
   switch (failure.code) {
     case "network_error":
-    case "timeout":
       return OFFLINE_ERROR;
     case "unauthorized":
       return "Your session has expired. Please log in again.";
@@ -55,7 +54,7 @@ export function apiErrorMessage(error: unknown, fallback: string = GENERIC_ERROR
     case "not_found":
       return failure.message || fallback;
     default:
-      // No envelope from a 5xx: the proxy without the API behind it (Vite answers 500, others 502/504).
+      // No API answer from a 5xx: the proxy without the API behind it (Vite answers 500, others 502/504).
       return failure.code === "invalid_response" && failure.status !== null && failure.status >= 500 ? OFFLINE_ERROR : fallback;
   }
 }
@@ -65,7 +64,7 @@ function isSessionError(error: unknown): error is Error & { status: number } {
   return error instanceof Error && error.name === "SessionError";
 }
 
-export function isApiError(error: unknown, code: FinanceApiErrorCode): boolean {
+export function isApiError(error: unknown, code: ApiFailureCode): boolean {
   return failureOf(error)?.code === code;
 }
 
@@ -76,6 +75,6 @@ export function isTransientError(error: unknown): boolean {
   if (isSessionError(error)) return error.status >= 500;
   const failure = failureOf(error);
   if (!failure) return false;
-  if (failure.code === "network_error" || failure.code === "timeout" || failure.code === "internal") return true;
+  if (failure.code === "network_error" || failure.code === "internal") return true;
   return failure.code === "invalid_response" && failure.status !== null && failure.status >= 500;
 }

@@ -1,4 +1,4 @@
-import type { Transaction } from "@mpf/finance-contract";
+import type { Transaction } from "@/lib/api/types";
 import { describe, expect, it } from "vitest";
 
 import { transactionChanges, transferChanges } from "./form-helpers";

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { routes, type RouteDef } from "@mpf/finance-contract";
+// The API's own schemas for pending-action input, so the fake refuses what the API refuses.
+import { ACTION_INPUTS } from "../../api/src/trpc/agent";
 
 import { createTelegramAdapter, type TelegramApi } from "../src/channels/telegram/adapter";
 import { createFinanceClients } from "../src/core/finance";
@@ -127,7 +128,10 @@ const STATUS: Record<ErrorCode, number> = {
 };
 
 class ApiFailure extends Error {
-  constructor(readonly code: ErrorCode) {
+  constructor(
+    readonly code: ErrorCode,
+    readonly details?: unknown,
+  ) {
     super(code);
   }
 }
@@ -186,18 +190,56 @@ const WRITE_ROUTES: Array<[RegExp, string, string]> = [
   [/^\/accounts\/([^/]+)\/adjustments$/, "POST", "accounts.adjust"],
 ];
 
-const routeOf = (operation: string): RouteDef => {
-  const [group, op] = operation.split(".");
-  return (routes as unknown as Record<string, Record<string, RouteDef>>)[group!]![op!]!;
-};
 
 const ISO = "2026-11-11T00:00:00.000Z";
 
-/** tRPC account procedure -> the v1 route the fake serves: method, path, body. */
-const ACCOUNT_PROCEDURES: Record<string, (id: string, rest: Json) => [string, string, Json]> = {
-  "accounts.list": (_id, rest) => ["GET", "/accounts", rest],
-  "accounts.get": (id) => ["GET", `/accounts/${id}`, {}],
-  "accounts.adjust": (id, rest) => ["POST", `/accounts/${id}/adjustments`, rest],
+/**
+ * The fake keeps REST-like routes inside (`GET /accounts`, `POST /transactions`):
+ * tests address calls, failures and holds by them. Each tRPC procedure maps to
+ * its route here: method, path, and the rest of the input as body or query.
+ */
+const PROCEDURES: Record<string, (input: Json) => [string, string, Json]> = {
+  "accounts.list": (i) => ["GET", "/accounts", i],
+  "accounts.get": ({ id }) => ["GET", `/accounts/${id}`, {}],
+  "accounts.adjust": ({ id, ...rest }) => ["POST", `/accounts/${id}/adjustments`, rest],
+  "categories.list": (i) => ["GET", "/categories", i],
+  "subcategories.list": (i) => ["GET", "/subcategories", i],
+  "transactions.search": (i) => ["GET", "/transactions", i],
+  "transactions.get": ({ id }) => ["GET", `/transactions/${id}`, {}],
+  "transactions.create": (i) => ["POST", "/transactions", i],
+  "transactions.update": ({ id, ...rest }) => ["PATCH", `/transactions/${id}`, rest],
+  "transactions.delete": ({ id }) => ["DELETE", `/transactions/${id}`, {}],
+  "transfers.create": (i) => ["POST", "/transfers", i],
+  "transfers.update": ({ id, ...rest }) => ["PATCH", `/transfers/${id}`, rest],
+  "transfers.delete": ({ id }) => ["DELETE", `/transfers/${id}`, {}],
+  "reports.transactionSummary": (i) => ["GET", "/reports/transaction-summary", i],
+  "reports.spendingByCategory": (i) => ["GET", "/reports/spending-by-category", i],
+  "reports.cashflow": (i) => ["GET", "/reports/cashflow", i],
+  "reports.netWorth": (i) => ["GET", "/reports/net-worth", i],
+  "reports.debtSummary": (i) => ["GET", "/reports/debt-summary", i],
+  "goals.list": (i) => ["GET", "/goals", i],
+  "goals.get": ({ id }) => ["GET", `/goals/${id}`, {}],
+  "goalContributions.add": ({ goalId, ...rest }) => ["POST", `/goals/${goalId}/contributions`, rest],
+  "goalContributions.remove": ({ id }) => ["DELETE", `/goal-contributions/${id}`, {}],
+  "debts.list": (i) => ["GET", "/debts", i],
+  "debts.get": ({ id }) => ["GET", `/debts/${id}`, {}],
+  "debtPayments.record": ({ debtId, ...rest }) => ["POST", `/debts/${debtId}/payments`, rest],
+  "debtPayments.remove": ({ id }) => ["DELETE", `/debt-payments/${id}`, {}],
+  "agentSessions.current": (i) => ["POST", "/agent/sessions/current", i],
+  "agentMessages.list": ({ sessionId, ...rest }) => ["GET", `/agent/sessions/${sessionId}/messages`, rest],
+  "agentMessages.append": ({ sessionId, ...rest }) => ["POST", `/agent/sessions/${sessionId}/messages`, rest],
+  "agentPendingActions.create": (i) => ["POST", "/agent/pending-actions", i],
+  "agentPendingActions.get": ({ id }) => ["GET", `/agent/pending-actions/${id}`, {}],
+  "agentPendingActions.confirm": ({ id }) => ["POST", `/agent/pending-actions/${id}/confirm`, {}],
+  "agentPendingActions.cancel": ({ id }) => ["POST", `/agent/pending-actions/${id}/cancel`, {}],
+  "agentPendingActions.complete": ({ id, ...rest }) => ["POST", `/agent/pending-actions/${id}/complete`, rest],
+  "agentHistory.delete": () => ["DELETE", "/agent/history", {}],
+  "channelLinks.redeem": (i) => ["POST", "/channel-links/redeem", i],
+  "channelIdentities.resolve": (i) => ["POST", "/channel-identities/resolve", i],
+  "channelIdentities.unlink": (i) => ["POST", "/channel-identities/unlink", i],
+  "agentEvents.claim": (i) => ["POST", "/agent/events/claim", i],
+  "agentEvents.updateStatus": (i) => ["POST", "/agent/events/status", i],
+  "agentEvents.listRecoverable": (i) => ["GET", "/agent/events/recoverable", i],
 };
 
 /**
@@ -219,7 +261,7 @@ export function fakeFinance() {
   const writes: Array<{ operation: string; input: Json; idempotencyKey: string | null }> = [];
   const writeReplies = new Map<string, unknown>();
   let historyDeletes = 0;
-  /** Force an error for `METHOD /path` (path without /api/v1), once or always. */
+  /** Force an error for `METHOD /path` (the fake's route, see `PROCEDURES`), once or always. */
   const failures = new Map<string, { code: ErrorCode | "network" | "network_after"; times: number; details?: unknown }>();
   const sequences = new Map<string, Array<ErrorCode | "network" | "network_after">>();
   /** Hold a route until the returned function is called. */
@@ -321,8 +363,13 @@ export function fakeFinance() {
         const existing = actions.find((a) => a.owner === identity.externalUserId && a.clientKey === body.clientKey);
         if (existing) return { action: actionJson(existing) };
       }
-      const parsed = routeOf(String(body.operation)).request.safeParse(body.input);
-      if (!parsed.success) throw new ApiFailure("validation_failed");
+      const schema = (ACTION_INPUTS as Record<string, (typeof ACTION_INPUTS)[keyof typeof ACTION_INPUTS] | undefined>)[String(body.operation)];
+      if (!schema) throw new ApiFailure("validation_failed");
+      const parsed = schema.safeParse(body.input);
+      if (!parsed.success) {
+        const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+        throw new ApiFailure("validation_failed", { issues });
+      }
       const action: FakeAction = {
         id: `action_${actions.length + 1}`,
         sessionId: body.sessionId,
@@ -386,7 +433,7 @@ export function fakeFinance() {
         return { transaction: { id: `tx_new_${writes.length}`, ...input, date } };
       case "transactions.update": {
         const current = reads.get(`/transactions/${input.id}`) as Json | undefined;
-        return { transaction: { ...(current?.transaction ?? { type: "expense", amount: { amountMinor: 1, currency: "AOA" }, accountId: "acc_bai", date }), ...input } };
+        return { transaction: { ...(current?.transaction ?? { type: "expense", amount: { amountMinor: 1, currency: "AOA" }, accountId: "00000001-0000-4000-8000-000000000001", date }), ...input } };
       }
       case "transactions.delete":
       case "transfers.delete":
@@ -503,18 +550,17 @@ export function fakeFinance() {
     throw new Error(`fake: no user route ${method} ${path}`);
   }
 
-  /** `/api/trpc/accounts.*` (tRPC wire format) answered by the same fake, translated to the v1 route. */
+  /** The tRPC wire format, answered by the routes above (`PROCEDURES`). */
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
-    const procedure = /^\/api\/trpc\/(accounts\.\w+)$/.exec(url.pathname)?.[1];
-    if (!procedure) return await v1Fetch(input, init);
+    const procedure = /^\/api\/trpc\/([\w.]+)$/.exec(url.pathname)?.[1];
+    const route = procedure ? PROCEDURES[procedure] : undefined;
+    if (!route) throw new Error(`fake: no procedure ${url.pathname}`);
     const isQuery = (init?.method ?? "GET") === "GET";
     const raw = isQuery ? url.searchParams.get("input") : (init?.body as string | undefined);
-    const trpcInput = (raw ? JSON.parse(raw) : {}) as Json;
-    const { id, ...rest } = trpcInput;
-    const [method, path, body] = ACCOUNT_PROCEDURES[procedure]!(id as string, rest);
-    const query = method === "GET" ? `?${new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)]))}` : "";
-    const response = await v1Fetch(`${BASE_URL}/api/v1${path}${query === "?" ? "" : query}`, {
+    const [method, path, body] = route((raw ? JSON.parse(raw) : {}) as Json);
+    const query = method === "GET" ? new URLSearchParams(Object.entries(body).map(([k, v]) => [k, String(v)])).toString() : "";
+    const response = await v1Fetch(`${BASE_URL}${path}${query ? `?${query}` : ""}`, {
       ...init,
       method,
       body: method === "GET" ? undefined : JSON.stringify(body),
@@ -528,7 +574,7 @@ export function fakeFinance() {
   const v1Fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const method = init?.method ?? "GET";
-    const path = url.pathname.replace(/^\/api\/v1/, "");
+    const path = url.pathname;
     const headers = new Headers(init?.headers);
     const auth = headers.get("Authorization");
     const idempotencyKey = headers.get("Idempotency-Key");
@@ -584,7 +630,8 @@ export function fakeFinance() {
       return envelope({ ok: true, data }, 200);
     } catch (error) {
       if (error instanceof ApiFailure) {
-        return envelope({ ok: false, error: { code: error.code, message: error.code } }, STATUS[error.code]);
+        const details = error.details === undefined ? {} : { details: error.details };
+        return envelope({ ok: false, error: { code: error.code, message: error.code, ...details } }, STATUS[error.code]);
       }
       throw error;
     }

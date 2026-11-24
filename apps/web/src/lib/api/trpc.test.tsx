@@ -1,15 +1,10 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import { createTRPCClient, TRPCClientError, type TRPCLink } from "@trpc/client";
 import { observable } from "@trpc/server/observable";
 import type { AppRouter } from "@mpf/api/trpc";
-import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { apiErrorMessage, isApiError, isTransientError } from "./errors";
-import { queryKeys } from "./keys";
-import { useTrpcMutation } from "./mutations";
-import { idempotencyLink, trpc } from "./trpc";
+import { idempotencyLink } from "./trpc";
 
 /** A client whose last link records each write's key and answers with `answer()`. */
 function clientWith(answer: () => unknown) {
@@ -53,29 +48,6 @@ describe("idempotencyLink", () => {
     await client.accounts.adjust.mutate(input, { context: { idempotencyKey: "action-0001" } });
     await client.accounts.list.query();
     expect(keys).toEqual(["action-0001", undefined]);
-  });
-});
-
-describe("useTrpcMutation", () => {
-  it("invalidates what the write changes, only on success", async () => {
-    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
-    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
-    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-    const mutationFn = vi.fn().mockRejectedValueOnce(new Error("nope")).mockResolvedValue({ account: {} });
-    const { result } = renderHook(() => useTrpcMutation({ mutationKey: trpc.accounts.adjust.mutationKey(), mutationFn }), { wrapper });
-
-    await act(() => result.current.mutateAsync(input).catch(() => undefined));
-    expect(invalidate).not.toHaveBeenCalled();
-    await act(() => result.current.mutateAsync(input));
-    await waitFor(() =>
-      expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-        queryKeys.accounts.all(),
-        queryKeys.transactions.all(),
-        queryKeys.reports.all(),
-      ]),
-    );
-    // The accounts prefix matches the list queries.
-    expect(queryKeys.accounts.list({ includeArchived: true })[0]).toEqual([...queryKeys.accounts.all()[0], "list"]);
   });
 });
 

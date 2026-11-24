@@ -1,5 +1,5 @@
 import { Plus } from "lucide-react";
-import type { Category, Subcategory } from "@mpf/finance-contract";
+import type { Category, Subcategory } from "@/lib/api/types";
 
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";

@@ -17,14 +17,14 @@ export const deleteTransfer = (context: ToolContext, write: WriteContext) =>
     execute: (input) =>
       propose(context, write, async () => {
         const look = lookups(context);
-        const { transaction: tx, managedBy } = await context.finance.transactions.get({ id: input.id }, call(context));
+        const { transaction: tx, managedBy } = await context.finance.transactions.get.query({ id: input.id }, call(context));
         if (managedBy === "goal_contribution" || managedBy === "debt_payment") throw new ProposalError("managed", MANAGED_MESSAGES[managedBy]);
         if (tx.type !== "transfer") throw new ProposalError("invalid_input", "That is not a transfer. Use delete_transaction for income and expenses.");
         // The outgoing leg names the destination; from the incoming leg, read its pair for the source.
         let fromId: string | undefined = tx.destinationAccountId ? tx.accountId : undefined;
         let toId: string | undefined = tx.destinationAccountId ?? tx.accountId;
         if (!tx.destinationAccountId && tx.linkedTransactionId) {
-          fromId = await context.finance.transactions.get({ id: tx.linkedTransactionId }, call(context)).then(
+          fromId = await context.finance.transactions.get.query({ id: tx.linkedTransactionId }, call(context)).then(
             (r) => r.transaction.accountId,
             () => undefined,
           );

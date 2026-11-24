@@ -1,17 +1,18 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { formatMinorAmount } from "@mpf/finance-contract";
+import { formatMinorAmount } from "@mpf/shared";
 
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useSignOut } from "@/hooks/use-session";
 import { createAccountDraft, type AccountDraft } from "@/lib/accounts";
-import { useApiMutation, useTrpcMutation } from "@/lib/api/mutations";
+import { useApiMutation } from "@/lib/api/mutations";
 import { accountsQuery, defaultCategoriesQuery } from "@/lib/api/queries";
 import { queryKeys } from "@/lib/api/keys";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fingerprint } from "@/lib/api/idempotency";
-import { trpc, type Account, type RouterInputs } from "@/lib/api/trpc";
+import type { RouterInputs } from "@/lib/api/trpc";
+import type { Account } from "@/lib/api/types";
 import { parseDecimalInput } from "@/lib/money";
 import { FormError, FullPageError } from "@/components/error-state";
 import { StepIndicator } from "@/components/onboarding/step-indicator";
@@ -103,11 +104,11 @@ function OnboardingWizard({ initialCurrency, resumed }: { initialCurrency: strin
   const { mutateAsync: createProfile, isPending: isCreatingProfile } =
     useApiMutation("profile", "create");
   const { mutateAsync: createAccount, isPending: isCreatingAccount } =
-    useTrpcMutation(trpc.accounts.create.mutationOptions());
+    useApiMutation("accounts", "create");
   const { mutateAsync: updateAccount, isPending: isUpdatingAccount } =
-    useTrpcMutation(trpc.accounts.update.mutationOptions());
+    useApiMutation("accounts", "update");
   const { mutateAsync: deleteAccount, isPending: isDeletingAccount } =
-    useTrpcMutation(trpc.accounts.delete.mutationOptions());
+    useApiMutation("accounts", "delete");
 
   // Resumed onboarding: show the accounts created last time as the drafts.
   const existingAccounts = useQuery({ ...accountsQuery(), enabled: resumed });

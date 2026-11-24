@@ -13,9 +13,9 @@ export const listDebts = (context: ToolContext) =>
     execute: ({ includeArchived }) =>
       guarded(context, async () => {
         const [list, summary] = await Promise.all([
-          context.finance.debts.list({ includeArchived: includeArchived ?? false }, call(context)),
+          context.finance.debts.list.query({ includeArchived: includeArchived ?? false }, call(context)),
           // The totals can fail on their own (e.g. mixed currencies) without hiding the list.
-          context.finance.reports.debtSummary({}, call(context)).then(
+          context.finance.reports.debtSummary.query({}, call(context)).then(
             (report) => ({
               totalOriginal: money(report.totalOriginal),
               totalRemaining: money(report.totalRemaining),

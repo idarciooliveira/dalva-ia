@@ -1,4 +1,4 @@
-import { linkCodeSchema } from "@mpf/finance-contract";
+import { linkCodeSchema } from "@mpf/shared";
 
 import type { InboundEvent } from "../channels/channel";
 import type { FinanceClient, FinanceClients } from "./finance";
@@ -21,7 +21,7 @@ export type LinkResult = "linked" | "invalid" | "already_linked" | "account_take
 export async function redeemLink(clients: FinanceClients, event: InboundEvent, code: string): Promise<LinkResult> {
   if (!linkCodeSchema.safeParse(code).success) return "invalid";
   try {
-    await clients.service.channelLinks.redeem({
+    await clients.service.channelLinks.redeem.mutate({
       channel: event.channel,
       code,
       externalUserId: event.externalUserId,
@@ -59,7 +59,7 @@ export interface ResolvedUser {
  */
 export async function resolveUser(clients: FinanceClients, event: InboundEvent): Promise<ResolvedUser | null> {
   try {
-    const resolved = await clients.service.channelIdentities.resolve({
+    const resolved = await clients.service.channelIdentities.resolve.mutate({
       channel: event.channel,
       externalUserId: event.externalUserId,
       chatId: event.chatId,

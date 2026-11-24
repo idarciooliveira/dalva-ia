@@ -1,6 +1,6 @@
 import { Wifi, Eye, EyeOff, TrendingUp, TrendingDown } from "lucide-react";
 import { useState } from "react";
-import type { Account } from "@/lib/api/trpc";
+import type { Account } from "@/lib/api/types";
 import { formatMinor } from "@/lib/money";
 import { ACCOUNT_THEMES } from "@/lib/accounts";
 import { CardStatusBody, showsStatus, type CardStatus } from "./card-error";

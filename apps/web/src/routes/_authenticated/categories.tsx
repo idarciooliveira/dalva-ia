@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { Category, Subcategory } from "@mpf/finance-contract";
+import type { Category, Subcategory } from "@/lib/api/types";
 import { useState } from "react";
 import { Archive } from "lucide-react";
 

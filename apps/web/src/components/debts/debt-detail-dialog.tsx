@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Debt, DebtPayment } from "@mpf/finance-contract";
+import type { Debt, DebtPayment } from "@/lib/api/types";
 import { Archive, ArchiveRestore, Edit, Plus, Trash2 } from "lucide-react";
 
 import { ErrorState, FormError } from "@/components/error-state";

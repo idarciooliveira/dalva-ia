@@ -26,7 +26,7 @@ export const updateTransaction = (context: ToolContext, write: WriteContext) =>
     execute: (input) =>
       propose(context, write, async () => {
         const look = lookups(context);
-        const { transaction: tx, managedBy } = await context.finance.transactions.get({ id: input.id }, call(context));
+        const { transaction: tx, managedBy } = await context.finance.transactions.get.query({ id: input.id }, call(context));
         if (managedBy) throw new ProposalError("managed", MANAGED_MESSAGES[managedBy]);
         if (tx.type !== "income" && tx.type !== "expense") {
           throw new ProposalError("managed", "Only income and expenses can be edited here; balance adjustments are changed in the DALVA app.");

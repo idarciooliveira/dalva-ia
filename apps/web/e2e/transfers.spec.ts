@@ -68,7 +68,7 @@ test.describe("Transfers (apps/api)", () => {
     await registerAndCompleteOnboarding(page);
     const main = await accountId(page, "Main Checking");
     await createAccount(page, "Savings");
-    await apiWrite(page, "POST", "/transactions", { type: "income", amount: usd(100_000), accountId: main, date: "2026-01-01", description: "Salary" });
+    await apiWrite(page, "transactions.create", { type: "income", amount: usd(100_000), accountId: main, date: "2026-01-01", description: "Salary" });
 
     // Floating quick action, from any page.
     await page.goto("/accounts");

@@ -3,8 +3,7 @@ import type { ChannelAdapter, InboundEvent, RichPart, RichText } from "../channe
 import { errorFields, type Logger } from "../log";
 import { actionStateMessage, handleButton } from "./actions";
 import type { FinanceClients } from "./finance";
-import { isFinanceError } from "./finance";
-import { type Account, viaTrpc } from "./trpc";
+import { type Account, isFinanceError } from "./finance";
 import { redeemLink, resolveUser, type ResolvedUser } from "./identity";
 import { texts } from "./messages";
 import { formatMoney } from "./money";
@@ -140,7 +139,7 @@ export function createHandler(options: HandlerOptions): {
 
     if (command === "unlink") {
       try {
-        await clients.service.channelIdentities.unlink({ channel: event.channel, externalUserId: event.externalUserId });
+        await clients.service.channelIdentities.unlink.mutate({ channel: event.channel, externalUserId: event.externalUserId });
       } catch (error) {
         if (!isFinanceError(error, "not_found")) throw error;
       }
@@ -150,7 +149,7 @@ export function createHandler(options: HandlerOptions): {
     }
 
     if (command === "forget") {
-      await user.finance.agentHistory.delete();
+      await user.finance.agentHistory.delete.mutate();
       log.info("history_deleted");
       await reply(event, texts.forgotten());
       return;
@@ -169,7 +168,7 @@ export function createHandler(options: HandlerOptions): {
         break;
       case "balance": {
         await adapter.send({ chatId: event.chatId }, { type: "typing" }).catch(() => {});
-        const { items } = await viaTrpc(user.finance.trpc.accounts.list.query({}));
+        const { items } = await user.finance.accounts.list.query({});
         answer = formatBalances(items);
         break;
       }

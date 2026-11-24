@@ -34,7 +34,7 @@ function setup(options: { summary?: string; status?: FakeAction["status"]; expir
     sessionId: "sess_1",
     clientKey: "5000:0",
     operation: "transactions.create",
-    input: { type: "expense", amount: { amountMinor: 500_000, currency: "AOA" }, accountId: "acc_bai", date: "2026-11-11" },
+    input: { type: "expense", amount: { amountMinor: 500_000, currency: "AOA" }, accountId: "00000001-0000-4000-8000-000000000001", date: "2026-11-11" },
     summary: options.summary ?? PT_SUMMARY,
     status: options.status ?? "pending",
     expiresAt: new Date(Date.now() + (options.expired ? -1000 : 600_000)).toISOString(),
@@ -64,12 +64,12 @@ describe("Confirm", () => {
     expect(finance.writes).toEqual([
       {
         operation: "transactions.create",
-        input: { type: "expense", amount: { amountMinor: 500_000, currency: "AOA" }, accountId: "acc_bai", date: "2026-11-11" },
+        input: { type: "expense", amount: { amountMinor: 500_000, currency: "AOA" }, accountId: "00000001-0000-4000-8000-000000000001", date: "2026-11-11" },
         idempotencyKey: "action_1",
       },
     ]);
     expect(action().status).toBe("executed");
-    expect(action().result).toMatchObject({ transaction: { accountId: "acc_bai" } });
+    expect(action().result).toMatchObject({ transaction: { accountId: "00000001-0000-4000-8000-000000000001" } });
     expect(lastEdit()).toEqual({
       chatId: USER,
       messageId: MESSAGE_ID,
@@ -86,14 +86,14 @@ describe("Confirm", () => {
 
   test("runs an account adjustment through /api/trpc, still keyed by the action id", async () => {
     const { finance, press, action } = setup();
-    Object.assign(action(), { operation: "accounts.adjust", input: { id: "acc_bai", amount: { amountMinor: -1_000, currency: "AOA" } } });
+    Object.assign(action(), { operation: "accounts.adjust", input: { id: "00000001-0000-4000-8000-000000000001", amount: { amountMinor: -1_000, currency: "AOA" } } });
     await press("c:action_1");
-    expect(finance.calls.find((c) => c.path === "/accounts/acc_bai/adjustments")).toMatchObject({ method: "POST", idempotencyKey: "action_1" });
+    expect(finance.calls.find((c) => c.path === "/accounts/00000001-0000-4000-8000-000000000001/adjustments")).toMatchObject({ method: "POST", idempotencyKey: "action_1" });
     expect(finance.writes).toEqual([
-      { operation: "accounts.adjust", input: { id: "acc_bai", amount: { amountMinor: -1_000, currency: "AOA" } }, idempotencyKey: "action_1" },
+      { operation: "accounts.adjust", input: { id: "00000001-0000-4000-8000-000000000001", amount: { amountMinor: -1_000, currency: "AOA" } }, idempotencyKey: "action_1" },
     ]);
     expect(action().status).toBe("executed");
-    expect(action().result).toMatchObject({ account: { id: "acc_bai" } });
+    expect(action().result).toMatchObject({ account: { id: "00000001-0000-4000-8000-000000000001" } });
   });
 
   test("English summaries get English texts", async () => {

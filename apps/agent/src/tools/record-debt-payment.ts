@@ -22,7 +22,7 @@ export const recordDebtPayment = (context: ToolContext, write: WriteContext) =>
     execute: (input) =>
       propose(context, write, async () => {
         const look = lookups(context);
-        const { debt } = await context.finance.debts.get({ id: input.debtId }, call(context));
+        const { debt } = await context.finance.debts.get.query({ id: input.debtId }, call(context));
         if (debt.archived) throw new ProposalError("invalid_input", "That debt is archived.");
         const currency = debt.currentBalance.currency;
         checkCurrency(input.currency, currency, "This debt");

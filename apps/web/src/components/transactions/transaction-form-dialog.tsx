@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import type { Transaction } from "@mpf/finance-contract";
+import type { Transaction } from "@/lib/api/types";
 import {
   Calculator,
   CheckCircle2,

@@ -1,4 +1,6 @@
-import { AGENT_MESSAGE_CONTENT_MAX_BYTES, type AgentMessage } from "@mpf/finance-contract";
+import { AGENT_MESSAGE_CONTENT_MAX_BYTES } from "@mpf/shared";
+
+import type { AgentMessage } from "./finance";
 import type { ModelMessage, ToolResultPart } from "ai";
 
 /**

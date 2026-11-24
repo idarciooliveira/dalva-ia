@@ -17,8 +17,8 @@ export const listCategories = (context: ToolContext) =>
       guarded(context, async () => {
         const archived = includeArchived ?? false;
         const [categories, subcategories] = await Promise.all([
-          context.finance.categories.list({ includeArchived: archived }, call(context)),
-          context.finance.subcategories.list({ includeArchived: archived }, call(context)),
+          context.finance.categories.list.query({ includeArchived: archived }, call(context)),
+          context.finance.subcategories.list.query({ includeArchived: archived }, call(context)),
         ]);
         const visible = categories.items.filter((c) => (!type || c.type === type) && (archived || !c.archived));
         const { items, truncated } = bounded(visible, MAX_CATEGORIES);

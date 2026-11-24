@@ -106,9 +106,9 @@ describe("SubcategoryFormDialog", () => {
   });
 
   it("shows the API error inside the dialog and keeps it open", async () => {
-    const { FinanceApiError } = await import("@mpf/finance-contract");
+    const { TRPCClientError } = await import("@trpc/client");
     createSubcategoryMock.mockRejectedValue(
-      new FinanceApiError("not_found", "Category not found", 404),
+      TRPCClientError.from({ error: { message: "Category not found", code: -32004, data: { apiCode: "not_found", httpStatus: 404 } } } as never),
     );
     const onOpenChange = vi.fn();
 

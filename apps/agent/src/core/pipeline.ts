@@ -1,10 +1,8 @@
-import type { Channel } from "@mpf/finance-contract";
-import { AGENT_EVENT_PAYLOAD_MAX_BYTES } from "@mpf/finance-contract";
+import { AGENT_EVENT_PAYLOAD_MAX_BYTES } from "@mpf/shared";
 
 import type { ChannelAdapter, DeliverResult, InboundEvent } from "../channels/channel";
 import { errorFields, type Logger } from "../log";
-import type { FinanceServiceClient } from "./finance";
-import { isFinanceError } from "./finance";
+import { type Channel, type FinanceClient, isFinanceError } from "./finance";
 import { texts } from "./messages";
 import { ChatQueues, Semaphore, type ChatQueueLimits } from "./queue";
 
@@ -12,7 +10,7 @@ export type EventHandler = (event: InboundEvent) => Promise<void>;
 
 export interface PipelineOptions {
   adapter: ChannelAdapter;
-  service: FinanceServiceClient;
+  service: FinanceClient;
   handle: EventHandler;
   logger: Logger;
   limits?: Partial<ChatQueueLimits>;
@@ -85,7 +83,7 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     logger.child({ eventId: event.eventId, chatId: event.chatId, kind: event.kind });
 
   async function setStatus(event: InboundEvent, status: "processing" | "done" | "failed", error?: string) {
-    await service.agentEvents.updateStatus({ channel, eventId: event.eventId, status, ...(error ? { error } : {}) });
+    await service.agentEvents.updateStatus.mutate({ channel, eventId: event.eventId, status, ...(error ? { error } : {}) });
   }
 
   /**
@@ -106,7 +104,7 @@ export function createPipeline(options: PipelineOptions): Pipeline {
     let ambiguous = false;
     for (let attempt = 1; ; attempt++) {
       try {
-        const { status } = await service.agentEvents.claim({ channel, eventId: event.eventId, payload });
+        const { status } = await service.agentEvents.claim.mutate({ channel, eventId: event.eventId, payload });
         if (status === "duplicate" && ambiguous) return "new";
         return status;
       } catch (error) {
@@ -184,7 +182,7 @@ export function createPipeline(options: PipelineOptions): Pipeline {
 
   /** One page of `listRecoverable`, parsed. Unparseable events are marked failed. */
   async function recoverablePage(): Promise<{ ids: string[]; events: InboundEvent[]; stale: InboundEvent[] }> {
-    const { items } = await service.agentEvents.listRecoverable({
+    const { items } = await service.agentEvents.listRecoverable.query({
       channel,
       olderThanSeconds: 0,
       maxAttempts: RECOVER_MAX_ATTEMPTS,
@@ -207,7 +205,7 @@ export function createPipeline(options: PipelineOptions): Pipeline {
       }
       logger.warn("recover_unparseable", { eventId: item.eventId });
       try {
-        await service.agentEvents.updateStatus({ channel, eventId: item.eventId, status: "failed", error: "unparseable" });
+        await service.agentEvents.updateStatus.mutate({ channel, eventId: item.eventId, status: "failed", error: "unparseable" });
       } catch (error) {
         logger.warn("event_status_failed", { ...errorFields(error), eventId: item.eventId, status: "failed" });
       }

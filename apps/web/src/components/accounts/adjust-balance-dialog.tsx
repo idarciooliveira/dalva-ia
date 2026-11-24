@@ -11,8 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
 import { FormError } from "@/components/error-state";
-import { useTrpcMutation } from "@/lib/api/mutations";
-import { trpc, type Account } from "@/lib/api/trpc";
+import { useApiMutation } from "@/lib/api/mutations";
+import type { Account } from "@/lib/api/types";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { formatMinor, fractionDigits, maskPlaceholder } from "@/lib/money";
 import { getCurrencySymbol } from "@/lib/currencies";
@@ -34,7 +34,7 @@ export function AdjustBalanceDialog({
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
-  const { mutateAsync: adjustBalance, isPending } = useTrpcMutation(trpc.accounts.adjust.mutationOptions());
+  const { mutateAsync: adjustBalance, isPending } = useApiMutation("accounts", "adjust");
 
   // Reset each time the dialog opens for an account (the parent opens it through `open`).
   // Keyed on the id: a refetch of the same account while open keeps what was typed.

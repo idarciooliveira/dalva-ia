@@ -14,7 +14,7 @@ export const getCashflow = (context: ToolContext) =>
     execute: ({ month, months }) =>
       guarded(context, async () => {
         const target = month ?? currentMonth(context.today);
-        const report = await context.finance.reports.cashflow({ month: target, trendMonths: Math.min(months ?? 6, 12) }, call(context));
+        const report = await context.finance.reports.cashflow.query({ month: target, trendMonths: Math.min(months ?? 6, 12) }, call(context));
         return {
           month: target,
           income: money(report.currentMonth.income),

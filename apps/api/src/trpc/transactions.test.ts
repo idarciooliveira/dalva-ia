@@ -25,7 +25,7 @@ import { MISSING_ACCOUNT_ID } from "./dto";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
-describe("api/v1 transactions: writes", () => {
+describe("transactions: writes", () => {
   it("creates income, expense and adjustment rows and returns the entity", async () => {
     const { asAlice, alice, aliceAccount } = await twoUsers();
     const categoryId = await seedCategory(alice);
@@ -266,7 +266,7 @@ describe("api/v1 transactions: writes", () => {
   });
 });
 
-describe("api/v1 transactions: get", () => {
+describe("transactions: get", () => {
   it("returns one row with its currency and conforms to the contract", async () => {
     const { app, alice, aliceAccount, asAlice } = await twoUsers();
     const categoryId = await seedCategory(alice);
@@ -303,7 +303,7 @@ describe("api/v1 transactions: get", () => {
   });
 });
 
-describe("api/v1 transactions: search", () => {
+describe("transactions: search", () => {
   it("pages newest first with a real cursor and no gaps or repeats", async () => {
     const { alice, aliceAccount, asAlice } = await twoUsers();
     const ids: string[] = [];
@@ -325,6 +325,8 @@ describe("api/v1 transactions: search", () => {
 
     const exact = await asAlice.transactions.search({ limit: 7 });
     expect(exact.nextCursor).toBeNull();
+    // tRPC infinite queries send `direction` with the cursor.
+    expect((await asAlice.transactions.search({ limit: 7, direction: "forward" })).items).toHaveLength(7);
   });
 
   it("filters by account, category, type and date range", async () => {
@@ -424,7 +426,7 @@ describe("api/v1 transactions: search", () => {
   });
 });
 
-describe("api/v1 transactions: concurrency", () => {
+describe("transactions: concurrency", () => {
   it("keeps one account's balance exact under parallel creates, updates and deletes", async () => {
     const { aliceAccount, asAlice } = await twoUsers();
     const created = await Promise.all(

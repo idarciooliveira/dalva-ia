@@ -1,4 +1,6 @@
-import { FinanceApiError, formatMinorAmount, isoDateSchema, monthSchema as contractMonthSchema } from "@mpf/finance-contract";
+import { formatMinorAmount, isoDateSchema, monthSchema as contractMonthSchema } from "@mpf/shared";
+
+import { FinanceError } from "../core/finance";
 import type { FinanceClient } from "../core/finance";
 import { z } from "zod";
 
@@ -69,11 +71,11 @@ export const includeArchivedInput = z.boolean().optional().describe("Include arc
 /** Errors that end the whole turn: the handler answers them (relink, wait). */
 export const FATAL_CODES = ["unauthorized", "forbidden", "rate_limited"];
 
-export const isFinanceError = (error: unknown, ...codes: string[]): error is FinanceApiError =>
-  error instanceof FinanceApiError && codes.includes(error.code);
+export const isFinanceError = (error: unknown, ...codes: string[]): error is FinanceError =>
+  error instanceof FinanceError && codes.includes(error.code);
 const UNAVAILABLE_CODES = new Set(["network_error", "timeout", "aborted", "internal", "invalid_response"]);
 
-function conflictDetails(error: FinanceApiError): { reason?: string; currencies?: string[] } {
+function conflictDetails(error: FinanceError): { reason?: string; currencies?: string[] } {
   const details = error.details as { reason?: unknown; currencies?: unknown } | undefined;
   return {
     reason: typeof details?.reason === "string" ? details.reason : undefined,
@@ -83,7 +85,7 @@ function conflictDetails(error: FinanceApiError): { reason?: string; currencies?
 
 /** Finance API error -> a result the model can read and explain. Fixed wording: server messages never reach the model unfiltered. */
 export function toToolError(error: unknown, context: Pick<ToolContext, "onFatal">): ToolError {
-  if (!(error instanceof FinanceApiError)) return { error: "internal", message: "Unexpected error while reading the data." };
+  if (!(error instanceof FinanceError)) return { error: "internal", message: "Unexpected error while reading the data." };
   if (FATAL_CODES.includes(error.code)) {
     context.onFatal(error);
     return { error: error.code, message: "Access to the user's data was refused. Stop and do not retry." };

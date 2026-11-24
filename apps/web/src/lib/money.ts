@@ -1,4 +1,4 @@
-import { currencyExponent } from "@mpf/finance-contract";
+import { currencyExponent } from "@mpf/shared";
 
 export function fractionDigits(currency: string): number {
   try {

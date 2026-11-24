@@ -34,7 +34,7 @@ export type AuthGuardResult =
  *
  * Handles:
  * - Redirecting unauthenticated users to login (Better Auth session cookie)
- * - Loading user profile (`/api/v1/profile`)
+ * - Loading user profile (`profile.get`)
  * - Redirecting to/from onboarding based on profile state
  *
  * Returns a discriminated union so consumers can pattern-match on `status`.

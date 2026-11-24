@@ -1,4 +1,4 @@
-import type { Transaction } from "@mpf/finance-contract";
+import type { Transaction } from "@/lib/api/types";
 
 /** Expenses and the outgoing leg of a transfer (it carries the destination) take money out. */
 export function isOutgoing(tx: Pick<Transaction, "type" | "destinationAccountId">): boolean {

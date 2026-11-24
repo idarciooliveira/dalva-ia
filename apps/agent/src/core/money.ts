@@ -1,4 +1,4 @@
-import { formatMinorAmount } from "@mpf/finance-contract";
+import { formatMinorAmount } from "@mpf/shared";
 
 /** `1234567` USD -> `12,345.67 USD`; `-5000` JPY -> `-5,000 JPY`. */
 export function formatMoney(amountMinor: number, currency: string): string {

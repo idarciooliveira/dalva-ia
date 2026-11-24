@@ -16,12 +16,12 @@ test.describe("Dashboard (apps/api)", () => {
 
   test("accounts in another currency: recent rows stay, reports say why they're missing", async ({ page }) => {
     await registerAndCompleteOnboarding(page);
-    const { account } = await apiWrite<{ account: { id: string } }>(page, "POST", "/accounts", {
+    const { account } = await apiWrite<{ account: { id: string } }>(page, "accounts.create", {
       name: "Euro Account",
       type: "bank",
       balance: { amountMinor: 0, currency: "EUR" },
     });
-    await apiWrite(page, "POST", "/transactions", {
+    await apiWrite(page, "transactions.create", {
       type: "expense",
       amount: { amountMinor: 1_999, currency: "EUR" },
       accountId: account.id,
@@ -39,10 +39,10 @@ test.describe("Dashboard (apps/api)", () => {
   test("reflects transactions, goals and debts, and updates after a quick-action write", async ({ page }) => {
     await registerAndCompleteOnboarding(page);
     const main = await accountId(page, "Main Checking");
-    await apiWrite(page, "POST", "/transactions", { type: "income", amount: usd(300_000), accountId: main, date: today(), description: "Paycheck" });
+    await apiWrite(page, "transactions.create", { type: "income", amount: usd(300_000), accountId: main, date: today(), description: "Paycheck" });
     const savings = await createAccount(page, "Savings");
-    await apiWrite(page, "POST", "/goals", { name: "Holiday", targetAmount: usd(200_000), isVirtual: false, linkedAccountId: savings });
-    await apiWrite(page, "POST", "/debts", { name: "Car loan", debtType: "loan", lender: "Bank", originalAmount: usd(1_000_000), currentBalance: usd(750_000) });
+    await apiWrite(page, "goals.create", { name: "Holiday", targetAmount: usd(200_000), isVirtual: false, linkedAccountId: savings });
+    await apiWrite(page, "debts.create", { name: "Car loan", debtType: "loan", lender: "Bank", originalAmount: usd(1_000_000), currentBalance: usd(750_000) });
 
     await page.goto("/dashboard");
     const income = page.getByRole("group", { name: "Total income" });

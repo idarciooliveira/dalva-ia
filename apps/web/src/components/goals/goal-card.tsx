@@ -1,4 +1,4 @@
-import type { Goal } from "@mpf/finance-contract";
+import type { Goal } from "@/lib/api/types";
 import { Target } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";

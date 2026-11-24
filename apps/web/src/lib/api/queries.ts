@@ -1,70 +1,26 @@
-import { queryOptions } from "@tanstack/react-query";
-import type { RouteInput, UserRoutes } from "@mpf/finance-contract";
-
-import { api } from "./client";
-import { queryKeys } from "./keys";
 import { trpc, type RouterInputs } from "./trpc";
 
-export const profileQuery = () =>
-  queryOptions({
-    queryKey: queryKeys.profile(),
-    queryFn: ({ signal }) => api.profile.get({}, { signal }),
-  });
+/** Query options for the pages' reads: `useQuery(accountsQuery({ includeArchived: true }))`. */
+
+export const profileQuery = () => trpc.profile.get.queryOptions();
 
 export const accountsQuery = (input: RouterInputs["accounts"]["list"] = {}) => trpc.accounts.list.queryOptions(input);
 
-export const categoriesQuery = (input: RouteInput<UserRoutes["categories"]["list"]> = {}) =>
-  queryOptions({
-    queryKey: queryKeys.categories.list(input),
-    queryFn: ({ signal }) => api.categories.list(input, { signal }),
-  });
+export const categoriesQuery = (input: RouterInputs["categories"]["list"] = {}) => trpc.categories.list.queryOptions(input);
 
-export const subcategoriesQuery = (input: RouteInput<UserRoutes["subcategories"]["list"]> = {}) =>
-  queryOptions({
-    queryKey: queryKeys.subcategories.list(input),
-    queryFn: ({ signal }) => api.subcategories.list(input, { signal }),
-  });
+export const subcategoriesQuery = (input: RouterInputs["subcategories"]["list"] = {}) => trpc.subcategories.list.queryOptions(input);
 
-export const defaultCategoriesQuery = () =>
-  queryOptions({
-    queryKey: queryKeys.categories.defaults(),
-    queryFn: ({ signal }) => api.categories.defaults({}, { signal }),
-    // A constant list served by the API.
-    staleTime: Infinity,
-  });
+/** A constant list served by the API. */
+export const defaultCategoriesQuery = () => trpc.categories.defaults.queryOptions(undefined, { staleTime: Infinity });
 
-export const goalsQuery = (input: RouteInput<UserRoutes["goals"]["list"]> = {}) =>
-  queryOptions({
-    queryKey: queryKeys.goals.list(input),
-    queryFn: ({ signal }) => api.goals.list(input, { signal }),
-  });
+export const goalsQuery = (input: RouterInputs["goals"]["list"] = {}) => trpc.goals.list.queryOptions(input);
 
-export const goalContributionsQuery = (goalId: string) =>
-  queryOptions({
-    queryKey: queryKeys.goalContributions.list(goalId),
-    queryFn: ({ signal }) => api.goalContributions.list({ goalId }, { signal }),
-  });
+export const goalContributionsQuery = (goalId: string) => trpc.goalContributions.list.queryOptions({ goalId });
 
-export const debtsQuery = (input: RouteInput<UserRoutes["debts"]["list"]> = {}) =>
-  queryOptions({
-    queryKey: queryKeys.debts.list(input),
-    queryFn: ({ signal }) => api.debts.list(input, { signal }),
-  });
+export const debtsQuery = (input: RouterInputs["debts"]["list"] = {}) => trpc.debts.list.queryOptions(input);
 
-export const debtPaymentsQuery = (debtId: string) =>
-  queryOptions({
-    queryKey: queryKeys.debtPayments.list(debtId),
-    queryFn: ({ signal }) => api.debtPayments.list({ debtId }, { signal }),
-  });
+export const debtPaymentsQuery = (debtId: string) => trpc.debtPayments.list.queryOptions({ debtId });
 
-export const debtSummaryQuery = () =>
-  queryOptions({
-    queryKey: queryKeys.reports.debtSummary(),
-    queryFn: ({ signal }) => api.reports.debtSummary({}, { signal }),
-  });
+export const debtSummaryQuery = () => trpc.reports.debtSummary.queryOptions();
 
-export const chatLinksQuery = () =>
-  queryOptions({
-    queryKey: queryKeys.chatLinks.all(),
-    queryFn: ({ signal }) => api.chatLinks.list({}, { signal }),
-  });
+export const chatLinksQuery = () => trpc.chatLinks.list.queryOptions();

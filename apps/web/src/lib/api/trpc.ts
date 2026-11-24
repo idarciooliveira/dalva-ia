@@ -1,5 +1,5 @@
 import type { AppRouter } from "@mpf/api/trpc";
-import type { QueryClient } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
 import { createTRPCClient, httpBatchLink, httpLink, splitLink, type TRPCLink } from "@trpc/client";
 import type { inferRouterInputs, inferRouterOutputs } from "@trpc/server";
 import { createTRPCOptionsProxy } from "@trpc/tanstack-react-query";
@@ -8,14 +8,12 @@ import { observable } from "@trpc/server/observable";
 import { createIdempotencyKeys } from "./idempotency";
 
 /*
- * tRPC at `/api/trpc` (accounts only, next to the `/api/v1` contract client).
- * Same origin, session cookie. Types come from `apps/api`, type-only: nothing
- * of the server is bundled.
+ * The API client: tRPC at `/api/trpc`, same origin, session cookie. Types come
+ * from `apps/api` (`type AppRouter`), type-only: nothing of the server is bundled.
  */
 
 export type RouterInputs = inferRouterInputs<AppRouter>;
 export type RouterOutputs = inferRouterOutputs<AppRouter>;
-export type Account = RouterOutputs["accounts"]["get"]["account"];
 
 const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
 
@@ -54,7 +52,7 @@ export const trpcClient = createTRPCClient<AppRouter>({
       condition: (op) => op.type === "query",
       // Reads of one render go out as one request.
       true: httpBatchLink({ url }),
-      // Writes one per request: the Idempotency-Key header is per request.
+      // Writes one per request: the Idempotency-Key header is per request (procedures without one ignore it).
       false: httpLink({
         url,
         headers: ({ op }) => {
@@ -66,18 +64,10 @@ export const trpcClient = createTRPCClient<AppRouter>({
   ],
 });
 
-let boundQueryClient: QueryClient | undefined;
-
-/** The router's QueryClient, for the options proxy (`getRouter` binds it). */
-export function bindTrpcQueryClient(queryClient: QueryClient): void {
-  boundQueryClient = queryClient;
-}
-
-/** `trpc.accounts.list.queryOptions(input)`, `trpc.accounts.create.mutationOptions()`, `trpc.accounts.pathKey()`. */
-export const trpc = createTRPCOptionsProxy<AppRouter>({
-  client: trpcClient,
-  queryClient: () => {
-    if (!boundQueryClient) throw new Error("bindTrpcQueryClient() was not called");
-    return boundQueryClient;
-  },
-});
+/**
+ * `trpc.accounts.list.queryOptions(input)`, `trpc.accounts.create.mutationOptions()`,
+ * `trpc.accounts.pathKey()`. The proxy reads its QueryClient only for mutation
+ * defaults and streamed queries, neither of which the app uses; the router's
+ * QueryClient runs every query and mutation.
+ */
+export const trpc = createTRPCOptionsProxy<AppRouter>({ client: trpcClient, queryClient: new QueryClient() });

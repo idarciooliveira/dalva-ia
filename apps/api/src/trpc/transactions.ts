@@ -124,6 +124,8 @@ export const transactionsRouter = router({
           /** Free text over description, note and payee. */
           q: z.string().trim().min(1).max(200).optional(),
           cursor: z.string().min(1).max(512).optional(),
+          /** Sent by tRPC infinite queries; pages only go forward. */
+          direction: z.enum(["forward", "backward"]).optional(),
           limit: z.number().int().min(1).max(100).default(25),
         })
         .refine((v) => !v.dateFrom || !v.dateTo || v.dateFrom <= v.dateTo, {
