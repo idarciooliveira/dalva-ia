@@ -1,7 +1,7 @@
 import type { Database } from "../db/client";
 import { readConvexExport } from "./convex-export";
 import { planImport, type IssueCode, type PlanReport } from "./plan";
-import { ImportRefusedError, writeImport, type Verification } from "./write";
+import { CommitUnknownError, ImportRefusedError, writeImport, type Verification } from "./write";
 
 export interface ImportReport {
   mode: "dry-run" | "import";
@@ -80,6 +80,7 @@ export function formatSummary(report: ImportReport): string {
  */
 export function describeError(error: unknown): string {
   if (error instanceof ImportRefusedError) return error.message;
+  if (error instanceof CommitUnknownError) return `${error.message}: ${describeError(error.cause)}`;
   const chain: Record<string, unknown>[] = [];
   for (let current = error, depth = 0; typeof current === "object" && current !== null && depth < 5; depth++) {
     chain.push(current as Record<string, unknown>);

@@ -18,6 +18,7 @@ export interface ConvexDoc {
 /** Documents per top-level table, in file order. */
 export type ConvexExport = Map<string, unknown[]>;
 
+const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 const DOCUMENTS_FILE = /^([A-Za-z][A-Za-z0-9_]*)\/documents\.jsonl$/;
 
 export async function readConvexExport(path: string): Promise<ConvexExport> {
@@ -35,15 +36,23 @@ export async function readConvexExport(path: string): Promise<ConvexExport> {
 async function readDirectory(root: string): Promise<Map<string, Buffer>> {
   const files = new Map<string, Buffer>();
   for (const entry of await readdir(root, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const file = join(root, entry.name, "documents.jsonl");
-    const content = await readFile(file).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return undefined;
-      throw error;
-    });
+    // `_storage`, `_components`, `_tables`: not tables, never read.
+    if (!entry.isDirectory() || !TABLE_NAME.test(entry.name)) continue;
+    const content = await readOptional(join(root, entry.name, "documents.jsonl"));
     if (content) files.set(`${entry.name}/documents.jsonl`, content);
+    else if (await readOptional(join(root, entry.name, "generated_schema.jsonl"))) {
+      // An exported table always has its documents file, empty for an empty table: this export is incomplete.
+      throw new Error(`${entry.name}/documents.jsonl is missing: the export is incomplete`);
+    }
   }
   return files;
+}
+
+async function readOptional(file: string): Promise<Buffer | undefined> {
+  return await readFile(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  });
 }
 
 function parseJsonl(content: Buffer, name: string): unknown[] {
@@ -137,6 +146,7 @@ export function readZip(zip: Buffer, wanted: (name: string) => boolean = () => t
     else if (method === 8) content = inflateRawSync(raw);
     else throw new Error(`zip: ${name} uses unsupported compression method ${method}`);
     if (content.length !== size || crc32(content) !== crc) throw new Error(`zip: ${name} is corrupt (size or CRC mismatch)`);
+    if (files.has(name)) throw new Error(`zip: ${name} appears twice`);
     files.set(name, content);
   }
   return files;

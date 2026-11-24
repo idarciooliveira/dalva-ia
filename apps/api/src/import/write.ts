@@ -91,6 +91,17 @@ export interface Verification {
   passwords: { fixtureVerified: boolean; sampled: number; sampleOk: number };
 }
 
+/**
+ * The failure came after the commit was sent: Postgres may have committed.
+ * Inspect the target before retrying (a retry refuses a non-empty database).
+ */
+export class CommitUnknownError extends Error {
+  override name = "CommitUnknownError";
+  constructor(override readonly cause: unknown) {
+    super("the commit was sent but not confirmed");
+  }
+}
+
 /** Rolls the transaction back, carrying the result out. */
 class Rollback extends Error {
   constructor(readonly verification: Verification) {
@@ -105,9 +116,12 @@ class Rollback extends Error {
  */
 export async function writeImport(db: Database, plan: ImportPlan, options: { dryRun: boolean }): Promise<Verification> {
   if (plan.report.errors.length > 0) throw new Error("the plan has errors; nothing to write");
+  let commitSent = false;
   try {
     return await db.transaction(
       async (tx) => {
+        // Every unqualified name below (inserts, counts, verification) is the public table assertEmpty checked.
+        await tx.execute(sql`set local search_path to public`);
         await assertMigrated(tx);
         await assertEmpty(tx);
         for (const { key, table } of TABLES) {
@@ -118,13 +132,14 @@ export async function writeImport(db: Database, plan: ImportPlan, options: { dry
         await tx.execute(sql`set constraints all immediate`);
         const verification = await verify(tx, plan);
         if (options.dryRun || !verification.ok) throw new Rollback(verification);
+        commitSent = true;
         return verification;
       },
       { isolationLevel: "serializable" },
     );
   } catch (error) {
     if (error instanceof Rollback) return error.verification;
-    throw error;
+    throw commitSent ? new CommitUnknownError(error) : error;
   }
 }
 
@@ -146,7 +161,7 @@ async function assertEmpty(tx: Tx) {
   const tables = await tx.execute<{ name: string }>(sql`select quote_ident(tablename) as name from pg_tables where schemaname = 'public' order by tablename`);
   const nonEmpty: string[] = [];
   for (const { name } of tables) {
-    const [row] = await tx.execute<{ any: boolean }>(sql.raw(`select exists (select 1 from ${name}) as any`));
+    const [row] = await tx.execute<{ any: boolean }>(sql.raw(`select exists (select 1 from public.${name}) as any`));
     if (row?.any) nonEmpty.push(name);
   }
   if (nonEmpty.length > 0) throw new ImportRefusedError(`database is not empty (${nonEmpty.join(", ")}): import only into a fresh, migrated database`);

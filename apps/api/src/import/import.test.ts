@@ -1,14 +1,14 @@
 /** The Convex import, on a synthetic export: rules, write, verification, and sign-in as an imported user. */
 import { execFile } from "node:child_process";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { asc, eq, sql } from "drizzle-orm";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { testApp, TEST_PUBLIC_URL } from "../../test/app";
-import { asExport, convexFixture, HASHES, writeExportDir, writeExportZip, zip } from "../../test/convex-fixture";
+import { asExport, convexFixture, HASHES, removeExports, writeExportDir, writeExportZip, zip } from "../../test/convex-fixture";
 import { testDatabaseUrl, testDb } from "../../test/db";
 import {
   accounts,
@@ -31,6 +31,8 @@ import { describeError, formatSummary, importSucceeded, runImport } from "./run"
 import { ImportRefusedError, writeImport } from "./write";
 
 type Fixture = ReturnType<typeof convexFixture>;
+
+afterEach(removeExports);
 
 const id = (table: string, fixture: Fixture, convexId: string) => {
   const doc = fixture[table]!.find((d) => d._id === convexId)!;
@@ -117,6 +119,15 @@ describe("reading an export", () => {
     expect(() => readZip(Buffer.from("not a zip"))).toThrow(/not a zip/);
     const empty = await writeExportDir({});
     await expect(readConvexExport(empty)).rejects.toThrow(/no <table>\/documents.jsonl/);
+  });
+
+  it("refuses an incomplete or ambiguous export", async () => {
+    const doc = Buffer.from('{"_id":"u","_creationTime":1}\n');
+    expect(() => readZip(zip([["users/documents.jsonl", doc], ["users/documents.jsonl", doc]]))).toThrow(/appears twice/);
+    // A table directory with its schema but no documents file.
+    const dir = await writeExportDir(convexFixture());
+    await rm(join(dir, "transactions", "documents.jsonl"));
+    await expect(readConvexExport(dir)).rejects.toThrow(/transactions\/documents.jsonl is missing/);
   });
 });
 
@@ -239,6 +250,20 @@ describe("plan", () => {
     expect(issues(report.warnings, "orphan_owner").map((issue) => `${issue.table} ${issue.id}`)).toEqual(["accounts a_ghost", "transactions t_ghost"]);
   });
 
+  it("keeps a skipped transaction's Convex effect on a kept account in the balance baseline", () => {
+    const base = convexFixture();
+    const moved = variant((f) => void (find(f, "transactions", "t_ghost").accountId = "a_bob"));
+    const effect = (fixture: Fixture) => plan(asExport(fixture)).balances.get(id("accounts", fixture, "a_bob"))!.convexEffect;
+    expect(effect(moved) - effect(base)).toBe(1);
+  });
+
+  it("fails on an outgoing leg that lost its destination while its pair kept an account, unless accepted", () => {
+    const fixture = variant((f) => void (find(f, "transactions", "t_out").destinationAccountId = "a_gone"));
+    const strict = planImport(asExport(fixture));
+    expect(issues(strict.report.errors, "lone_outgoing_leg_without_destination").map((issue) => issue.id)).toEqual(["t_lone_out", "t_out"]);
+    expect(issues(plan(asExport(fixture)).report.warnings, "accepted_lone_outgoing_leg").map((issue) => issue.id)).toEqual(["t_lone_out", "t_out"]);
+  });
+
   it("fails on a lone outgoing leg whose destination was deleted too, unless accepted", () => {
     const strict = planImport(asExport(convexFixture()));
     expect(strict.report.errors).toEqual([{ code: "lone_outgoing_leg_without_destination", table: "transactions", id: "t_lone_out" }]);
@@ -349,6 +374,7 @@ describe("plan", () => {
     const fixture = variant((f) => {
       find(f, "categories", "c_food").sortOrder = 1.5;
       find(f, "subcategories", "sc_groceries").sortOrder = 2 ** 31;
+      find(f, "categories", "c_salary").sortOrder = -(2 ** 31);
     });
     expect(plan(asExport(fixture)).report.errors.map((issue) => `${issue.code} ${issue.id}.${issue.field}`)).toEqual([
       "invalid_value c_food.sortOrder",
@@ -357,9 +383,10 @@ describe("plan", () => {
   });
 
   it("fails on tables it doesn't know", () => {
-    const { report } = plan(asExport({ ...convexFixture(), legacyNotes: [{ _id: "n", _creationTime: 1 }] }));
+    const { report } = plan(asExport({ ...convexFixture(), legacyNotes: [{ _id: "n", _creationTime: 1 }], constructor: [] }));
     expect(report.errors).toEqual([
       { code: "unknown_table", table: "legacyNotes", detail: "1 documents; map the table in the import or drop it in Convex" },
+      { code: "unknown_table", table: "constructor", detail: "0 documents; map the table in the import or drop it in Convex" },
     ]);
   });
 
@@ -583,6 +610,15 @@ describe("CLI", () => {
     // No emails or hashes in the report.
     expect(await readFile(reportFile, "utf8")).not.toMatch(/@example\.com|[0-9a-f]{32}:/);
     expect(await testDb().select().from(users)).toHaveLength(0);
+  });
+
+  it("refuses a report path that would overwrite the export", async () => {
+    const zipFile = await writeExportZip(convexFixture());
+    await expect(run("bun", [cli, zipFile, "--dry-run", "--report", zipFile], { env: { ...process.env, DATABASE_URL: "" } })).rejects.toMatchObject({ code: 2 });
+    const dir = await writeExportDir(convexFixture());
+    const inside = join(dir, "users", "documents.jsonl");
+    await expect(run("bun", [cli, dir, "--dry-run", "--report", inside], { env: { ...process.env, DATABASE_URL: "" } })).rejects.toMatchObject({ code: 2 });
+    expect(await readFile(inside, "utf8")).toMatch(/"_id"/);
   });
 
   it("exits 1 on errors and 2 on bad usage", async () => {

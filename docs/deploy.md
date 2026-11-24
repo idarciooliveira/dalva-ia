@@ -23,7 +23,7 @@ What the import does with legacy data:
 
 | Case | Result |
 | --- | --- |
-| Emails that differ only by case | One user, lowercase email. The one that signed in last keeps its password, profile and active Telegram link; all finance rows of both move to it. `email_case_merge` |
+| Emails that differ only by case | One user, lowercase email. The survivor is the one with a valid password, then the one that signed in last, then the newest; it keeps its password and active Telegram link. The profile kept is the one that completed onboarding, else the survivor's. All finance rows of both move to it. `email_case_merge` |
 | User with no name | Profile name, else the email's local part. |
 | Password hash not `<32 hex>:<128 hex>` | Error. |
 | User with no password account | Imported without a credential (cannot sign in). `user_without_password` |
@@ -58,7 +58,7 @@ export DATABASE_URL=postgres://dalva:dalva@127.0.0.1:55432/dalva
 (cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/rehearsal.zip --dry-run --report ~/dalva-cutover/rehearsal.json)
 ```
 
-Check that `source.users` in the report matches the user count in the dashboard: a wrong deployment still passes every check. Every error must be fixed in Convex, or accepted with `--drop-invalid` / `--accept-lone-legs`, before the real run. Read `changedByImport`. List the `email_case_merge` users: they keep one password (the other duplicate's stops working) and, with `identity_unlinked`, one Telegram chat; tell them before cutover. Also check that `convex export` works while the deployment is paused (step 2); if it doesn't, plan to export right after unpausing with web and agent still down. Then rehearse step 3 end to end once (real run, dump, restore) against the staging stack, and `docker stop dalva-import`.
+Check that `source.users` in the report matches the user count in the dashboard: a wrong deployment still passes every check. Every error must be fixed in Convex, or accepted with `--drop-invalid` / `--accept-lone-legs`, before the real run. Read `changedByImport`. List the `email_case_merge` users: they keep one password (the other duplicate's stops working) and, with `identity_unlinked`, one Telegram chat; tell them before cutover. Also check that `convex export` works while the deployment is paused (step 2). If it doesn't, stop and find another way to block writes server-side before the cutover: an unpaused deployment still takes writes from browser tabs that are already open. Then rehearse step 3 end to end once (real run, dump, restore) against the staging stack, and `docker stop dalva-import`.
 
 Bring up the production stack beforehand with an empty database (the deploy steps in this file, production hostname and bot) but without routing traffic to it. The `backup restore` command and `dalva_backups` volume used below come from it.
 
@@ -76,15 +76,16 @@ Same as the rehearsal from the repo root, with a fresh scratch database and no `
 (cd packages/backend && CONVEX_DEPLOYMENT=$CONVEX_PROD bunx convex export --path ~/dalva-cutover/cutover.zip)
 # fresh dalva-import container and pg_isready wait, as in step 1
 (cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/cutover.zip --report ~/dalva-cutover/cutover.json)   # exit 0, "committed"
-docker exec dalva-import pg_dump -U dalva -d dalva --format=custom --no-owner > ~/dalva-cutover/cutover.dump
+(umask 077; docker exec dalva-import pg_dump -U dalva -d dalva --format=custom --no-owner > ~/dalva-cutover/cutover.dump)
 ```
 
 Go on only if `cutover.json` matches the rehearsal: the same issue codes, no new `changedByImport` account or accepted lone leg, counts grown only by what users did since. Then load the dump on the VPS:
 
 ```bash
-scp ~/dalva-cutover/cutover.dump vps:/tmp/ && ssh vps
+ssh vps 'mkdir -m 700 ~/dalva-cutover-in'          # private: the dump holds finance data and password hashes
+scp -p ~/dalva-cutover/cutover.dump vps:dalva-cutover-in/ && ssh vps
 cd dalva/deploy
-docker run --rm -v dalva_backups:/b -v /tmp:/in alpine cp /in/cutover.dump /b/ && rm /tmp/cutover.dump
+docker run --rm -v dalva_backups:/b -v ~/dalva-cutover-in:/in alpine cp /in/cutover.dump /b/ && rm -r ~/dalva-cutover-in
 docker compose stop api agent web
 docker compose exec postgres psql -U dalva -d postgres -c 'drop database dalva with (force)'
 docker compose run --rm backup restore cutover.dump dalva

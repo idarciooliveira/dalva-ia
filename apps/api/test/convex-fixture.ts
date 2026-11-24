@@ -3,7 +3,7 @@
  * shapes the import must handle (case-duplicate emails, orphans, cross-user
  * references, lone transfer legs). No real data.
  */
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { crc32, deflateRawSync } from "node:zlib";
@@ -145,9 +145,21 @@ export function asExport(tables: Record<string, Doc[]>): ConvexExport {
 
 const jsonl = (docs: Doc[]) => Buffer.from(docs.map((doc) => `${JSON.stringify(doc)}\n`).join(""));
 
+const tempRoots: string[] = [];
+async function tempRoot() {
+  const root = await mkdtemp(join(tmpdir(), "convex-export-"));
+  tempRoots.push(root);
+  return root;
+}
+
+/** Delete every export (and anything written next to it) made since the last call. */
+export async function removeExports() {
+  await Promise.all(tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+}
+
 /** The export as `convex export` unzips it, in a new temp directory. */
 export async function writeExportDir(tables: Record<string, Doc[]>): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "convex-export-"));
+  const root = await tempRoot();
   await writeFile(join(root, "README.md"), "synthetic export\n");
   await mkdir(join(root, "_tables"));
   await writeFile(join(root, "_tables", "documents.jsonl"), jsonl(Object.keys(tables).map((name, i) => ({ name, id: 10_001 + i }))));
@@ -165,7 +177,7 @@ export async function writeExportZip(tables: Record<string, Doc[]>): Promise<str
   for (const [table, docs] of Object.entries(tables)) {
     files.push([`${table}/`, Buffer.alloc(0)], [`${table}/documents.jsonl`, jsonl(docs)]);
   }
-  const path = join(await mkdtemp(join(tmpdir(), "convex-export-")), "snapshot.zip");
+  const path = join(await tempRoot(), "snapshot.zip");
   await writeFile(path, zip(files));
   return path;
 }
@@ -200,11 +212,17 @@ export function zip(files: [string, Buffer][], options: { dataDescriptor?: boole
     local.writeUInt16LE(nameBytes.length, 26);
     const record = [local, nameBytes, compressed];
     if (options.dataDescriptor) {
-      const descriptor = Buffer.alloc(16);
+      // Zip64 streams carry 64-bit sizes in the descriptor.
+      const descriptor = Buffer.alloc(options.zip64 ? 24 : 16);
       descriptor.writeUInt32LE(0x08074b50, 0);
       descriptor.writeUInt32LE(crc, 4);
-      descriptor.writeUInt32LE(compressed.length, 8);
-      descriptor.writeUInt32LE(content.length, 12);
+      if (options.zip64) {
+        descriptor.writeBigUInt64LE(BigInt(compressed.length), 8);
+        descriptor.writeBigUInt64LE(BigInt(content.length), 16);
+      } else {
+        descriptor.writeUInt32LE(compressed.length, 8);
+        descriptor.writeUInt32LE(content.length, 12);
+      }
       record.push(descriptor);
     }
     parts.push(...record);

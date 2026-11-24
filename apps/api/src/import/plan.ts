@@ -191,6 +191,7 @@ export const PASSWORD_HASH = /^[0-9a-f]{32}:[0-9a-f]{128}$/;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const INT32_MAX = 2 ** 31 - 1;
+const INT32_MIN = -(2 ** 31);
 
 /* -------------------------------------------------------------------------- */
 /*  Field readers                                                             */
@@ -287,7 +288,7 @@ class Fields {
 
   int32(field: string): number {
     const value = this.doc[field];
-    if (typeof value !== "number" || !Number.isInteger(value) || Math.abs(value) > INT32_MAX) {
+    if (typeof value !== "number" || !Number.isInteger(value) || value < INT32_MIN || value > INT32_MAX) {
       this.fail("invalid_value", field, "expected a 32-bit integer");
       return 0;
     }
@@ -405,7 +406,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   for (const [table, docs] of source) {
     report.source[table] = docs.length;
     if (NOT_MIGRATED.has(table)) report.notMigrated[table] = docs.length;
-    else if (!(table in MIGRATED)) issues.add({ code: "unknown_table", table, detail: `${docs.length} documents; map the table in the import or drop it in Convex` });
+    else if (!Object.hasOwn(MIGRATED, table)) issues.add({ code: "unknown_table", table, detail: `${docs.length} documents; map the table in the import or drop it in Convex` });
   }
 
   /** Valid documents of a table; malformed or repeated ones are errors. */
@@ -461,7 +462,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
       continue;
     }
     if (account.provider !== "password") {
-      issues.add({ code: "ignored_auth_account", table: "authAccounts", id: account._id, detail: `provider ${String(account.provider)}` });
+      issues.add({ code: "ignored_auth_account", table: "authAccounts", id: account._id, detail: "non-password provider" });
       continue;
     }
     const current = passwordAccounts.get(userId);
@@ -719,7 +720,17 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   // Register first: legs reference each other.
   const transactionDocs = docsOf("transactions").flatMap((doc) => {
     const owner = ownerOf("transactions", doc);
-    if (!owner) return [];
+    if (!owner) {
+      // Not imported, but it moved its account's balance in Convex: keep it in the baseline so the
+      // account shows up in changedByImport.
+      const account = typeof doc.accountId === "string" ? targets.get("accounts")?.get(doc.accountId)?.id : undefined;
+      const balance = account ? balances.get(account) : undefined;
+      const type = TRANSACTION_TYPES.find((t) => t === doc.type);
+      if (balance && type && Number.isSafeInteger(doc.amount)) {
+        balance.convexEffect += convexEffect(type, doc.amount as number, typeof doc.destinationAccountId === "string");
+      }
+      return [];
+    }
     register("transactions", doc._id, { id: idOf("transactions", doc), userId: owner });
     return [{ doc, owner }];
   });
@@ -773,6 +784,22 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     const account = typeof doc.accountId === "string" ? targets.get("accounts")?.get(doc.accountId)?.id : undefined;
     const balance = account ? balances.get(account) : undefined;
     if (balance && fields.ok) balance.convexEffect += convexEffect(type, amount, typeof doc.destinationAccountId === "string");
+  }
+
+  // An outgoing leg that lost its destination still reads as outgoing while its pair has no account (the
+  // usual case: the destination was deleted). If the pair kept an account, both legs read as incoming.
+  const imported = new Map(rows.transactions.map((row) => [row.id, row]));
+  for (const { doc } of transactionDocs) {
+    const row = imported.get(idOf("transactions", doc));
+    if (!row || row.type !== "transfer" || row.destinationAccountId !== null || row.linkedTransactionId == null) continue;
+    const pair = imported.get(row.linkedTransactionId);
+    if (typeof doc.destinationAccountId !== "string" || !pair?.accountId) continue;
+    issues.add({
+      code: options.acceptLoneLegs ? "accepted_lone_outgoing_leg" : "lone_outgoing_leg_without_destination",
+      table: "transactions",
+      id: doc._id,
+      detail: "its linked leg kept an account, so both legs read as incoming",
+    });
   }
 
   /* Goals ------------------------------------------------------------------ */
