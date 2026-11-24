@@ -1,8 +1,3 @@
-/**
- * Ported from `packages/backend/convex/api/v1/agent.test.ts`: inbound events
- * (service key) and the agent store (sessions, messages, pending actions,
- * history) behind `agent:state` tokens.
- */
 import { type ErrorCode, routes } from "@mpf/finance-contract";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
@@ -76,10 +71,6 @@ const counts = async () => ({
   actions: (await testDb().select().from(agentPendingActions)).length,
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Inbound events (service key)                                              */
-/* -------------------------------------------------------------------------- */
-
 describe("agentEvents (service key)", () => {
   it("claims a new event once and reports later claims as duplicates", async () => {
     const { app } = testApp();
@@ -108,7 +99,6 @@ describe("agentEvents (service key)", () => {
   it("rejects payloads that are not JSON or too large", async () => {
     const { app } = testApp();
     const service = serviceClientFor(app);
-    // The client checks the contract before sending; the server checks again.
     await expectApiError(service.agentEvents.claim({ channel: TG, eventId: "1", payload: "nope" }), "validation_failed");
     await expectApiError(service.agentEvents.claim({ channel: TG, eventId: "1", payload: json("x".repeat(33 * 1024)) }), "validation_failed");
     for (const payload of ["nope", json("x".repeat(33 * 1024))]) {
@@ -130,7 +120,6 @@ describe("agentEvents (service key)", () => {
 
     const done = await service.agentEvents.updateStatus({ channel: TG, eventId: "9001", status: "done" });
     expect(done.event).toMatchObject({ status: "done", attempts: 2 });
-    // Message text is not kept once the event is finished.
     expect((await eventRow("9001"))!.payload).toBe("");
   });
 
@@ -191,7 +180,6 @@ describe("agentEvents (service key)", () => {
       await age("2", 10 * MIN);
       await age("3", 10 * MIN);
       await age("4", 10 * MIN);
-      // "5" is fresh.
 
       const { items } = await service.agentEvents.listRecoverable({ channel: TG, olderThanSeconds: 60 });
       expect(items.map((e) => e.eventId)).toEqual(["2", "1"]);
@@ -236,10 +224,6 @@ describe("agentEvents (service key)", () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Auth: scopes, credentials, revocation                                     */
-/* -------------------------------------------------------------------------- */
-
 describe("agent routes auth", () => {
   const sessionInput = (chat: LinkedChat) => ({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30 });
   const missing = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
@@ -268,7 +252,6 @@ describe("agent routes auth", () => {
     const ro = await linkedChat(app, { externalUserId: "2002", readOnly: true });
     expect(rw.resolved.scopes).toContain("agent:state");
     expect(ro.resolved.scopes).toEqual(["finance:read", "agent:state"]);
-    // Read-only users keep conversation state but still can't write finance data.
     const s = await session(ro);
     await ro.agent.agentMessages.append({ sessionId: s.id, messages: [{ role: "user", content: json({ text: "hi" }) }] });
   });
@@ -332,7 +315,6 @@ describe("agent routes auth", () => {
     const { app } = testApp();
     const chat = await linkedChat(app);
     expect((await raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: sessionInput(chat) })).status).toBe(200);
-    // The same key twice: both run (nothing is stored and replayed).
     const fresh = () =>
       raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: { ...sessionInput(chat), startNew: true }, idempotencyKey: "whatever-key-0001" });
     const [first, second] = [await fresh(), await fresh()];
@@ -341,10 +323,6 @@ describe("agent routes auth", () => {
     expect(id(first)).not.toBe(id(second));
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  Sessions                                                                  */
-/* -------------------------------------------------------------------------- */
 
 describe("agentSessions.current", () => {
   it("creates a session for the chat and returns the same one while it is active", async () => {
@@ -385,7 +363,6 @@ describe("agentSessions.current", () => {
     await patchSession(first.id, { lastActivityAt: ago(29 * MIN) });
     const again = await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30 });
     expect(again).toMatchObject({ created: false, session: { id: first.id } });
-    // The same session counts as idle with a shorter timeout.
     const shorter = await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 10 });
     expect(shorter.created).toBe(true);
   });
@@ -426,10 +403,6 @@ describe("agentSessions.current", () => {
     expect((await testDb().select().from(agentSessions)).filter((s) => s.endedAt === null)).toHaveLength(1);
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  Messages                                                                  */
-/* -------------------------------------------------------------------------- */
 
 describe("agentMessages", () => {
   const msg = (role: "user" | "assistant" | "tool" | "system", text: string) => ({ role, content: json({ text }) });
@@ -482,7 +455,6 @@ describe("agentMessages", () => {
     const stored = await sessionRow(s.id);
     expect(stored!.messageCount).toBe(2);
     expect(Date.now() - stored!.lastActivityAt.getTime()).toBeLessThan(5_000);
-    // So the session is no longer idle.
     expect((await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 10 })).created).toBe(false);
   });
 
@@ -503,7 +475,6 @@ describe("agentMessages", () => {
     await expectApiError(chat.agent.agentMessages.append({ sessionId: s.id, messages: [msg("user", "c")] }), "conflict", 409);
     expect(await testDb().select().from(agentMessages)).toHaveLength(2);
 
-    // The agent starts a new session and carries on.
     const next = await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30, startNew: true });
     await chat.agent.agentMessages.append({ sessionId: next.session.id, messages: [msg("user", "c")] });
   });
@@ -527,7 +498,6 @@ describe("agentMessages", () => {
     );
     const { items } = await chat.agent.agentMessages.list({ sessionId: s.id });
     expect(items.map((m) => m.seq)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-    // Each batch appears once, its two messages together and in order; batches in any order.
     const pairs = [];
     for (let i = 0; i < 10; i += 2) {
       const [a, b] = [items[i]!, items[i + 1]!];
@@ -577,10 +547,6 @@ describe("agentMessages", () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Pending actions                                                           */
-/* -------------------------------------------------------------------------- */
-
 describe("agentPendingActions", () => {
   it("creates a pending action with the default and a custom ttl", async () => {
     const { app } = testApp();
@@ -616,12 +582,10 @@ describe("agentPendingActions", () => {
       });
     const first = (await create()).action;
     expect(first.clientKey).toBe("5001:0");
-    // Same key: same action, even when the replayed proposal differs. Nothing new is stored.
     const again = (await create(999)).action;
     expect(again).toMatchObject({ id: first.id, summary: "Expense 1250", input: expenseInput(chat.accountId!) });
     await chat.agent.agentPendingActions.confirm({ id: first.id });
     expect((await create()).action).toMatchObject({ id: first.id, status: "confirmed" });
-    // Another key is another action.
     expect((await create(1250, "5001:1")).action.id).not.toBe(first.id);
     expect(await testDb().select().from(agentPendingActions)).toHaveLength(2);
   });
@@ -645,7 +609,6 @@ describe("agentPendingActions", () => {
     const { session: second } = await alice.agent.agentSessions.current({ channel: TG, chatId: alice.chatId, idleTimeoutMinutes: 30, startNew: true });
     const b = (await alice.agent.agentPendingActions.create({ sessionId: second.id, ...input })).action;
     expect(b.id).toBe(a.id);
-    // Another user with the same key gets their own action.
     const bobSession = await session(bob);
     const c = (await bob.agent.agentPendingActions.create({ ...input, sessionId: bobSession.id, input: expenseInput(bob.accountId!) })).action;
     expect(c.id).not.toBe(a.id);
@@ -683,7 +646,6 @@ describe("agentPendingActions", () => {
     const { app } = testApp();
     const chat = await linkedChat(app, { withAccount: true });
     const s = await session(chat);
-    // `accounts.create` gets input its own schema accepts, so only the operation list can refuse it.
     const accountInput = { name: "Checking", type: "bank", balance: { amountMinor: 0, currency: "USD" } };
     const cases = [["transactions.search", {}], ["agentHistory.delete", {}], ["accounts.create", accountInput], ["nope", {}]] as const;
     for (const [operation, input] of cases) {
@@ -716,14 +678,12 @@ describe("agentPendingActions", () => {
       .insert(agentPendingActions)
       .values(Array.from({ length: 30 }, () => ({ ...copy, expiresAt: ago(1_000) })));
     await patchAction(first.id, { expiresAt: ago(1_000) });
-    // 31 expired rows are still `pending`: creating works and sweeps them to `expired`.
     await chat.agent.agentPendingActions.create({ sessionId: s.id, operation: "transactions.create", input: expenseInput(chat.accountId!), summary: "fresh" });
     const rows = await testDb().select().from(agentPendingActions);
     expect(rows).toHaveLength(32);
     expect(rows.filter((a) => a.status === "expired")).toHaveLength(31);
     expect(rows.filter((a) => a.status === "pending").map((a) => a.summary)).toEqual(["fresh"]);
 
-    // And the limit still bites once 20 live ones exist.
     for (let i = 1; i < 20; i++) await newAction(chat);
     await expectApiError(
       chat.agent.agentPendingActions.create({ sessionId: s.id, operation: "transactions.create", input: expenseInput(chat.accountId!), summary: "too many" }),
@@ -738,7 +698,6 @@ describe("agentPendingActions", () => {
     const { action } = await newAction(chat);
     await chat.web.chatLinks.setReadOnly({ id: chat.identityId, readOnly: true });
 
-    // The existing token still carries finance:write, but the identity no longer does.
     await expectApiError(chat.agent.agentPendingActions.confirm({ id: action.id }), "forbidden", 403);
     expect((await chat.agent.agentPendingActions.get({ id: action.id })).action.status).toBe("pending");
     await expectApiError(
@@ -746,7 +705,6 @@ describe("agentPendingActions", () => {
       "forbidden",
       403,
     );
-    // Cancelling a button is not a write.
     expect((await chat.agent.agentPendingActions.cancel({ id: action.id })).action.status).toBe("cancelled");
 
     const readOnly = await linkedChat(app, { externalUserId: "3003", readOnly: true, withAccount: true });
@@ -769,22 +727,8 @@ describe("agentPendingActions", () => {
   it("rejects JSON the contract refuses with validation_failed, not a 500", async () => {
     const { app } = testApp();
     const chat = await linkedChat(app, { withAccount: true });
-    const s = await session(chat);
-    const create = await raw(app, "POST", "/agent/pending-actions", {
-      token: chat.token,
-      body: { sessionId: s.id, operation: "transactions.create", input: { $set: 1 }, summary: "x" },
-    });
-    expect(create.status).toBe(400);
     const { action } = await newAction(chat);
     await chat.agent.agentPendingActions.confirm({ id: action.id });
-    const complete = await raw(app, "POST", `/agent/pending-actions/${action.id}/complete`, { token: chat.token, body: { status: "failed", result: { _bad: true } } });
-    expect(complete.status).toBe(400);
-    const accented = await raw(app, "POST", `/agent/pending-actions/${action.id}/complete`, {
-      token: chat.token,
-      body: { status: "failed", result: { descrição: "x" } },
-    });
-    expect(accented.status).toBe(400);
-    // Nesting deep enough to overflow the validator's stack is a 400, not a 500.
     const deep = `{"status":"failed","result":${"[".repeat(30_000)}${"]".repeat(30_000)}}`;
     const nested = await raw(app, "POST", `/agent/pending-actions/${action.id}/complete`, { token: chat.token, rawBody: deep });
     expect({ status: nested.status, code: nested.body.error?.code }).toEqual({ status: 400, code: "validation_failed" });
@@ -850,7 +794,6 @@ describe("agentPendingActions", () => {
     const error = await expectApiError(chat.agent.agentPendingActions.confirm({ id: action.id }), "conflict", 409);
     expect(error.message).toContain("expired");
     expect(error.details).toEqual({ status: "expired" });
-    // The expired mark survives the error response.
     expect((await chat.agent.agentPendingActions.get({ id: action.id })).action.status).toBe("expired");
     await expectApiError(chat.agent.agentPendingActions.confirm({ id: action.id }), "conflict", 409);
   });
@@ -908,7 +851,6 @@ describe("agentPendingActions", () => {
   });
 
   it("the confirmed input runs through the finance API with the action id as Idempotency-Key", async () => {
-    // `accounts.adjust` stands in for `transactions.create` until transactions are ported.
     const { app } = testApp();
     const chat = await linkedChat(app, { withAccount: true });
     const s = await session(chat);
@@ -938,7 +880,6 @@ describe("agentPendingActions", () => {
     await expectApiError(bob.agent.agentPendingActions.complete({ id: action.id, status: "executed", result: {} }), "not_found", 404);
     expect((await alice.agent.agentPendingActions.get({ id: action.id })).action.status).toBe("confirmed");
 
-    // Confirming a pending one is refused too, and leaves it pending.
     const pending = (await newAction(alice)).action;
     await expectApiError(bob.agent.agentPendingActions.confirm({ id: pending.id }), "not_found", 404);
     expect((await alice.agent.agentPendingActions.get({ id: pending.id })).action.status).toBe("pending");
@@ -953,10 +894,6 @@ describe("agentPendingActions", () => {
   });
 });
 
-/* -------------------------------------------------------------------------- */
-/*  History deletion                                                          */
-/* -------------------------------------------------------------------------- */
-
 describe("agentHistory.delete", () => {
   async function fill(chat: LinkedChat) {
     const { session: s, action } = await newAction(chat);
@@ -969,7 +906,6 @@ describe("agentHistory.delete", () => {
     const { alice, bob } = await twoChats(app);
     const { s: aliceSession, action } = await fill(alice);
     const { s: bobSession, action: bobAction } = await fill(bob);
-    // An older, ended session goes too.
     await alice.agent.agentSessions.current({ channel: TG, chatId: alice.chatId, idleTimeoutMinutes: 30, startNew: true });
 
     expect(await alice.agent.agentHistory.delete()).toEqual({ deleted: true });
@@ -978,7 +914,6 @@ describe("agentHistory.delete", () => {
     await expectApiError(alice.agent.agentPendingActions.get({ id: action.id }), "not_found", 404);
     expect((await bob.agent.agentMessages.list({ sessionId: bobSession.id })).items).toHaveLength(1);
     expect((await bob.agent.agentPendingActions.get({ id: bobAction.id })).action.status).toBe("pending");
-    // A fresh session starts cleanly.
     expect((await alice.agent.agentSessions.current({ channel: TG, chatId: alice.chatId, idleTimeoutMinutes: 30 })).created).toBe(true);
   });
 
@@ -1000,7 +935,6 @@ describe("agentHistory.delete", () => {
     expect(await chat.agent.agentHistory.delete()).toEqual({ deleted: true });
     expect(await counts()).toEqual({ sessions: 0, messages: 0, actions: 0 });
 
-    // The old session is gone: it takes nothing new, and `current` starts a fresh one.
     await expectApiError(chat.agent.agentMessages.append({ sessionId: old.id, messages: [{ role: "user", content: json({ text: "late" }) }] }), "not_found", 404);
     const fresh = await chat.agent.agentSessions.current({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30 });
     expect(fresh).toMatchObject({ created: true });
@@ -1060,10 +994,6 @@ describe("history and unlink", () => {
     expect(await counts()).toEqual({ sessions: 0, messages: 0, actions: 0 });
   });
 });
-
-/* -------------------------------------------------------------------------- */
-/*  Contract conformance                                                      */
-/* -------------------------------------------------------------------------- */
 
 describe("contract conformance", () => {
   it("every agent route's success response parses with its contract schema", async () => {

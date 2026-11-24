@@ -1,10 +1,3 @@
-/**
- * Service routes: the chat agent with its service key, acting for no user.
- * Ported from `packages/backend/convex/api/v1/{serviceRegistry,channels,agentEvents}.ts`.
- * None takes a user id: the user comes from the code row (redeem) or the
- * linked identity (resolve, unlink). Inbound events run before any identity
- * is resolved, so they know no user at all.
- */
 import { AGENT_STATE_SCOPE, routes, type TokenScope } from "@mpf/finance-contract";
 
 import * as agentStore from "../../domain/agentStore";
@@ -13,7 +6,6 @@ import { notFound } from "../../domain/errors";
 import { serviceOperation } from "../operation";
 import { iso } from "./shared";
 
-/** Lifetime of a token minted by `channelIdentities.resolve`. */
 export const RESOLVED_TOKEN_TTL_SECONDS = 15 * 60;
 
 const identityDto = (identity: channelLinks.ChannelIdentity) => ({
@@ -50,7 +42,6 @@ export const channelIdentityServiceOperations = {
     const found = await channelLinks.resolveIdentity(tx, input);
     if (!found) throw notFound("Channel identity");
     const now = Math.floor(Date.now() / 1000);
-    // `agent:state` is always granted: read-only users keep their conversation state.
     const scopes: TokenScope[] = [...found.identity.scopes, AGENT_STATE_SCOPE];
     const token = await ctx.tokens.mint(found.identity.userId, scopes, RESOLVED_TOKEN_TTL_SECONDS, {
       now,

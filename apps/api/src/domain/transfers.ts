@@ -1,16 +1,3 @@
-/**
- * Transfers, ported from `packages/backend/convex/domain/transfers.ts` plus the
- * checks Convex kept in its API layer (`api/v1/transfers.ts`).
- *
- * A transfer is two `transfer` rows sharing `transfer_group_id`: the outgoing
- * leg on the source account (it carries `destination_account_id`) and the
- * incoming leg on the destination account, each pointing at the other through
- * `linked_transaction_id`. Both legs and both balances change in the caller's
- * transaction. Either leg's id addresses the transfer.
- *
- * Transfers made by goal contributions belong to the contribution endpoints:
- * update and delete refuse them with `conflict`.
- */
 import { randomUUID } from "node:crypto";
 
 import { and, eq, inArray } from "drizzle-orm";
@@ -27,12 +14,10 @@ export const CONTRIBUTION_MANAGED_MESSAGE =
 export interface Transfer {
   outgoing: Transaction;
   incoming: Transaction;
-  /** Null for a legacy leg whose account Convex deleted. */
   fromAccount: Account | null;
   toAccount: Account | null;
 }
 
-/** A transfer leg of the user's, as "Transfer not found" when it is anything else. */
 async function getLeg(tx: Tx, userId: string, id: string): Promise<Transaction> {
   const row = await getTransaction(tx, userId, id, "Transfer");
   if (row.type !== "transfer") throw notFound("Transfer");
@@ -40,12 +25,9 @@ async function getLeg(tx: Tx, userId: string, id: string): Promise<Transaction> 
 }
 
 /**
- * Both legs from either one. The outgoing leg carries
- * `destination_account_id`, the incoming leg sits on that same account. When
- * Convex deleted it, the import nulled both, so the incoming leg is then the
- * one without an account (with both accounts gone, which leg is which changes
- * no balance). A leg without its pair is the outgoing one when it carries
- * `destination_account_id`, else the incoming one.
+ * Imported transfers whose destination account was deleted have both accounts nulled:
+ * the incoming leg is then the one without an account. A leg without its pair is the
+ * outgoing one when it carries `destination_account_id`, else the incoming one.
  */
 async function legsOf(tx: Tx, userId: string, row: Transaction): Promise<{ outgoing: Transaction | null; incoming: Transaction | null }> {
   const linked = row.linkedTransactionId
@@ -61,10 +43,6 @@ async function accountOrNull(tx: Tx, userId: string, id: string | null): Promise
   return id === null ? null : await getAccount(tx, userId, id);
 }
 
-/**
- * Both legs and their accounts. A leg whose pair is gone is "Transfer not
- * found". `editable`: also refuse a goal contribution's transfer (`conflict`).
- */
 export async function getTransfer(tx: Tx, userId: string, id: string, options: { editable?: boolean } = {}): Promise<Transfer> {
   const leg = options.editable ? await getEditableLeg(tx, userId, id) : await getLeg(tx, userId, id);
   const { outgoing, incoming } = await legsOf(tx, userId, leg);
@@ -77,7 +55,6 @@ export async function getTransfer(tx: Tx, userId: string, id: string, options: {
   };
 }
 
-/** A transfer the transfer endpoints may change: not one a goal contribution owns. */
 async function getEditableLeg(tx: Tx, userId: string, id: string): Promise<Transaction> {
   const row = await getLeg(tx, userId, id);
   if (await ownedByContribution(tx, userId, row)) throw conflict(CONTRIBUTION_MANAGED_MESSAGE);
@@ -88,7 +65,6 @@ function assertAmount(amount: number) {
   if (!Number.isSafeInteger(amount) || amount <= 0) throw invalid("amount", "Amount must be positive");
 }
 
-/** Two distinct accounts in one currency (there is no conversion). Returns that currency. */
 export function transferCurrency(from: Account, to: Account): string {
   if (from.id === to.id) throw invalid("toAccountId", "Cannot transfer to the same account");
   if (from.currency !== to.currency) {
@@ -97,14 +73,12 @@ export function transferCurrency(from: Account, to: Account): string {
   return from.currency;
 }
 
-/** Distinct accounts of the user's, in one currency. */
 async function transferAccounts(tx: Tx, userId: string, fromAccountId: string, toAccountId: string) {
   if (fromAccountId === toAccountId) throw invalid("toAccountId", "Cannot transfer to the same account");
   transferCurrency(await getAccount(tx, userId, fromAccountId), await getAccount(tx, userId, toAccountId));
 }
 
 export interface TransferFields {
-  /** Stored minor units, positive. */
   amount: number;
   fromAccountId: string;
   toAccountId: string;
@@ -113,7 +87,6 @@ export interface TransferFields {
   note?: string;
 }
 
-/** Insert both legs, debit the source, credit the destination. Returns the outgoing leg's id. */
 export async function createTransfer(tx: Tx, userId: string, args: TransferFields): Promise<string> {
   assertAmount(args.amount);
   await transferAccounts(tx, userId, args.fromAccountId, args.toAccountId);
@@ -127,7 +100,6 @@ export async function createTransfer(tx: Tx, userId: string, args: TransferField
     description: args.description ?? null,
     note: args.note ?? null,
   };
-  // The legs reference each other; the foreign keys are deferred, so the order doesn't matter.
   const [outgoing] = await tx
     .insert(transactions)
     .values({ ...shared, accountId: args.fromAccountId, destinationAccountId: args.toAccountId })
@@ -144,21 +116,15 @@ export async function createTransfer(tx: Tx, userId: string, args: TransferField
   return outgoing!.id;
 }
 
-/** What a transfer update may change: `null` clears the description or note on both legs. */
 export type TransferChanges = Partial<Omit<TransferFields, "description" | "note">> & {
   description?: string | null;
   note?: string | null;
 };
 
-/**
- * Change the fields given on both legs, reversing the old balance effects and
- * applying the new ones. Returns the outgoing leg's id.
- */
 export async function updateTransfer(tx: Tx, userId: string, id: string, changes: TransferChanges): Promise<string> {
   return await updateLoadedTransfer(tx, userId, await getTransfer(tx, userId, id, { editable: true }), changes);
 }
 
-/** `updateTransfer` for a transfer the caller loaded with `getTransfer(..., { editable: true })` in this transaction. */
 export async function updateLoadedTransfer(
   tx: Tx,
   userId: string,
@@ -172,7 +138,6 @@ export async function updateLoadedTransfer(
   if (fromAccountId === null || toAccountId === null) throw notFound("Account");
   await transferAccounts(tx, userId, fromAccountId, toAccountId);
 
-  // Only what changed, as Convex patched: legacy legs may disagree on the rest.
   const shared = {
     ...(changes.amount !== undefined && { amount: changes.amount }),
     ...(changes.date !== undefined && { date: changes.date }),
@@ -191,7 +156,6 @@ export async function updateLoadedTransfer(
     [incoming.id, { ...shared, ...(changes.toAccountId !== undefined && { accountId: changes.toAccountId }) }],
   ];
   for (const [legId, patch] of patches) {
-    // A leg nothing changes on (only the source moved: the incoming leg) is left alone.
     if (Object.keys(patch).length > 0) await tx.update(transactions).set(patch).where(ownedTransaction(userId, legId));
   }
   await addToBalances(tx, userId, [
@@ -203,18 +167,10 @@ export async function updateLoadedTransfer(
   return outgoing.id;
 }
 
-/**
- * Delete both legs and reverse both balance effects. A legacy leg whose pair
- * is gone is deleted alone, reversing its own effect.
- */
 export async function deleteTransfer(tx: Tx, userId: string, id: string): Promise<void> {
   await deleteTransferLegs(tx, userId, await getEditableLeg(tx, userId, id));
 }
 
-/**
- * `deleteTransfer` from a leg the caller loaded, without the goal-contribution
- * check: for the contribution flow removing its own transfer.
- */
 export async function deleteTransferLegs(tx: Tx, userId: string, leg: Transaction): Promise<void> {
   const { outgoing, incoming } = await legsOf(tx, userId, leg);
   const legs = [outgoing, incoming].filter((leg): leg is Transaction => leg !== null);

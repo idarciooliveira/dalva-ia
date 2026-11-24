@@ -49,9 +49,4 @@ describe("module boundaries", () => {
       .map((path) => relative(SRC, path));
     expect(offenders).toEqual([]);
   });
-
-  test("nothing imports Convex", () => {
-    const offenders = files(SRC).filter((path) => /from\s+["'](convex|@mpf\/backend)/.test(readFileSync(path, "utf8")));
-    expect(offenders).toEqual([]);
-  });
 });

@@ -1,10 +1,3 @@
-/**
- * Chat channel linking, ported from `packages/backend/convex/domain/channelLinks.ts`
- * and `lib/linkCodes.ts`. The web app creates a single-use code (only its hash
- * is stored); the agent redeems it from the chat, which links that chat
- * account to the code's owner. The user id always comes from server state: the
- * session that created the code, or the code row on redeem.
- */
 import { createHash, randomBytes } from "node:crypto";
 
 import type { TokenScope } from "@mpf/finance-contract";
@@ -25,14 +18,8 @@ export const READ_WRITE_SCOPES: ChannelScope[] = ["finance:read", "finance:write
 export const READ_ONLY_SCOPES: ChannelScope[] = ["finance:read"];
 /** 32 random bytes → 43 chars of base64url: Telegram `start`-param safe (`[A-Za-z0-9_-]`, at most 64). */
 const LINK_CODE_BYTES = 32;
-/** Convex read at most this many links per user (one per channel in practice). */
 const LIST_LIMIT = 20;
 
-/*
- * Same messages as Convex. The invalid-code message is the same for unknown,
- * used, expired, superseded and wrong-channel codes, so a caller can't tell
- * which case it hit.
- */
 export const INVALID_LINK_CODE = "Link code is invalid or expired";
 export const EXTERNAL_ALREADY_LINKED = "This chat account is already linked to a DALVA account";
 export const USER_ALREADY_LINKED = "This DALVA account is already linked to another chat account";
@@ -40,18 +27,13 @@ export const CHANNEL_ALREADY_LINKED = "Channel is already linked. Unlink it firs
 export const IDENTITY_NOT_FOUND = "Channel identity not found";
 export const PRIVATE_CHAT_REQUIRED = "Link codes must be sent in a private chat with the bot";
 
-/* Codes -------------------------------------------------------------------- */
-
 export function generateLinkCode(): string {
   return randomBytes(LINK_CODE_BYTES).toString("base64url");
 }
 
-/** 256 bits of entropy, so a plain SHA-256 is enough. Lookups go by hash: the raw code is never stored. */
 export function hashLinkCode(code: string): string {
   return createHash("sha256").update(code).digest("hex");
 }
-
-/* Lookups ------------------------------------------------------------------ */
 
 const active = isNull(channelIdentities.unlinkedAt);
 
@@ -73,7 +55,6 @@ async function findActiveByUser(tx: Tx, userId: string, channel: Channel): Promi
   return identity ?? null;
 }
 
-/** Active links of a user (at most one per channel), oldest first. */
 export async function listActiveForUser(tx: Tx, userId: string): Promise<ChannelIdentity[]> {
   return await tx
     .select()
@@ -83,7 +64,6 @@ export async function listActiveForUser(tx: Tx, userId: string): Promise<Channel
     .limit(LIST_LIMIT);
 }
 
-/** The user's active identity `identityId`, or `IDENTITY_NOT_FOUND` (missing, someone else's or unlinked). */
 async function requireOwnedActive(tx: Tx, userId: string, identityId: string): Promise<ChannelIdentity> {
   const [identity] = await tx
     .select()
@@ -94,13 +74,6 @@ async function requireOwnedActive(tx: Tx, userId: string, identityId: string): P
   return identity;
 }
 
-/* Linking ------------------------------------------------------------------ */
-
-/**
- * Store a new code for the user. Every previous code for the channel is
- * deleted (used ones too: a deleted code fails redeem exactly like a used one),
- * so only the latest code works and there is at most one row per user and channel.
- */
 export async function storeLinkCode(
   tx: Tx,
   userId: string,
@@ -114,17 +87,11 @@ export async function storeLinkCode(
     channel: args.channel,
     codeHash: args.codeHash,
     expiresAt,
-    // The web app only sends `consent: true`; it is given when the code is created.
     consentAt: args.now,
   });
   return { expiresAt };
 }
 
-/**
- * Consume a code and link the chat account to the code's owner. One
- * SERIALIZABLE transaction: two concurrent redeems of one code, or for one
- * chat account, conflict and rerun, and the second sees the first's write.
- */
 export async function redeemLinkCode(
   tx: Tx,
   args: { codeHash: string; channel: Channel; externalUserId: string; chatId: string; username?: string; now: Date },
@@ -133,8 +100,6 @@ export async function redeemLinkCode(
   if (!code || code.usedAt !== null || code.expiresAt <= args.now || code.channel !== args.channel) {
     throw new DomainError("not_found", INVALID_LINK_CODE);
   }
-  // Telegram private chats share the user's id; anything else is a group or channel,
-  // where the bot would later answer finance questions in front of other members.
   if (args.channel === "telegram" && args.chatId !== args.externalUserId) {
     throw new DomainError("validation_failed", PRIVATE_CHAT_REQUIRED);
   }
@@ -160,7 +125,6 @@ export async function redeemLinkCode(
   return identity!;
 }
 
-/** The active identity of a chat sender, only when the message comes from the linked chat. */
 export async function resolveIdentity(
   tx: Tx,
   args: { channel: Channel; externalUserId: string; chatId: string },
@@ -181,9 +145,6 @@ export async function resolveIdentity(
   };
 }
 
-/* Unlinking and read-only -------------------------------------------------- */
-
-/** From the chat (`/unlink`). Unlinking also deletes the identity's chat history. */
 export async function unlinkByExternal(tx: Tx, channel: Channel, externalUserId: string, now: Date): Promise<string> {
   const identity = await findActiveByExternal(tx, channel, externalUserId);
   if (!identity) throw new DomainError("not_found", IDENTITY_NOT_FOUND);
@@ -191,7 +152,6 @@ export async function unlinkByExternal(tx: Tx, channel: Channel, externalUserId:
   return identity.id;
 }
 
-/** From the web app. */
 export async function unlinkForUser(tx: Tx, userId: string, identityId: string, now: Date): Promise<void> {
   await unlink(tx, await requireOwnedActive(tx, userId, identityId), now);
 }
@@ -201,7 +161,6 @@ async function unlink(tx: Tx, identity: ChannelIdentity, now: Date): Promise<voi
   await deleteIdentityHistory(tx, identity.userId, identity.id);
 }
 
-/** Read-only keeps `finance:read` only; tokens already minted follow on their next request. */
 export async function setReadOnly(tx: Tx, userId: string, identityId: string, readOnly: boolean): Promise<ChannelIdentity> {
   const identity = await requireOwnedActive(tx, userId, identityId);
   const [updated] = await tx
@@ -212,12 +171,6 @@ export async function setReadOnly(tx: Tx, userId: string, identityId: string, re
   return updated!;
 }
 
-/**
- * Why a token minted for a chat identity can't be used now: `revoked` when the
- * identity is gone, someone else's or unlinked; `scope` when it no longer holds
- * the finance scope the route needs (switched to read-only). Run it in the
- * same transaction as the read or write it guards.
- */
 export async function channelTokenProblem(
   tx: Tx,
   userId: string,
@@ -230,14 +183,10 @@ export async function channelTokenProblem(
     .where(and(eq(channelIdentities.id, channelIdentityId), eq(channelIdentities.userId, userId)))
     .limit(1);
   if (!identity || identity.unlinkedAt !== null) return "revoked";
-  // The identity stores finance scopes only; `agent:state` follows from being linked.
   if (required !== "agent:state" && !identity.scopes.includes(required)) return "scope";
   return null;
 }
 
-/* Retention ---------------------------------------------------------------- */
-
-/** Delete one batch of codes (used or not) whose TTL has passed. Returns how many. */
 export async function purgeExpiredCodes(db: Database, now: Date, batch: number): Promise<number> {
   const expired = db.select({ id: channelLinkCodes.id }).from(channelLinkCodes).where(lt(channelLinkCodes.expiresAt, now)).limit(batch);
   const deleted = await db

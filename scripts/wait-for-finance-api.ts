@@ -1,5 +1,3 @@
-// Waits until the Finance API the agent will use answers, so `bun run dev` can start the bot
-// alongside `convex dev` (the agent exits at boot if the backend is unreachable).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -12,7 +10,6 @@ function fromEnvFile(file: string): string | undefined {
   return readFileSync(path, "utf8").match(/^\s*FINANCE_API_URL\s*=\s*(\S+)/m)?.[1];
 }
 
-// Same precedence as Bun's env loading: shell, then .env.local, then .env.
 const url = process.env.FINANCE_API_URL || fromEnvFile(".env.local") || fromEnvFile(".env");
 if (!url) process.exit(0); // nothing to wait for; the agent reports the missing config itself
 

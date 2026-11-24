@@ -1,8 +1,3 @@
-/**
- * Chat links from the web app (Settings → Telegram). Ported from
- * `packages/backend/convex/channelLinks.ts` and `agentStore.deleteMyHistory`.
- * Web-only: chat tokens get `forbidden`. No `Idempotency-Key` (see the contract).
- */
 import { routes } from "@mpf/finance-contract";
 
 import * as agentStore from "../../domain/agentStore";
@@ -19,12 +14,10 @@ const chatLinkDto = (identity: channelLinks.ChannelIdentity) => ({
 });
 
 export interface ChatLinkSettings {
-  /** Config `TELEGRAM_BOT_USERNAME`, without `@`. */
   telegramBotUsername?: string;
 }
 
 export function chatLinkOperations(settings: ChatLinkSettings) {
-  // The configured bots, by channel (`botUsernames` in the contract): fixed for the process.
   const botUsernames: Record<string, string> = settings.telegramBotUsername ? { telegram: settings.telegramBotUsername } : {};
   return {
     list: operation(routes.chatLinks.list, async (tx, user) => {
@@ -35,7 +28,6 @@ export function chatLinkOperations(settings: ChatLinkSettings) {
     }),
 
     createCode: operation(routes.chatLinks.createCode, async (tx, user, input) => {
-      // Generated per attempt: a rerun of the transaction stores (and returns) a fresh code.
       const code = channelLinks.generateLinkCode();
       const { expiresAt } = await channelLinks.storeLinkCode(tx, user.userId, {
         channel: input.channel,

@@ -1,4 +1,3 @@
-/** User profile (base currency, onboarding state), ported from `packages/backend/convex/domain/userProfiles.ts`. */
 import { eq } from "drizzle-orm";
 
 import { userProfiles } from "../db/schema";
@@ -7,13 +6,11 @@ import { notFound } from "./errors";
 
 export type UserProfile = typeof userProfiles.$inferSelect;
 
-/** `null` until onboarding creates it. */
 export async function getProfile(tx: Tx, userId: string): Promise<UserProfile | null> {
   const [profile] = await tx.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
   return profile ?? null;
 }
 
-/** Create the profile, or only change its base currency when it exists (the user went back in onboarding). */
 export async function createProfile(tx: Tx, userId: string, args: { baseCurrency: string }): Promise<UserProfile> {
   const [profile] = await tx
     .insert(userProfiles)

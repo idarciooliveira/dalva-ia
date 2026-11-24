@@ -109,22 +109,13 @@ describe("agent pending actions", () => {
     expect(ok(agentPendingActionCreateRequestSchema, { ...create, clientKey: "k".repeat(129) })).toBe(false);
   });
 
-  it("rejects JSON keys Convex can't store (leading $ or _, empty) at any depth", () => {
-    for (const input of [
-      { $set: 1 },
-      { _id: "x" },
-      { "": 1 },
-      { a: { b: [{ $c: 1 }] } },
-      { descrição: 1 }, // Convex field names are printable ASCII
-      { "tab\there": 1 },
-      { ["k".repeat(1025)]: 1 },
-    ]) {
-      expect(ok(agentPendingActionCreateRequestSchema, { ...create, input }), JSON.stringify(input)).toBe(false);
-    }
-    expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: { details: { _x: 1 } } })).toBe(false);
-    expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: [{ $x: 1 }] })).toBe(false);
-    expect(ok(agentPendingActionCreateRequestSchema, { ...create, input: { a: { "b-c": [1, "$ok", { d_: null }] } } })).toBe(true);
-    // Too deep.
+  it("accepts any JSON keys and nesting within the byte limit", () => {
+    const input = { $set: 1, _id: "x", "": 1, descrição: { a: [{ $c: 1 }] } };
+    expect(ok(agentPendingActionCreateRequestSchema, { ...create, input })).toBe(true);
+    expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: [{ $x: 1 }] })).toBe(true);
+  });
+
+  it("rejects JSON nested deeper than 12 levels", () => {
     let deep: unknown = 1;
     for (let i = 0; i < 20; i++) deep = { a: deep };
     expect(ok(agentPendingActionCompleteRequestSchema, { id: "p1", status: "failed", result: deep })).toBe(false);

@@ -12,8 +12,7 @@
     "test": "vitest",
     "test:once": "vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun src/db/migrate-cli.ts",
-    "migrate:convex": "bun scripts/migrate-from-convex.ts"
+    "db:migrate": "bun src/db/migrate-cli.ts"
   },
   "dependencies": {
     "@mpf/finance-contract": "workspace:*",

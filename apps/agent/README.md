@@ -1,6 +1,6 @@
 # @mpf/agent
 
-Telegram bot for DALVA. Bun + Hono, one long-running process. Stateless: events, sessions and messages live in the backend, reached only through `@mpf/finance-contract` (never Convex directly).
+Telegram bot for DALVA. Bun + Hono, one long-running process. Stateless: events, sessions and messages live in the backend, reached only through `@mpf/finance-contract`.
 
 ## Env
 
@@ -12,7 +12,7 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 | `TELEGRAM_MODE` | `webhook` (prod) or `polling` (local dev) |
 | `TELEGRAM_WEBHOOK_SECRET` | Webhook mode only. 32-256 chars `[A-Za-z0-9_-]`, also passed as `secret_token` to `setWebhook` |
 | `TELEGRAM_BOT_USERNAME` | Without `@`; commands addressed to other bots are ignored |
-| `FINANCE_API_URL` | Finance API origin (Convex site URL, or `apps/api`) |
+| `FINANCE_API_URL` | Finance API origin (`apps/api`) |
 | `FINANCE_API_SERVICE_KEY` | Same as the backend's `FINANCE_API_SERVICE_KEY` |
 | `PORT` | Default `8080` |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error`, default `info` |
@@ -35,7 +35,7 @@ bun run setup   # apps/api/.env.local with the service key, creates .env if miss
 bun run dev     # or bun run dev:agent with the API already running
 ```
 
-`dev:agent` runs the bot against the local `apps/api`: it takes `FINANCE_API_URL` (`http://localhost:$PORT`) and `FINANCE_API_SERVICE_KEY` from `apps/api/.env.local`, over the agent's own env files. `bun run dev:agent:convex` uses the agent's env files instead (a Convex deployment in `FINANCE_API_URL`).
+`dev:agent` runs the bot against the local `apps/api`: it takes `FINANCE_API_URL` (`http://localhost:$PORT`) and `FINANCE_API_SERVICE_KEY` from `apps/api/.env.local`, over the agent's own env files.
 
 Polling calls `deleteWebhook` first (pending updates are kept), so don't point a dev bot at a production webhook. Use a separate bot for dev.
 
@@ -134,6 +134,6 @@ docker build -f apps/agent/Dockerfile -t dalva-agent .
 docker run --env-file apps/agent/.env -p 8080:8080 dalva-agent
 ```
 
-Production runs the GHCR image from `deploy/agent/docker-compose.yml` until cutover, then from the full stack in `deploy/docker-compose.yml` (see `docs/deploy.md`).
+Production runs the GHCR image in the compose stack, `deploy/docker-compose.yml` (see `docs/deploy.md`).
 
 Build from the repo root: the image bundles the service with `@mpf/finance-contract` into one file and runs it on distroless Bun as a non-root user.

@@ -23,11 +23,7 @@ import {
 } from "./primitives";
 
 /*
- * Field names, enums and optionality mirror packages/backend/convex/schema.ts
- * and the domain layer. Differences are deliberate and noted inline:
- *  - ids are opaque strings (`id`, not `_id`)
- *  - every amount is `Money` (minor units + currency) instead of a bare number
- *  - optional fields are omitted, never null
+ * Optional fields are omitted, never null.
  *
  * Currency rules (the domain stores bare numbers, so the server fills these in):
  *  - account balances and transactions use the account's currency
@@ -35,21 +31,10 @@ import {
  *  - a request `Money.currency` that differs from the target account's currency
  *    is rejected with `validation_failed`; there is no cross-currency conversion,
  *    so transfers between accounts of different currencies are rejected too
- *
- * Transfer legs and rows owned by goal contributions or debt payments are
- * visible in transaction searches but must be changed through their own
- * endpoints; `transactions.update` / `transactions.delete` on them returns `conflict`.
- *
- * Response dates are plain strings: the domain does not validate stored dates,
- * and one legacy row must not make a whole list fail. Request dates are strict.
  */
 
-/** Dates in responses (see note above). Requests use `isoDateSchema`. */
+/** Response dates are plain strings so one legacy row can't fail a whole list. Requests use `isoDateSchema`. */
 const responseDate = z.string();
-
-/* -------------------------------------------------------------------------- */
-/*  Enums                                                                     */
-/* -------------------------------------------------------------------------- */
 
 export const accountTypeSchema = z.enum(["bank", "savings", "credit_card", "cash", "e_wallet", "loan", "investment"]);
 export const categoryTypeSchema = z.enum(["income", "expense"]);
@@ -58,14 +43,8 @@ export const transactionTypeSchema = z.enum(["income", "expense", "adjustment", 
 export const writableTransactionTypeSchema = z.enum(["income", "expense", "adjustment"]);
 export const debtTypeSchema = z.enum(["credit_card", "loan", "mortgage", "student_loan", "personal_loan", "other"]);
 
-/* -------------------------------------------------------------------------- */
-/*  Helpers                                                                   */
-/* -------------------------------------------------------------------------- */
-
-/** Query-string friendly boolean: accepts `true|false` or "true"|"false". */
 const queryBoolean = z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]);
 
-/** Query-string friendly bounded integer: accepts 12 or "12". */
 const queryInt = (min: number, max: number) =>
   z
     .union([z.number(), z.string().regex(/^-?\d+$/).transform(Number)])
@@ -84,10 +63,6 @@ const deleted = <T extends z.ZodType>(id: T) => z.object({ id });
 const hasChangesBesidesId = (value: Record<string, unknown>) =>
   Object.entries(value).some(([key, v]) => key !== "id" && v !== undefined);
 const NO_CHANGES = "Provide at least one field to change";
-
-/* -------------------------------------------------------------------------- */
-/*  Models                                                                    */
-/* -------------------------------------------------------------------------- */
 
 export const accountSchema = z.object({
   id: accountIdSchema,
@@ -209,10 +184,6 @@ export const debtPaymentSchema = z.object({
   liabilityTransactionId: transactionIdSchema.optional(),
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Reads: accounts, categories                                               */
-/* -------------------------------------------------------------------------- */
-
 export const accountsListRequestSchema = z.strictObject({ includeArchived });
 export const accountsListResponseSchema = list(accountSchema);
 export const accountGetRequestSchema = z.strictObject({ id: accountIdSchema });
@@ -226,10 +197,6 @@ export const subcategoriesListRequestSchema = z.strictObject({
   includeArchived,
 });
 export const subcategoriesListResponseSchema = list(subcategorySchema);
-
-/* -------------------------------------------------------------------------- */
-/*  Reads: transactions and reports                                           */
-/* -------------------------------------------------------------------------- */
 
 export const transactionsSearchRequestSchema = z
   .strictObject({
@@ -300,10 +267,6 @@ export const netWorthResponseSchema = z.object({
   netWorth: moneySchema,
 });
 
-/* -------------------------------------------------------------------------- */
-/*  Reads: goals and debts                                                    */
-/* -------------------------------------------------------------------------- */
-
 export const goalsListRequestSchema = z.strictObject({ includeArchived });
 export const goalsListResponseSchema = list(goalSchema);
 export const goalGetRequestSchema = z.strictObject({ id: goalIdSchema });
@@ -335,10 +298,6 @@ export const debtSummaryResponseSchema = z.object({
 });
 export const debtPaymentsListRequestSchema = z.strictObject({ debtId: debtIdSchema });
 export const debtPaymentsListResponseSchema = list(debtPaymentSchema);
-
-/* -------------------------------------------------------------------------- */
-/*  Writes: transactions                                                      */
-/* -------------------------------------------------------------------------- */
 
 export const transactionCreateRequestSchema = z
   .strictObject({
@@ -372,8 +331,7 @@ export const transactionGetResponseSchema = z.object({
 
 /**
  * Partial update; omitted fields are unchanged. `null` clears `subcategoryId`,
- * `description`, `note` and `payee` (additive: the Convex HTTP API treats
- * `null` as omitted). The sign rule for `amount` depends on the transaction's
+ * `description`, `note` and `payee`. The sign rule for `amount` depends on the transaction's
  * effective type, so the server enforces it (positive unless the result is an
  * adjustment).
  */
@@ -405,10 +363,6 @@ export const transactionUpdateRequestSchema = z
 export const transactionDeleteRequestSchema = z.strictObject({ id: transactionIdSchema });
 export const transactionDeleteResponseSchema = deleted(transactionIdSchema);
 
-/* -------------------------------------------------------------------------- */
-/*  Writes: transfers                                                         */
-/* -------------------------------------------------------------------------- */
-
 export const transferCreateRequestSchema = z
   .strictObject({
     amount: positiveMoneySchema,
@@ -432,7 +386,7 @@ export const transferGetRequestSchema = z.strictObject({ id: transactionIdSchema
 
 /**
  * `id` may be either leg of the transfer. `null` clears `description` and
- * `note` on both legs (additive: the Convex HTTP API treats `null` as omitted).
+ * `note` on both legs.
  */
 export const transferUpdateRequestSchema = z
   .strictObject({
@@ -455,10 +409,6 @@ export const transferUpdateRequestSchema = z
 export const transferDeleteRequestSchema = z.strictObject({ id: transactionIdSchema });
 export const transferDeleteResponseSchema = deleted(transactionIdSchema);
 
-/* -------------------------------------------------------------------------- */
-/*  Writes: accounts, goal contributions, debt payments                       */
-/* -------------------------------------------------------------------------- */
-
 /** Signed delta applied to the balance; recorded as an `adjustment` transaction. */
 export const accountAdjustRequestSchema = z.strictObject({
   id: accountIdSchema,
@@ -468,12 +418,6 @@ export const accountAdjustRequestSchema = z.strictObject({
   note: noteField.optional(),
 });
 export const accountAdjustResponseSchema = z.object({ account: accountSchema });
-
-/*
- * Account management and the user profile: web-only routes (`webOnly` in
- * routes.ts). Chat tokens can't call them and they are not pending-action
- * operations.
- */
 
 const accountName = shortText(100);
 /** Visual theme id or Lucide icon name, as chosen in the app. */
@@ -532,11 +476,6 @@ export const profileCreateResponseSchema = z.object({ profile: profileSchema });
 export const profileCompleteOnboardingRequestSchema = z.strictObject({});
 export const profileCompleteOnboardingResponseSchema = z.object({ profile: profileSchema });
 
-/*
- * Category and subcategory management, default categories: web-only routes
- * (`webOnly` in routes.ts), like account management.
- */
-
 /** Names are trimmed; blank is `validation_failed`. Not unique: two categories may share a name. */
 const categoryName = z.string().trim().min(1).max(100);
 /** Lucide icon name or color (hex, e.g. "#9FE870"), as chosen in the app. Trimmed, non-blank. */
@@ -576,8 +515,7 @@ export const categoryRestoreResponseSchema = categoryResponse;
 
 /**
  * Deletes the category and its subcategories for good, even while transactions
- * use them (archive to keep them). Those transactions become uncategorised;
- * the Convex backend leaves their ids pointing at the deleted rows.
+ * use them (archive to keep them). Those transactions become uncategorised.
  */
 export const categoryDeleteRequestSchema = z.strictObject({ id: categoryIdSchema });
 export const categoryDeleteResponseSchema = deleted(categoryIdSchema);
@@ -590,15 +528,13 @@ export const defaultCategorySchema = z.object({
   color: z.string(),
 });
 
-/** What onboarding offers, in this order (also the seeded `sortOrder`). Both backends serve and seed this list. */
+/** What onboarding offers, in this order (also the seeded `sortOrder`). */
 export const DEFAULT_CATEGORIES: Array<z.input<typeof defaultCategorySchema>> = [
-  // Income
   { name: "Salary", type: "income", icon: "banknote", color: "#2F5711" },
   { name: "Freelance / Side Income", type: "income", icon: "laptop", color: "#4A7C23" },
   { name: "Investments", type: "income", icon: "trending-up", color: "#1A6B3C" },
   { name: "Gifts", type: "income", icon: "gift", color: "#7C3AED" },
   { name: "Other Income", type: "income", icon: "plus-circle", color: "#6B7280" },
-  // Expense
   { name: "Food & Dining", type: "expense", icon: "utensils", color: "#F97316" },
   { name: "Transport", type: "expense", icon: "car", color: "#3B82F6" },
   { name: "Housing & Rent", type: "expense", icon: "home", color: "#8B5CF6" },
@@ -641,14 +577,13 @@ export const subcategoryArchiveResponseSchema = subcategoryResponse;
 export const subcategoryRestoreRequestSchema = z.strictObject({ id: subcategoryIdSchema });
 export const subcategoryRestoreResponseSchema = subcategoryResponse;
 
-/** For good, even while transactions use it: they keep the category and lose the subcategory (Convex: stale id). */
+/** For good, even while transactions use it: they keep the category and lose the subcategory. */
 export const subcategoryDeleteRequestSchema = z.strictObject({ id: subcategoryIdSchema });
 export const subcategoryDeleteResponseSchema = deleted(subcategoryIdSchema);
 
 /*
- * Goal and debt management: web-only routes (`webOnly` in routes.ts), like
- * account management. Amounts are in the user's base currency; a linked
- * account must be in it too. Fields can be changed, not cleared.
+ * Amounts are in the user's base currency; a linked account must be in it
+ * too. Fields can be changed, not cleared.
  */
 
 /** Zero or more. */
@@ -820,10 +755,6 @@ export const debtPaymentRecordResponseSchema = z.object({ payment: debtPaymentSc
 export const debtPaymentRemoveRequestSchema = z.strictObject({ id: debtPaymentIdSchema });
 export const debtPaymentRemoveResponseSchema = deleted(debtPaymentIdSchema);
 
-/* -------------------------------------------------------------------------- */
-/*  Channels (service routes: called by the chat agent with the service key)  */
-/* -------------------------------------------------------------------------- */
-
 export const channelSchema = z.enum(["telegram"]);
 /** Scopes a channel identity stores (the user can switch `finance:write` off). */
 export const channelScopeSchema = z.enum(["finance:read", "finance:write"]);
@@ -897,8 +828,7 @@ export const channelIdentityUnlinkRequestSchema = z.strictObject({
 export const channelIdentityUnlinkResponseSchema = deleted(channelIdentityIdSchema);
 
 /*
- * Chat links from the web app (Settings → Telegram): web-only user routes.
- * They take no `Idempotency-Key` (`idempotent: false` in routes.ts): a stored
+ * Chat links take no `Idempotency-Key` (`idempotent: false` in routes.ts): a stored
  * replay of `createCode` would keep the raw code, and the rest are safe to
  * repeat (a second unlink is `not_found`).
  */
@@ -956,10 +886,6 @@ export const chatLinkSetReadOnlyResponseSchema = z.object({ link: chatLinkSchema
 export const chatHistoryDeleteRequestSchema = z.strictObject({});
 export const chatHistoryDeleteResponseSchema = z.object({ deleted: z.literal(true) });
 
-/* -------------------------------------------------------------------------- */
-/*  Agent store: inbound events (service key) and conversation state (token)  */
-/* -------------------------------------------------------------------------- */
-
 /** Largest stored inbound event payload, in UTF-8 bytes. */
 export const AGENT_EVENT_PAYLOAD_MAX_BYTES = 32 * 1024;
 /** Largest stored message `content`, in UTF-8 bytes. */
@@ -988,33 +914,16 @@ const jsonString = (maxBytes: number) =>
 
 const MAX_JSON_DEPTH = 12;
 
-/**
- * Free-form JSON travels through Convex function arguments, which reject
- * object keys that are empty, start with `$` or `_`, are longer than 1024
- * characters or hold anything but printable ASCII, and deep nesting.
- * Refuse those up front so they are `validation_failed`, not an internal error.
- */
-const isStorableKey = (key: string) =>
-  key.length > 0 && key.length <= 1024 && !key.startsWith("$") && !key.startsWith("_") && /^[\x20-\x7E]+$/.test(key);
-
-function isStorableJson(value: unknown, depth = 0): boolean {
+function withinJsonDepth(value: unknown, depth = 0): boolean {
   if (depth > MAX_JSON_DEPTH) return false;
-  if (Array.isArray(value)) return value.every((item) => isStorableJson(item, depth + 1));
-  if (typeof value === "object" && value !== null) {
-    const entries = Object.entries(value);
-    return (
-      entries.length <= 1024 &&
-      entries.every(([key, item]) => isStorableKey(key) && isStorableJson(item, depth + 1))
-    );
-  }
-  return true;
+  if (typeof value !== "object" || value === null) return true;
+  return Object.values(value).every((item) => withinJsonDepth(item, depth + 1));
 }
 
-/** A JSON value (see `isStorableJson`) whose serialized form is at most `maxBytes`. */
 const boundedJson = <T extends z.ZodType>(schema: T, maxBytes: number) =>
   schema
     .refine((value) => utf8Bytes(JSON.stringify(value) ?? "") <= maxBytes, `Must serialize to at most ${maxBytes} bytes`)
-    .refine(isStorableJson, "Object keys must be printable ASCII, not start with $ or _, and nesting must be at most 12 levels");
+    .refine(withinJsonDepth, `Nesting must be at most ${MAX_JSON_DEPTH} levels`);
 
 /** Platform event id (Telegram `update_id`). */
 const agentEventIdSchema = z.string().regex(/^[A-Za-z0-9_:-]{1,128}$/, "Invalid event id");
@@ -1132,7 +1041,6 @@ export const agentMessagesAppendResponseSchema = z.object({ items: z.array(agent
 /**
  * Operations a pending action can carry: the user-route writes on finance data,
  * except account management and the profile (web only).
- * `routes.test.ts` checks this list against the route map.
  */
 export const agentActionOperationSchema = z.enum([
   "accounts.adjust",
@@ -1212,10 +1120,6 @@ export const agentPendingActionCompleteResponseSchema = agentPendingActionRespon
 /** Delete the user's sessions, messages and pending actions, for every channel. */
 export const agentHistoryDeleteRequestSchema = z.strictObject({});
 export const agentHistoryDeleteResponseSchema = z.object({ deleted: z.literal(true) });
-
-/* -------------------------------------------------------------------------- */
-/*  Inferred types                                                            */
-/* -------------------------------------------------------------------------- */
 
 export type Account = z.output<typeof accountSchema>;
 export type Profile = z.output<typeof profileSchema>;

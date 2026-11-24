@@ -1,18 +1,3 @@
-/**
- * Retention jobs, in-process (croner). The Convex crons
- * (`packages/backend/convex/crons.ts`), same data and cadence:
- * - idempotency keys older than 7 days, daily
- * - expired channel link codes (used or not), hourly
- * - inbound agent events 24h after their last update (they hold message text), hourly
- * - pending actions past `expiresAt` become `expired`, every 15 minutes
- * - agent sessions inactive for 30 days (with messages and actions), and
- *   actions of that age, daily
- *
- * Each step deletes or updates one batch per statement and repeats until a
- * batch comes back short. A job runs on one connection that holds a Postgres
- * advisory lock, so two API instances never run the same job at once; one
- * that finds it locked skips that run.
- */
 import { Cron } from "croner";
 
 import type { Database } from "../db/client";
@@ -22,21 +7,15 @@ import { purgeExpiredIdempotencyKeys } from "../http/idempotency";
 import { errorFields, type Logger } from "../log";
 import { withAdvisoryLock } from "./lock";
 
-/**
- * One batch: rows deleted or updated (fewer than `batch` means done). `db` is
- * the job's locked connection: single statements only, no transactions.
- */
 type Step = (db: Database, now: Date, batch: number) => Promise<number>;
 
 export interface RetentionJob {
   name: string;
-  /** Cron pattern, UTC. */
   schedule: string;
   batch: number;
   steps: Step[];
 }
 
-/** A step that keeps coming back full after this many batches is stopped until the next run. */
 const MAX_BATCHES_PER_STEP = 1_000;
 
 export const RETENTION_JOBS: RetentionJob[] = [
@@ -67,7 +46,6 @@ export const RETENTION_JOBS: RetentionJob[] = [
   {
     name: "purge_agent_history",
     schedule: "47 3 * * *",
-    // Sessions cascade to up to 500 messages each: keep the session batch small.
     batch: 50,
     steps: [purgeInactiveSessions, purgeStaleActions],
   },
@@ -75,11 +53,6 @@ export const RETENTION_JOBS: RetentionJob[] = [
 
 export type JobResult = { status: "done"; rows: number } | { status: "skipped" };
 
-/**
- * Run one job now: every step until a batch comes back short, under the job's
- * advisory lock. An aborted `signal` stops it after the current batch (the
- * next run picks up the rest).
- */
 export async function runJob(db: Database, job: RetentionJob, now = new Date(), signal?: AbortSignal): Promise<JobResult> {
   const result = await withAdvisoryLock(db, `dalva:job:${job.name}`, async (lockedDb) => {
     let rows = 0;
@@ -97,11 +70,9 @@ export async function runJob(db: Database, job: RetentionJob, now = new Date(), 
 }
 
 export interface JobScheduler {
-  /** Stop scheduling, let runs in progress finish their current batch, and wait for them. */
   stop(): Promise<void>;
 }
 
-/** Schedule `jobs` (default: all). A run still going when its next one is due is not doubled (`protect`). */
 export function startRetentionJobs(db: Database, logger: Logger, jobs: RetentionJob[] = RETENTION_JOBS): JobScheduler {
   const running = new Set<Promise<unknown>>();
   const stopping = new AbortController();
