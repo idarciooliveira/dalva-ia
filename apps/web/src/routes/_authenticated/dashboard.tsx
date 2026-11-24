@@ -12,10 +12,8 @@ import { BudgetSummaryCard } from "@/components/dashboard/budget-summary-card";
 import { GoalsProgressCard } from "@/components/dashboard/goals-progress-card";
 import { DebtPaydownCard } from "@/components/dashboard/debt-paydown-card";
 import { cardStatus } from "@/components/dashboard/card-error";
-import { accountsQuery, categoriesQuery } from "@/lib/api/queries";
+import { accountsQuery, categoriesQuery, debtSummaryQuery, goalsQuery } from "@/lib/api/queries";
 import {
-  dashboardGoalsQuery,
-  debtSummaryQuery,
   netWorthQuery,
   recentTransactionsQuery,
   transactionSummaryQuery,
@@ -57,7 +55,7 @@ function DashboardPage() {
   const recentResult = useQuery({ ...recentTransactionsQuery(currentMonth), enabled: summaryFailed });
   const recentSource = summaryFailed ? recentResult : summaryResult;
   const netWorthResult = useQuery(netWorthQuery());
-  const goalsResult = useQuery(dashboardGoalsQuery());
+  const goalsResult = useQuery(goalsQuery());
   const debtsResult = useQuery(debtSummaryQuery());
 
   const summary = summaryResult.data;

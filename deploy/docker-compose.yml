@@ -108,6 +108,8 @@ services:
       FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
       CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
       LOG_LEVEL: ${API_LOG_LEVEL:-info}
+      # Settings → Telegram links to the bot with it.
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?set TELEGRAM_BOT_USERNAME}
     healthcheck:
       # Distroless image: no curl or shell, so use bun. 503 while Postgres doesn't answer.
       test:

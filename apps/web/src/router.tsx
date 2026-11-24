@@ -4,8 +4,7 @@ import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query
 import { routeTree } from "./routeTree.gen";
 
 import { queryKeys } from "@/lib/api/keys";
-import { isApiError, isTransientError, LegacyBackendError } from "@/lib/api/errors";
-import { isLegacyConvexKey, LegacyConvexProvider } from "@/lib/legacy-convex";
+import { isApiError, isTransientError } from "@/lib/api/errors";
 import { resetDataOnUserChange } from "@/lib/auth-client";
 
 export function getRouter() {
@@ -20,9 +19,8 @@ export function getRouter() {
     mutationCache: new MutationCache({ onError }),
     defaultOptions: {
       queries: {
-        // Every API query sets its own queryFn. Only the legacy Convex keys land here.
+        // Every query sets its own queryFn.
         queryFn: ({ queryKey }) => {
-          if (isLegacyConvexKey(queryKey)) throw new LegacyBackendError();
           throw new Error(`No queryFn for ${JSON.stringify(queryKey)}`);
         },
         // No live updates until SSE (after cutover): writes invalidate what they change,
@@ -46,7 +44,6 @@ export function getRouter() {
     defaultPreload: "intent",
     context: { queryClient },
     scrollRestoration: true,
-    Wrap: ({ children }) => <LegacyConvexProvider>{children}</LegacyConvexProvider>,
   });
 
   setupRouterSsrQueryIntegration({ router, queryClient });

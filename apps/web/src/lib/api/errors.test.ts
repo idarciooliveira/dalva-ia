@@ -2,7 +2,7 @@ import { FinanceApiError } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
 import { SessionError } from "../auth-client";
-import { apiErrorMessage, GENERIC_ERROR, isTransientError, LegacyBackendError, OFFLINE_ERROR } from "./errors";
+import { apiErrorMessage, GENERIC_ERROR, isTransientError, OFFLINE_ERROR } from "./errors";
 
 const err = (code: FinanceApiError["code"], message = "Server says", status: number | null = 400, details?: unknown) =>
   new FinanceApiError(code, message, status, details);
@@ -19,7 +19,6 @@ describe("apiErrorMessage", () => {
     expect(apiErrorMessage(err("invalid_response", "HTTP 500", 500))).toBe(OFFLINE_ERROR);
     expect(apiErrorMessage(err("forbidden", "Forbidden", 403))).toBe(GENERIC_ERROR);
     expect(apiErrorMessage(new Error("x"))).toBe(GENERIC_ERROR);
-    expect(apiErrorMessage(new LegacyBackendError())).toMatch(/moving to the new backend/);
     expect(apiErrorMessage(new TypeError("Failed to fetch"))).toBe(OFFLINE_ERROR);
     expect(apiErrorMessage(new SessionError(502))).toBe(OFFLINE_ERROR);
   });
@@ -33,7 +32,6 @@ describe("isTransientError", () => {
     expect(isTransientError(err("invalid_response", "x", 200))).toBe(false);
     expect(isTransientError(err("validation_failed"))).toBe(false);
     expect(isTransientError(err("unauthorized", "x", 401))).toBe(false);
-    expect(isTransientError(new LegacyBackendError())).toBe(false);
     // The session check: no answer, or the proxy without the API.
     expect(isTransientError(new TypeError("Failed to fetch"))).toBe(true);
     expect(isTransientError(new SessionError(502))).toBe(true);

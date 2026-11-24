@@ -1,4 +1,8 @@
+import { randomBytes } from "node:crypto";
+
 import { defineConfig, devices } from "@playwright/test";
+
+import { E2E_BOT_USERNAME } from "./e2e/helpers/stack";
 
 /**
  * Playwright E2E test configuration for @mpf/web.
@@ -12,11 +16,17 @@ import { defineConfig, devices } from "@playwright/test";
  * (`bun run dev` holds the defaults). Servers already listening are never reused:
  * the run would hit the dev database, or a proxy pointing at another API.
  *
+ * The API gets a service key made here (`E2E_FINANCE_API_SERVICE_KEY`): the
+ * workers inherit it and call the bot's service routes with it (settings.spec.ts).
+ *
  * @see https://playwright.dev/docs/test-configuration
  */
 const webPort = Number(process.env.E2E_WEB_PORT || 3000);
 const apiPort = Number(process.env.E2E_API_PORT || 4000);
 const webOrigin = `http://localhost:${webPort}`;
+// Set once, in the runner: the workers load this file again and must keep the same key.
+process.env.E2E_FINANCE_API_SERVICE_KEY ||= randomBytes(32).toString("hex");
+process.env.E2E_API_URL ||= `http://127.0.0.1:${apiPort}`;
 export default defineConfig({
   testDir: "./e2e",
   /* Run tests in files in parallel */
@@ -62,6 +72,8 @@ export default defineConfig({
       env: {
         PORT: String(apiPort),
         PUBLIC_URL: webOrigin,
+        E2E_FINANCE_API_SERVICE_KEY: process.env.E2E_FINANCE_API_SERVICE_KEY,
+        TELEGRAM_BOT_USERNAME: E2E_BOT_USERNAME,
         ...(process.env.E2E_DATABASE_URL ? { E2E_DATABASE_URL: process.env.E2E_DATABASE_URL } : {}),
       },
       reuseExistingServer: false,

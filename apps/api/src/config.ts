@@ -45,6 +45,16 @@ const configSchema = z
       .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder")
       .optional(),
     /**
+     * The chat bot's Telegram username, `@` optional. Settings → Telegram gets
+     * it with the chat links to open `t.me/<bot>?start=<code>`; unset, the page
+     * shows only the `/start <code>` message to send. Same value as the agent's.
+     */
+    TELEGRAM_BOT_USERNAME: z
+      .string()
+      .transform((value) => value.replace(/^@/, ""))
+      .pipe(z.string().regex(/^[A-Za-z0-9_]{5,32}$/, "must be a Telegram username"))
+      .optional(),
+    /**
      * Request header the proxy in front sets to the client's address (e.g.
      * cf-connecting-ip behind Cloudflare Tunnel). Auth rate limits are per
      * address and stay off without it: with no address every user would

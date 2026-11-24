@@ -19,7 +19,7 @@ Only the agent and cloudflared reach the internet. Postgres, API, web and backup
 `.github/workflows/images.yml` builds each image when its inputs changed since the last successful run. After the first merge, run it once by hand (Actions → Images → Run workflow on `main`) so all three images exist. Pull requests build only. Pushes to `main` publish `:<short-sha>` and `:latest`. A manual run (Actions → Images → Run workflow) builds all three; from another branch it publishes only `:<short-sha>`.
 
 - `dalva-api`: bundled server plus the migration runner and `apps/api/drizzle`. `bun main.js` serves; `bun src/db/migrate.js` migrates and exits.
-- `dalva-web`: the SPA built with Bun, served by Caddy (`apps/web/Caddyfile`). `VITE_TELEGRAM_BOT_USERNAME` is build-time: set the repo variable `TELEGRAM_BOT_USERNAME` (Settings → Secrets and variables → Actions → Variables) and re-run the workflow after changing it.
+- `dalva-web`: the SPA built with Bun, served by Caddy (`apps/web/Caddyfile`). No build-time settings: the bot username comes from the API's `TELEGRAM_BOT_USERNAME`.
 - `dalva-agent`: unchanged name, tags and triggers.
 
 `.github/workflows/stack.yml` runs on pull requests that touch `deploy/**`, a Dockerfile, the Caddyfile or migrations: it builds the three images, starts the stack on an empty database without cloudflared and runs `deploy/smoke.sh`.
@@ -43,7 +43,7 @@ Generate secrets with `openssl rand -hex 32`. Hex matters: the Postgres password
 | `FINANCE_API_TOKEN_SECRET` | Generate. Signs the agent's user tokens. |
 | `FINANCE_API_SERVICE_KEY` | Generate. The agent's service key; compose gives the same value to API and agent. |
 | `CLIENT_IP_HEADER` | `cf-connecting-ip`. Auth rate limits key on it. |
-| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` | From BotFather. |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` | From BotFather. The API serves the username to Settings → Telegram; the agent uses both. |
 | `TELEGRAM_WEBHOOK_SECRET` | Generate. Also used by `telegram:webhook:set`. |
 | `AI_PROVIDER`, `AGENT_MODEL`, `AI_GATEWAY_API_KEY` / `OPENROUTER_API_KEY` | Model provider, as in the legacy agent. |
 | `TUNNEL_TOKEN` | Cloudflare Tunnel token. |
@@ -301,7 +301,7 @@ The service key must be identical in Convex and in the agent.
 
 | Var | |
 | --- | --- |
-| `VITE_TELEGRAM_BOT_USERNAME` | Bot username, no `@`. Build-time: redeploy after changing it. Without it Settings shows only the `/start` fallback. |
+| `VITE_TELEGRAM_BOT_USERNAME` | Bot username, no `@`. Build-time: redeploy after changing it. Without it Settings shows only the `/start` fallback. Production web on `legacy-convex` only. |
 
 #### Agent (stack env, see `deploy/agent/.env.example`)
 

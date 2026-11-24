@@ -21,10 +21,9 @@ RUN bun install --frozen-lockfile --filter '@mpf/web' --ignore-scripts
 COPY tsconfig.json ./
 COPY packages packages
 COPY apps/web apps/web
-# Build-time: Vite inlines VITE_* into the bundle. Changing one means a new image.
-ARG VITE_TELEGRAM_BOT_USERNAME=""
+# No build-time settings: the SPA reads everything (bot username included) from the API.
 WORKDIR /repo/apps/web
-RUN VITE_TELEGRAM_BOT_USERNAME="${VITE_TELEGRAM_BOT_USERNAME}" bun --bun run build
+RUN bun --bun run build
 
 # ---- runtime: Caddy, non-root, read-only friendly ----
 FROM caddy:2.11.9-alpine AS runtime

@@ -1,18 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { convexQuery, useConvexMutation } from "@convex-dev/react-query";
-import { api } from "@mpf/backend/convex/_generated/api";
-import type { Doc } from "@mpf/backend/convex/_generated/dataModel";
-import { CreditCard, Edit, Plus, Trash2, Undo2 } from "lucide-react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { RouteOutput, UserRoutes } from "@mpf/finance-contract";
+import { Archive, CreditCard, Plus } from "lucide-react";
 import { useState } from "react";
 
 import { DebtCard } from "@/components/debts/debt-card";
+import { DebtDetailDialog } from "@/components/debts/debt-detail-dialog";
 import { DebtFormDialog } from "@/components/debts/debt-form-dialog";
 import { DebtPaymentDialog } from "@/components/debts/debt-payment-dialog";
+import { ErrorState } from "@/components/error-state";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ProgressBar } from "@/components/ui/progress-bar";
-import { formatCurrency, formatDate } from "@/lib/format";
+import { useRetained } from "@/hooks/use-retained";
+import { debtSummaryQuery, debtsQuery } from "@/lib/api/queries";
+import { formatMinor } from "@/lib/money";
 
 export const Route = createFileRoute("/_authenticated/debts")({
   component: DebtsPage,
@@ -29,88 +29,91 @@ function DebtsPage() {
 }
 
 function DebtsContent() {
+  const [showArchived, setShowArchived] = useState(false);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
-  const [editDebt, setEditDebt] = useState<Doc<"debts"> | null>(null);
-  const [paymentDebt, setPaymentDebt] = useState<Doc<"debts"> | null>(null);
-  const [detailDebt, setDetailDebt] = useState<Doc<"debts"> | null>(null);
+  // Ids, not rows: the dialogs show the debt as the list has it now (after a payment, an edit).
+  const [editDebtId, setEditDebtId] = useState<string | null>(null);
+  const [paymentDebtId, setPaymentDebtId] = useState<string | null>(null);
+  const [detailDebtId, setDetailDebtId] = useState<string | null>(null);
 
-  const { data: debts, isLoading } = useQuery(convexQuery(api.debts.listDebts, {}));
+  const debtsResult = useQuery({
+    ...debtsQuery({ includeArchived: showArchived }),
+    placeholderData: keepPreviousData,
+  });
+  // Started with the list, not after it: the summary only shows once the list has debts.
+  const summary = useQuery(debtSummaryQuery());
 
-  const { mutateAsync: archiveDebt } = useMutation({
-    mutationFn: useConvexMutation(api.debts.archiveDebt),
-  });
-  const { mutateAsync: restoreDebt } = useMutation({
-    mutationFn: useConvexMutation(api.debts.restoreDebt),
-  });
-  const { mutateAsync: deleteDebt } = useMutation({
-    mutationFn: useConvexMutation(api.debts.deleteDebt),
-  });
+  const debts = debtsResult.data?.items ?? [];
+  const find = (id: string | null) => (id ? (debts.find((d) => d.id === id) ?? null) : null);
+  const detailDebt = find(detailDebtId);
+  const editDebt = find(editDebtId);
+  const editDebtShown = useRetained(editDebt);
+  const paymentDebt = find(paymentDebtId);
+  const paymentDebtShown = useRetained(paymentDebt);
 
-  if (isLoading) {
+  if (debtsResult.isPending) {
     return <DebtsListSkeleton />;
   }
 
-  const allDebts = debts ?? [];
-
   return (
     <>
-      <div className="mb-4 sm:mb-6">
-        <div className="flex flex-col items-start justify-between gap-3 sm:flex-row sm:gap-4">
-          <div className="min-w-0">
-            <h2 className="font-heading text-xl font-semibold text-foreground sm:text-2xl">Debts</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Track balances, payments, and payoff progress across everything you owe.
-            </p>
-          </div>
-          <Button variant="accent" size="default" className="w-full sm:w-auto sm:shrink-0" onClick={() => setCreateDialogOpen(true)}>
-            <Plus className="mr-1.5 size-4" />
+      <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="font-heading text-xl font-semibold text-foreground sm:text-2xl">Debts</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Track balances, payments, and payoff progress across everything you owe.
+          </p>
+        </div>
+        <div className="flex w-full items-center gap-2 sm:w-auto">
+          <Button
+            variant={showArchived ? "secondary" : "outline"}
+            size="default"
+            onClick={() => setShowArchived(!showArchived)}
+            aria-pressed={showArchived}
+          >
+            <Archive className="mr-1.5 size-4" aria-hidden="true" />
+            Archived
+          </Button>
+          <Button variant="accent" size="default" className="flex-1 sm:flex-none" onClick={() => setCreateDialogOpen(true)}>
+            <Plus className="mr-1.5 size-4" aria-hidden="true" />
             Add debt
           </Button>
         </div>
       </div>
 
-      {allDebts.length === 0 ? (
+      {debtsResult.isError && !debtsResult.data ? (
+        <ErrorState error={debtsResult.error} fallback="Couldn't load your debts." onRetry={() => void debtsResult.refetch()} />
+      ) : debts.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 sm:py-16">
-          <CreditCard className="mb-3 size-10 text-muted-foreground/50" />
+          <CreditCard className="mb-3 size-10 text-muted-foreground/50" aria-hidden="true" />
           <p className="text-sm font-medium text-muted-foreground">No debts yet</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Add a debt to track payoff progress and payment history.
-          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Add a debt to track payoff progress and payment history.</p>
         </div>
       ) : (
-        <div className="grid gap-3 sm:gap-4 sm:grid-cols-2">
-          {allDebts.map((debt) => (
-            <DebtCard key={debt._id} debt={debt} onClick={() => setDetailDebt(debt)} />
-          ))}
-        </div>
+        <>
+          <DebtSummary data={summary.data} />
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+            {debts.map((debt) => (
+              <DebtCard key={debt.id} debt={debt} onClick={() => setDetailDebtId(debt.id)} />
+            ))}
+          </div>
+        </>
       )}
 
       {detailDebt && (
         <DebtDetailDialog
           debt={detailDebt}
-          open={detailDebt !== null}
+          open
           onOpenChange={(open) => {
-            if (!open) setDetailDebt(null);
+            if (!open) setDetailDebtId(null);
           }}
           onEdit={() => {
-            setEditDebt(detailDebt);
-            setDetailDebt(null);
+            setEditDebtId(detailDebt.id);
+            setDetailDebtId(null);
           }}
           onRecordPayment={() => {
-            setPaymentDebt(detailDebt);
-            setDetailDebt(null);
-          }}
-          onArchive={async () => {
-            if (detailDebt.archived) {
-              await restoreDebt({ id: detailDebt._id });
-            } else {
-              await archiveDebt({ id: detailDebt._id });
-            }
-            setDetailDebt(null);
-          }}
-          onDelete={async () => {
-            await deleteDebt({ id: detailDebt._id });
-            setDetailDebt(null);
+            setPaymentDebtId(detailDebt.id);
+            setDetailDebtId(null);
           }}
         />
       )}
@@ -119,151 +122,44 @@ function DebtsContent() {
       <DebtFormDialog
         open={editDebt !== null}
         onOpenChange={(open) => {
-          if (!open) setEditDebt(null);
+          if (!open) setEditDebtId(null);
         }}
-        debt={editDebt}
+        debt={editDebtShown}
       />
       <DebtPaymentDialog
         open={paymentDebt !== null}
         onOpenChange={(open) => {
-          if (!open) setPaymentDebt(null);
+          if (!open) setPaymentDebtId(null);
         }}
-        debt={paymentDebt}
+        debt={paymentDebtShown}
       />
     </>
   );
 }
 
-interface DebtDetailDialogProps {
-  debt: Doc<"debts">;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onEdit: () => void;
-  onRecordPayment: () => void;
-  onArchive: () => void;
-  onDelete: () => void;
-}
+/** Totals of the open (unarchived) debts. Hidden while loading, on error, or with nothing open. */
+function DebtSummary({ data }: { data: RouteOutput<UserRoutes["reports"]["debtSummary"]> | undefined }) {
+  if (!data || data.totalOriginal.amountMinor === 0) return null;
 
-function DebtDetailDialog({
-  debt,
-  open,
-  onOpenChange,
-  onEdit,
-  onRecordPayment,
-  onArchive,
-  onDelete,
-}: DebtDetailDialogProps) {
-  const percentPaid =
-    debt.originalAmount === 0
-      ? 0
-      : Math.round(
-          ((debt.originalAmount - debt.currentBalance) / debt.originalAmount) * 100,
-        );
-
-  const { data: payments } = useQuery(
-    convexQuery(api.debtPayments.listDebtPayments, { debtId: debt._id }),
-  );
-
-  const { mutateAsync: removeDebtPayment } = useMutation({
-    mutationFn: useConvexMutation(api.debtPayments.removeDebtPayment),
-  });
+  const currency = data.totalOriginal.currency;
+  const original = data.totalOriginal.amountMinor;
+  const remaining = data.totalRemaining.amountMinor;
+  const paid = Math.max(0, original - remaining);
+  const tiles = [
+    { label: "Remaining", value: formatMinor(remaining, currency) },
+    { label: "Paid off", value: `${formatMinor(paid, currency)} · ${Math.round((paid / original) * 100)}%` },
+    { label: "Last payment", value: data.recentPayment.amountMinor > 0 ? formatMinor(data.recentPayment.amountMinor, currency) : "None yet" },
+  ];
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md gap-0 overflow-hidden p-0">
-        <DialogHeader className="px-5 pt-5 pb-0">
-          <DialogTitle className="text-lg font-semibold">{debt.name}</DialogTitle>
-          <p className="text-xs text-muted-foreground">
-            {debt.lender ?? "No lender"}
-            {debt.dueDate ? ` - due ${formatDate(debt.dueDate)}` : ""}
-          </p>
-        </DialogHeader>
-
-        <div className="px-5 pt-4 pb-0">
-          <div className="mb-1">
-            <span className="text-2xl font-semibold tabular-nums text-foreground">
-              {percentPaid}%
-            </span>
-          </div>
-          <ProgressBar percent={Math.max(0, Math.min(100, percentPaid))} barColor="bg-wise-positive" className="h-3" />
-          <div className="mt-2 mb-4 flex flex-col gap-1 text-xs text-muted-foreground sm:flex-row sm:justify-between sm:gap-3">
-            <span className="tabular-nums">{formatCurrency(debt.currentBalance)} remaining</span>
-            <span className="tabular-nums sm:text-right">{formatCurrency(debt.originalAmount)} original</span>
-          </div>
-
-          <div className="mb-4 grid gap-2 rounded-lg bg-muted/40 p-3 text-sm">
-            <div className="flex justify-between gap-3">
-              <span className="text-muted-foreground">Type</span>
-              <span className="min-w-0 text-right font-medium text-foreground">{debt.debtType.replaceAll("_", " ")}</span>
-            </div>
-            {debt.minimumPayment !== undefined && (
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">Minimum</span>
-                <span className="min-w-0 text-right font-medium text-foreground">{formatCurrency(debt.minimumPayment)}</span>
-              </div>
-            )}
-            {debt.interestRate !== undefined && (
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">APR</span>
-                <span className="min-w-0 text-right font-medium text-foreground">{debt.interestRate}%</span>
-              </div>
-            )}
-          </div>
-
-          <div className="mb-4 grid gap-2 border-b border-border pb-4 sm:grid-cols-2">
-            <Button variant="accent" className="w-full" onClick={onRecordPayment}>
-              <Plus className="mr-1.5 size-4" />
-              Record payment
-            </Button>
-            <Button variant="outline" className="w-full" onClick={onEdit}>
-              <Edit className="mr-1.5 size-4" />
-              Edit
-            </Button>
-            <Button variant="outline" className="w-full" onClick={onArchive}>
-              <Undo2 className="mr-1.5 size-4" />
-              {debt.archived ? "Restore" : "Archive"}
-            </Button>
-            <Button variant="destructive" className="w-full" onClick={onDelete}>
-              <Trash2 className="mr-1.5 size-4" />
-              Delete
-            </Button>
-          </div>
-
-          <div>
-            <h4 className="mb-3 text-sm font-medium text-muted-foreground">Payment history</h4>
-            {!payments || payments.length === 0 ? (
-              <p className="pb-2 text-xs text-muted-foreground">No payments yet.</p>
-            ) : (
-              <div className="max-h-60 space-y-2 overflow-y-auto pb-2">
-                {payments.map((payment) => (
-                  <div key={payment._id} className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-foreground tabular-nums">
-                        {formatCurrency(payment.amount)}
-                      </p>
-                      <p className="text-xs text-muted-foreground truncate">
-                        {formatDate(payment.date)}
-                        {payment.note ? ` - ${payment.note}` : ""}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="size-8 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-                      onClick={() => void removeDebtPayment({ id: payment._id })}
-                    >
-                      <Trash2 className="size-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+    <dl aria-label="Debt summary" className="mb-4 grid grid-cols-1 gap-2 rounded-2xl border border-border bg-card p-4 sm:mb-6 sm:grid-cols-3 sm:gap-4 sm:p-5">
+      {tiles.map((tile) => (
+        <div key={tile.label} className="flex items-baseline justify-between gap-3 sm:block">
+          <dt className="text-xs text-muted-foreground sm:text-sm">{tile.label}</dt>
+          <dd className="text-base font-semibold tabular-nums text-foreground sm:mt-1 sm:text-lg">{tile.value}</dd>
         </div>
-
-        <div className="h-4" />
-      </DialogContent>
-    </Dialog>
+      ))}
+    </dl>
   );
 }
 

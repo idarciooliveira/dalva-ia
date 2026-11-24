@@ -18,32 +18,44 @@ const chatLinkDto = (identity: channelLinks.ChannelIdentity) => ({
   readOnly: !identity.scopes.includes("finance:write"),
 });
 
-export const chatLinkOperations = {
-  list: operation(routes.chatLinks.list, async (tx, user) => {
-    return { items: (await channelLinks.listActiveForUser(tx, user.userId)).map(chatLinkDto) };
-  }),
+export interface ChatLinkSettings {
+  /** Config `TELEGRAM_BOT_USERNAME`, without `@`. */
+  telegramBotUsername?: string;
+}
 
-  createCode: operation(routes.chatLinks.createCode, async (tx, user, input) => {
-    // Generated per attempt: a rerun of the transaction stores (and returns) a fresh code.
-    const code = channelLinks.generateLinkCode();
-    const { expiresAt } = await channelLinks.storeLinkCode(tx, user.userId, {
-      channel: input.channel,
-      codeHash: channelLinks.hashLinkCode(code),
-      now: new Date(),
-    });
-    return { code, expiresAt: iso(expiresAt) };
-  }),
+export function chatLinkOperations(settings: ChatLinkSettings) {
+  // The configured bots, by channel (`botUsernames` in the contract): fixed for the process.
+  const botUsernames: Record<string, string> = settings.telegramBotUsername ? { telegram: settings.telegramBotUsername } : {};
+  return {
+    list: operation(routes.chatLinks.list, async (tx, user) => {
+      return {
+        items: (await channelLinks.listActiveForUser(tx, user.userId)).map(chatLinkDto),
+        botUsernames,
+      };
+    }),
 
-  unlink: operation(routes.chatLinks.unlink, async (tx, user, input) => {
-    const id = toId(input.id, "id");
-    await channelLinks.unlinkForUser(tx, user.userId, id, new Date());
-    return { id };
-  }),
+    createCode: operation(routes.chatLinks.createCode, async (tx, user, input) => {
+      // Generated per attempt: a rerun of the transaction stores (and returns) a fresh code.
+      const code = channelLinks.generateLinkCode();
+      const { expiresAt } = await channelLinks.storeLinkCode(tx, user.userId, {
+        channel: input.channel,
+        codeHash: channelLinks.hashLinkCode(code),
+        now: new Date(),
+      });
+      return { code, expiresAt: iso(expiresAt) };
+    }),
 
-  setReadOnly: operation(routes.chatLinks.setReadOnly, async (tx, user, input) => {
-    return { link: chatLinkDto(await channelLinks.setReadOnly(tx, user.userId, toId(input.id, "id"), input.readOnly)) };
-  }),
-};
+    unlink: operation(routes.chatLinks.unlink, async (tx, user, input) => {
+      const id = toId(input.id, "id");
+      await channelLinks.unlinkForUser(tx, user.userId, id, new Date());
+      return { id };
+    }),
+
+    setReadOnly: operation(routes.chatLinks.setReadOnly, async (tx, user, input) => {
+      return { link: chatLinkDto(await channelLinks.setReadOnly(tx, user.userId, toId(input.id, "id"), input.readOnly)) };
+    }),
+  };
+}
 
 export const chatHistoryOperations = {
   delete: operation(routes.chatHistory.delete, async (tx, user) => {

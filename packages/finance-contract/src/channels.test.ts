@@ -6,6 +6,7 @@ import {
   channelIdentityUnlinkRequestSchema,
   channelLinkRedeemRequestSchema,
   channelLinkRedeemResponseSchema,
+  chatLinksListResponseSchema,
   linkCodeSchema,
 } from "./schemas";
 
@@ -78,5 +79,17 @@ describe("resolve and unlink", () => {
     });
     expect(resolved.success).toBe(true);
     expect(channelIdentityResolveResponseSchema.safeParse({ token: "t", expiresAt: "x", scopes: [], identity, profile: {} }).success).toBe(true);
+  });
+});
+
+describe("chatLinksListResponseSchema", () => {
+  it("takes bot usernames per channel, optional, partial and open to new channels", () => {
+    expect(chatLinksListResponseSchema.safeParse({ items: [] }).success).toBe(true);
+    expect(chatLinksListResponseSchema.safeParse({ items: [], botUsernames: {} }).success).toBe(true);
+    expect(chatLinksListResponseSchema.parse({ items: [], botUsernames: { telegram: "dalva_bot" } }).botUsernames).toEqual({
+      telegram: "dalva_bot",
+    });
+    expect(chatLinksListResponseSchema.safeParse({ items: [], botUsernames: { whatsapp: "x" } }).success).toBe(true);
+    expect(chatLinksListResponseSchema.safeParse({ items: [], botUsernames: { telegram: 1 } }).success).toBe(false);
   });
 });

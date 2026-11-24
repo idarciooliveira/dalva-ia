@@ -145,8 +145,6 @@ jobs:
           context: .
           file: apps/${{ matrix.image }}/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          # Build-time for the SPA: the Settings -> Telegram deep link. Repo variable, optional.
-          build-args: ${{ matrix.image == 'web' && format('VITE_TELEGRAM_BOT_USERNAME={0}', vars.TELEGRAM_BOT_USERNAME) || '' }}
           # No attestation manifests: they show up as untagged versions in GHCR.
           provenance: false
           tags: ${{ steps.tags.outputs.tags }}

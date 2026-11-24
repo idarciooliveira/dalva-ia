@@ -125,7 +125,7 @@ bun run dev
 
 Starts Postgres (if needed), the API on http://localhost:4000 with migrations applied, the web app on http://localhost:3000 and the Telegram agent. The web dev server proxies `/api` to the API (`DALVA_API_URL` overrides the target), so cookies stay first-party. The agent waits for the API, and exits on its own without breaking the others if `apps/agent/.env` has no bot token or LLM key yet.
 
-Transactions, transfers, the dashboard data, goals, debts and settings still use Convex hooks and show empty or error states until they move to the API.
+Transactions, transfers and the dashboard data still use Convex hooks and show empty or error states until they move to the API.
 
 Other useful commands:
 

@@ -8,8 +8,12 @@
  *                    the compose server) with the database dalva_e2e_<PORT>, so runs on
  *                    different ports never drop each other's database.
  *
- * Secrets are random per run; of apps/api/.env.local only the server address,
- * DATABASE_POOL_MAX and LOG_LEVEL are used.
+ * E2E_FINANCE_API_SERVICE_KEY  the service key the tests call the bot's routes with
+ *                    (playwright.config.ts makes one per run). Default: random.
+ * TELEGRAM_BOT_USERNAME  as set by Playwright (Settings → Telegram deep link).
+ *
+ * The other secrets are random per run; of apps/api/.env.local only the server
+ * address, DATABASE_POOL_MAX and LOG_LEVEL are used.
  */
 import { randomBytes } from "node:crypto";
 
@@ -50,7 +54,7 @@ Object.assign(process.env, {
   PUBLIC_URL: process.env.PUBLIC_URL || "http://localhost:3000",
   BETTER_AUTH_SECRET: secret(),
   FINANCE_API_TOKEN_SECRET: secret(),
-  FINANCE_API_SERVICE_KEY: secret(),
+  FINANCE_API_SERVICE_KEY: process.env.E2E_FINANCE_API_SERVICE_KEY || secret(),
   LOG_LEVEL: process.env.LOG_LEVEL || "warn",
 });
 // Rate limits per client address would trip on the suite's many sign-ups.

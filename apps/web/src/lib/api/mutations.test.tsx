@@ -8,7 +8,15 @@ import { queryKeys } from "./keys";
 import { useApiMutation } from "./mutations";
 
 const create = vi.fn();
-vi.mock("./client", () => ({ api: { accounts: { create: (...args: unknown[]) => create(...args) } } }));
+const addContribution = vi.fn();
+const recordPayment = vi.fn();
+vi.mock("./client", () => ({
+  api: {
+    accounts: { create: (...args: unknown[]) => create(...args) },
+    goalContributions: { add: (...args: unknown[]) => addContribution(...args) },
+    debtPayments: { record: (...args: unknown[]) => recordPayment(...args) },
+  },
+}));
 
 const input = { name: "Main", type: "bank" as const, balance: { amountMinor: 100, currency: "USD" } };
 const account = { id: "a1", name: "Main", type: "bank", balance: { amountMinor: 100, currency: "USD" } };
@@ -64,5 +72,49 @@ describe("useApiMutation", () => {
         queryKeys.reports.all(),
       ]),
     );
+  });
+});
+
+describe("useApiMutation invalidation of goal and debt money movements", () => {
+  function render<G extends "goalContributions" | "debtPayments">(group: G, op: G extends "goalContributions" ? "add" : "record") {
+    const queryClient = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    const { result } = renderHook(() => useApiMutation(group, op as never), { wrapper });
+    return { result, keys: () => invalidate.mock.calls.map(([filters]) => filters?.queryKey) };
+  }
+  const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
+
+  it("a contribution refreshes goals, balances, transactions and reports", async () => {
+    addContribution.mockResolvedValue({ contribution: {} });
+    const { result, keys } = render("goalContributions", "add");
+    await act(() => result.current.mutateAsync({ goalId: "g1", amount: usd(100), date: "2026-01-01" } as never));
+    await waitFor(() =>
+      expect(keys()).toEqual([
+        queryKeys.goalContributions.all(),
+        queryKeys.goals.all(),
+        queryKeys.accounts.all(),
+        queryKeys.transactions.all(),
+        queryKeys.reports.all(),
+      ]),
+    );
+  });
+
+  it("a debt payment refreshes debts, balances, transactions and reports (the debt summary)", async () => {
+    recordPayment.mockResolvedValue({ payment: {} });
+    const { result, keys } = render("debtPayments", "record");
+    await act(() => result.current.mutateAsync({ debtId: "d1", amount: usd(100), date: "2026-01-01", fromAccountId: "a1" } as never));
+    await waitFor(() =>
+      expect(keys()).toEqual([
+        queryKeys.debtPayments.all(),
+        queryKeys.debts.all(),
+        queryKeys.accounts.all(),
+        queryKeys.transactions.all(),
+        queryKeys.reports.all(),
+      ]),
+    );
+    expect(queryKeys.reports.debtSummary().slice(0, 2)).toEqual(queryKeys.reports.all());
   });
 });

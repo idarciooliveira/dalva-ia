@@ -41,6 +41,7 @@ function main() {
     auth,
     tokens,
     serviceKey: config.FINANCE_API_SERVICE_KEY,
+    operationSettings: { telegramBotUsername: config.TELEGRAM_BOT_USERNAME },
     publicUrl: config.PUBLIC_URL,
   });
   const server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });

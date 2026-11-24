@@ -1,23 +1,9 @@
+import { randomInt } from "node:crypto";
+
 import { expect, test } from "@playwright/test";
 
 import { registerAndCompleteOnboarding } from "./helpers/auth";
-
-/**
- * The unlink test links a chat through the service route, like the bot would.
- * It needs the Convex site URL and the deployment's service key:
- *   E2E_CONVEX_SITE_URL=http://127.0.0.1:3211 E2E_FINANCE_API_SERVICE_KEY=... bun run test:e2e
- */
-const siteUrl = process.env.E2E_CONVEX_SITE_URL;
-const serviceKey = process.env.E2E_FINANCE_API_SERVICE_KEY;
-
-async function service(path: string, body: Record<string, unknown>) {
-  const response = await fetch(`${siteUrl}/api/v1${path}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${serviceKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return { status: response.status, body: (await response.json()) as { ok: boolean } };
-}
+import { E2E_BOT_USERNAME, serviceCall } from "./helpers/stack";
 
 test.describe("Settings → Telegram", () => {
   test("redirects unauthenticated users to /login", async ({ page }) => {
@@ -25,8 +11,7 @@ test.describe("Settings → Telegram", () => {
     await expect(page).toHaveURL(/\/login/, { timeout: 15_000 });
   });
 
-  // Settings (Telegram links) is still on Convex; PR 11 moves it to the API and restores both tests.
-  test.fixme("requires consent, then shows a deep link, countdown and /start fallback", async ({ page }) => {
+  test("requires consent, then shows a deep link, countdown and /start fallback", async ({ page }) => {
     await registerAndCompleteOnboarding(page);
     await page.getByRole("link", { name: "Settings" }).click();
     await expect(page).toHaveURL(/\/settings/);
@@ -38,19 +23,21 @@ test.describe("Settings → Telegram", () => {
     await page.getByLabel(/I understand and agree/i).check();
     await connect.click();
 
-    // The /start fallback is always shown; the deep link only when VITE_TELEGRAM_BOT_USERNAME is set.
     const command = page.getByTestId("telegram-start-command");
     await expect(command).toHaveText(/^\/start [A-Za-z0-9_-]{43}$/);
     const code = (await command.textContent())!.replace("/start ", "");
-    const deepLink = page.getByRole("link", { name: /open telegram/i });
-    if ((await deepLink.count()) > 0) {
-      await expect(deepLink).toHaveAttribute("href", new RegExp(`^https://t\\.me/[A-Za-z0-9_]{5,32}\\?start=${code}$`));
-    }
+    // The bot username comes from the API (TELEGRAM_BOT_USERNAME), not a build variable.
+    await expect(page.getByRole("link", { name: /open telegram/i })).toHaveAttribute(
+      "href",
+      `https://t.me/${E2E_BOT_USERNAME}?start=${code}`,
+    );
+    await expect(page.getByText(`@${E2E_BOT_USERNAME}`)).toBeVisible();
     await expect(page.getByText(/expires in (10:00|9:\d\d)/i)).toBeVisible();
   });
 
-  test.fixme("links through the bot route, toggles read-only and unlinks", async ({ page }) => {
-    test.skip(!siteUrl || !serviceKey, "E2E_CONVEX_SITE_URL and E2E_FINANCE_API_SERVICE_KEY are required");
+  test("links through the bot route, toggles read-only, deletes history and unlinks", async ({ page }) => {
+    // Long flow across several pages.
+    test.slow();
     await registerAndCompleteOnboarding(page);
     await page.goto("/settings");
     await page.getByLabel(/I understand and agree/i).check();
@@ -58,19 +45,23 @@ test.describe("Settings → Telegram", () => {
     const command = await page.getByTestId("telegram-start-command").textContent();
     const code = command!.replace("/start ", "");
 
-    const externalUserId = String(Date.now());
+    // Unique across parallel workers and browser projects sharing the database.
+    const externalUserId = `${Date.now()}${randomInt(1_000_000)}`;
     const chat = { channel: "telegram", externalUserId, chatId: externalUserId };
-    const redeemed = await service("/channel-links/redeem", { ...chat, code, username: "e2e_user" });
+    const redeemed = await serviceCall("/channel-links/redeem", { ...chat, code, username: "e2e_user" });
     expect(redeemed.status).toBe(200);
 
-    // Live update: the page switches to the linked view without a reload.
+    // The page polls while the code is pending and switches to the linked view without a reload.
     await expect(page.getByText("Connected as @e2e_user")).toBeVisible({ timeout: 15_000 });
-    expect((await service("/channel-identities/resolve", chat)).status).toBe(200);
+    expect((await serviceCall("/channel-identities/resolve", chat)).status).toBe(200);
 
     const readOnly = page.getByRole("switch", { name: "Read-only" });
     await expect(readOnly).not.toBeChecked();
     await readOnly.click();
     await expect(readOnly).toBeChecked();
+    // Stored, not just toggled in the page.
+    await page.reload();
+    await expect(page.getByRole("switch", { name: "Read-only" })).toBeChecked();
 
     // Delete chat history: asks first, cancelling does nothing, confirming says so.
     await page.getByRole("button", { name: "Delete chat history" }).click();
@@ -87,6 +78,6 @@ test.describe("Settings → Telegram", () => {
     await page.getByRole("button", { name: /^unlink$/i }).click();
 
     await expect(page.getByRole("button", { name: "Connect Telegram" })).toBeVisible();
-    expect((await service("/channel-identities/resolve", chat)).status).toBe(404);
+    expect((await serviceCall("/channel-identities/resolve", chat)).status).toBe(404);
   });
 });

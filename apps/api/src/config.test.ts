@@ -103,6 +103,14 @@ describe("loadConfig", () => {
     );
   });
 
+  it("takes an optional Telegram bot username, with or without @", () => {
+    expect(loadConfig(valid).TELEGRAM_BOT_USERNAME).toBeUndefined();
+    expect(loadConfig({ ...valid, TELEGRAM_BOT_USERNAME: "dalva_bot" }).TELEGRAM_BOT_USERNAME).toBe("dalva_bot");
+    expect(loadConfig({ ...valid, TELEGRAM_BOT_USERNAME: "@dalva_bot" }).TELEGRAM_BOT_USERNAME).toBe("dalva_bot");
+    expect(configError({ ...valid, TELEGRAM_BOT_USERNAME: "bot" })).toContain("TELEGRAM_BOT_USERNAME must be a Telegram username");
+    expect(configError({ ...valid, TELEGRAM_BOT_USERNAME: "dalva bot!" })).toContain("TELEGRAM_BOT_USERNAME must be a Telegram username");
+  });
+
   it("lists the secrets to scrub from logs", () => {
     expect(configSecrets(loadConfig(valid))).toEqual(["s3cret-pass", "x".repeat(32), "t".repeat(32)]);
     expect(configSecrets(loadConfig({ ...valid, ...service }))).toEqual([
