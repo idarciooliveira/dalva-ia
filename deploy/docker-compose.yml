@@ -94,6 +94,9 @@ services:
     <<: *hardening
     image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-api:${API_IMAGE_TAG:-latest}
     stop_grace_period: 15s
+    # Bun writes under $HOME (/tmp in the image) at runtime; the root stays read-only.
+    tmpfs:
+      - /tmp
     environment:
       NODE_ENV: ${NODE_ENV:-production}
       PORT: "4000"
@@ -158,7 +161,10 @@ services:
     image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-agent:${AGENT_IMAGE_TAG:-latest}
     # The agent drains for 8s on SIGTERM; keep this above that.
     stop_grace_period: 15s
+    tmpfs:
+      - /tmp
     environment:
+      HOME: /tmp # Bun writes under $HOME; the root is read-only
       PORT: "3000"
       # Origin only: the client appends /api/v1.
       FINANCE_API_URL: http://api:4000

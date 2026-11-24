@@ -35,8 +35,10 @@ WORKDIR /app
 COPY --from=build --chown=65532:65532 /out/ ./
 # The runner finds migrations at ../../drizzle from its own file, as in the source tree.
 COPY --chown=65532:65532 apps/api/drizzle ./drizzle
+# Bun writes under $HOME at runtime; the root is read-only in compose, /tmp is a tmpfs.
 ENV NODE_ENV=production \
-    PORT=4000
+    PORT=4000 \
+    HOME=/tmp
 USER 65532:65532
 EXPOSE 4000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
