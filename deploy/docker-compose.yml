@@ -1,0 +1,328 @@
+# DALVA: web, API, agent and Postgres in one stack. See docs/deploy.md.
+#   cp .env.example .env   # fill it in
+#   docker compose up -d
+# Every value comes from .env (compose interpolation). Each service gets only the
+# variables it needs. No published ports: traffic arrives through cloudflared.
+#
+#   cloudflared -> web:8080 (Caddy) -> /api/auth/*, /api/v1/*  -> api:4000 -> postgres
+#                                     /webhooks/telegram       -> agent:3000 -> api:4000
+#                                     everything else          -> static SPA
+#
+# Networks: only `egress` reaches the internet (agent: Telegram and the model
+# provider; cloudflared: Cloudflare). Postgres, migrate, API, web and backup have
+# no route out.
+
+name: ${COMPOSE_PROJECT_NAME:-dalva}
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+x-postgres-env: &postgres-env
+  PGHOST: postgres
+  PGUSER: ${POSTGRES_USER:-dalva}
+  PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+  PGDATABASE: ${POSTGRES_DB:-dalva}
+
+x-database-url: &database-url postgres://${POSTGRES_USER:-dalva}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dalva}
+
+services:
+  postgres:
+    <<: *hardening
+    image: postgres:${POSTGRES_IMAGE_TAG:-18.7-alpine}
+    # The image's postgres user (uid 70 on alpine): no chown or gosu at start, so no capabilities.
+    user: "70:70"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dalva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-dalva}
+    volumes:
+      # Postgres 18 images keep data under /var/lib/postgresql/<major>/docker.
+      - postgres-data:/var/lib/postgresql
+    tmpfs:
+      - /var/run/postgresql
+      - /tmp
+    shm_size: 128mb
+    stop_grace_period: 30s
+    healthcheck:
+      # Over TCP: the entrypoint's init server listens on the socket only, so a socket
+      # check could pass before the real server accepts connections from migrate.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 10
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1g
+    networks:
+      - backend
+
+  # One-shot: applies pending migrations, then exits. The API starts only after it succeeds.
+  migrate:
+    <<: *hardening
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-api:${API_IMAGE_TAG:-latest}
+    restart: "no"
+    command: ["src/db/migrate.js"]
+    environment:
+      DATABASE_URL: *database-url
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+    networks:
+      - backend
+
+  api:
+    <<: *hardening
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-api:${API_IMAGE_TAG:-latest}
+    stop_grace_period: 15s
+    # Bun writes under $HOME (/tmp in the image) at runtime; the root stays read-only.
+    tmpfs:
+      - /tmp
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: "4000"
+      DATABASE_URL: *database-url
+      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
+      PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL (https origin)}
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
+      FINANCE_API_TOKEN_SECRET: ${FINANCE_API_TOKEN_SECRET:?set FINANCE_API_TOKEN_SECRET}
+      FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
+      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
+      LOG_LEVEL: ${API_LOG_LEVEL:-info}
+    healthcheck:
+      # Distroless image: no curl or shell, so use bun. 503 while Postgres doesn't answer.
+      test:
+        - CMD
+        - bun
+        - -e
+        - fetch("http://127.0.0.1:4000/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+    networks:
+      - backend
+      - app
+
+  web:
+    <<: *hardening
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-web:${WEB_IMAGE_TAG:-latest}
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128m
+    networks:
+      - app
+      - edge
+
+  agent:
+    <<: *hardening
+    image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-agent:${AGENT_IMAGE_TAG:-latest}
+    # The agent drains for 8s on SIGTERM; keep this above that.
+    stop_grace_period: 15s
+    tmpfs:
+      - /tmp
+    environment:
+      HOME: /tmp # Bun writes under $HOME; the root is read-only
+      PORT: "3000"
+      # Origin only: the client appends /api/v1.
+      FINANCE_API_URL: http://api:4000
+      FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?set TELEGRAM_BOT_USERNAME}
+      # Never polling here: it deletes the webhook at boot.
+      TELEGRAM_MODE: webhook
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET}
+      AI_PROVIDER: ${AI_PROVIDER:-gateway}
+      AGENT_MODEL: ${AGENT_MODEL:?set AGENT_MODEL}
+      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LOG_LEVEL: ${AGENT_LOG_LEVEL:-info}
+      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-}
+      RECOVERY_MAX_AGE_SECONDS: ${RECOVERY_MAX_AGE_SECONDS:-}
+      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-}
+      AGENT_MAX_OUTPUT_TOKENS: ${AGENT_MAX_OUTPUT_TOKENS:-}
+      AGENT_TURN_TIMEOUT_SECONDS: ${AGENT_TURN_TIMEOUT_SECONDS:-}
+      AGENT_RATE_LIMIT_TURNS: ${AGENT_RATE_LIMIT_TURNS:-}
+      AGENT_RATE_LIMIT_WINDOW_MINUTES: ${AGENT_RATE_LIMIT_WINDOW_MINUTES:-}
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-}
+    healthcheck:
+      test:
+        - CMD
+        - bun
+        - -e
+        - fetch("http://127.0.0.1:3000/health").then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      api:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512m
+    networks:
+      - app
+      - egress
+
+  cloudflared:
+    <<: *hardening
+    image: cloudflare/cloudflared:${CLOUDFLARED_IMAGE_TAG:-2026.10.7}
+    command: ["tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:20241", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN}
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:20241", "ready"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    depends_on:
+      web:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+    networks:
+      - edge
+      - egress
+
+  # Daily pg_dump at BACKUP_AT (UTC) into the `backups` volume, keeping BACKUP_KEEP_DAYS days.
+  #   docker compose run --rm backup now                      one dump now
+  #   docker compose run --rm backup list                     dumps on disk
+  #   docker compose run --rm backup restore <file> <db>      restore into a NEW database
+  backup:
+    <<: *hardening
+    image: postgres:${POSTGRES_IMAGE_TAG:-18.7-alpine}
+    # Root, but with no capabilities: writes only to the root-owned volume.
+    user: "0:0"
+    # sh as PID 1 ignores SIGTERM; tini forwards it so stop doesn't wait for SIGKILL.
+    init: true
+    environment:
+      <<: *postgres-env
+      BACKUP_AT: ${BACKUP_AT:-03:00}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+    volumes:
+      - backups:/backups
+    tmpfs:
+      - /tmp
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        # Explicit `|| return 1`: callers run it under `||`, where `set -e` is off.
+        dump() {
+          name="$$PGDATABASE-$$(date +%Y%m%d-%H%M%S).dump"
+          # Leftovers of crashed runs only; a concurrent `now` and the schedule never share a name.
+          find /backups -name "*.partial" -type f -mmin +720 -delete
+          pg_dump --format=custom --no-owner --file="/backups/$$name.partial" || { rm -f "/backups/$$name.partial"; return 1; }
+          mv "/backups/$$name.partial" "/backups/$$name" || return 1
+          find /backups -name "$$PGDATABASE-*.dump" -type f -mtime +"$$BACKUP_KEEP_DAYS" -delete
+          echo "{\"level\":\"info\",\"msg\":\"backup_done\",\"file\":\"$$name\",\"bytes\":$$(wc -c < "/backups/$$name")}"
+        }
+        case "$${1:-}" in
+          now) dump ;;
+          list) ls -lh /backups ;;
+          restore)
+            file="/backups/$${2:?usage: restore <file> <new database>}"
+            db="$${3:?usage: restore <file> <new database>}"
+            # createdb fails if the database exists: a restore never overwrites.
+            createdb "$$db"
+            pg_restore --no-owner --exit-on-error --dbname="$$db" "$$file"
+            echo "{\"level\":\"info\",\"msg\":\"restore_done\",\"database\":\"$$db\"}" ;;
+          loop)
+            echo "$$BACKUP_AT" | grep -Eq '^([01][0-9]|2[0-3]):[0-5][0-9]$$' || { echo "{\"level\":\"error\",\"msg\":\"BACKUP_AT must be HH:MM (24h, UTC)\"}" >&2; exit 2; }
+            echo "{\"level\":\"info\",\"msg\":\"backup_scheduled\",\"at\":\"$$BACKUP_AT UTC\",\"keepDays\":$$BACKUP_KEEP_DAYS}"
+            last=""
+            while true; do
+              today="$$(date +%F)"
+              if [ "$$(date +%H:%M)" = "$$BACKUP_AT" ] && [ "$$last" != "$$today" ]; then
+                last="$$today"
+                dump || { echo "{\"level\":\"error\",\"msg\":\"backup_failed\"}" >&2; }
+              fi
+              sleep 20
+            done ;;
+          *) echo "usage: now | list | restore <file> <db> | loop" >&2; exit 2 ;;
+        esac
+      - backup
+    command: ["loop"]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q"]
+      interval: 60s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256m
+    networks:
+      - backend
+
+volumes:
+  postgres-data:
+  backups:
+
+networks:
+  # No internet. Postgres and its clients.
+  backend:
+    internal: true
+  # No internet. web -> api, web -> agent, agent -> api.
+  app:
+    internal: true
+  # No internet. cloudflared -> web.
+  edge:
+    internal: true
+  # Internet access for the agent and cloudflared.
+  egress:
