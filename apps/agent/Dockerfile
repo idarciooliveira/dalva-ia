@@ -10,7 +10,6 @@ WORKDIR /repo
 COPY package.json bun.lock ./
 COPY apps/agent/package.json apps/agent/
 COPY apps/web/package.json apps/web/
-COPY packages/backend/package.json packages/backend/
 COPY packages/finance-contract/package.json packages/finance-contract/
 RUN bun install --frozen-lockfile --filter '@mpf/agent' --ignore-scripts
 

@@ -1,7 +1,4 @@
-/**
- * Ported from `packages/backend/convex/channelLinks.test.ts` and the web half
- * of `agentStore.test.ts`: Settings → Telegram through the web-only routes.
- */
+/** Settings → Telegram through the web-only routes. */
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 

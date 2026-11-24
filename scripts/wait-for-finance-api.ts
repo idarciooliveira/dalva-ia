@@ -1,5 +1,5 @@
 // Waits until the Finance API the agent will use answers, so `bun run dev` can start the bot
-// alongside `convex dev` (the agent exits at boot if the backend is unreachable).
+// alongside the API (the agent exits at boot if the backend is unreachable).
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 

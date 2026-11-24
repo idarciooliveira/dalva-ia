@@ -26,7 +26,7 @@ const configSchema = z
       .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder"),
     /**
      * Signs the Finance API user tokens (HS256) the chat agent sends as
-     * `Authorization: Bearer`. Same variable as on the Convex deployment.
+     * `Authorization: Bearer`.
      * Changing it invalidates every token (they live 15 minutes).
      */
     FINANCE_API_TOKEN_SECRET: z
@@ -35,8 +35,8 @@ const configSchema = z
       .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder"),
     /**
      * The chat agent's own credential (`Authorization: Bearer`) for the
-     * service routes: channel linking and inbound events. Same variable as on
-     * the Convex deployment and in the agent. Unset: service routes answer 401
+     * service routes: channel linking and inbound events. Same variable as in
+     * the agent. Unset: service routes answer 401
      * (allowed outside production only).
      */
     FINANCE_API_SERVICE_KEY: z

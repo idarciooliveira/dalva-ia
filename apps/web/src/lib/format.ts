@@ -20,23 +20,6 @@ export function formatCurrency(
   }).format(value);
 }
 
-/**
- * Format cents without the currency symbol for chart axis labels.
- * E.g. 500000 → "5,000"
- */
-export function formatCurrencyCompact(
-  cents: number,
-  currency: string = "USD",
-): string {
-  const value = cents / 100;
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-    notation: "compact",
-  }).format(value);
-}
 
 /**
  * Format a date string (ISO) to a short readable format.

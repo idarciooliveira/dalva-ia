@@ -1,7 +1,5 @@
 /**
- * Savings goals and their contributions, ported from
- * `packages/backend/convex/domain/{savingsGoals,goalContributions}.ts` plus
- * the checks Convex kept in its API layer (`api/v1/goals.ts`). Every function
+ * Savings goals and their contributions. Every function
  * takes the caller's user id and only touches that user's rows; missing and
  * foreign rows are both "not found". Amounts are stored minor units
  * (value × 100), in the user's base currency.

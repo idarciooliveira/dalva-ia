@@ -1,6 +1,5 @@
 /**
- * Retention jobs, in-process (croner). The Convex crons
- * (`packages/backend/convex/crons.ts`), same data and cadence:
+ * Retention jobs, in-process (croner):
  * - idempotency keys older than 7 days, daily
  * - expired channel link codes (used or not), hourly
  * - inbound agent events 24h after their last update (they hold message text), hourly

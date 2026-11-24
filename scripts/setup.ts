@@ -9,8 +9,6 @@
 // 3. Migrations.
 // 4. apps/agent/.env from .env.example if missing. `bun run dev:agent` takes the
 //    API URL and service key from apps/api/.env.local.
-//
-// Convex is no longer part of local dev: production runs it from the legacy-convex branch.
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

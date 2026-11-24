@@ -30,8 +30,9 @@ The app is currently centered around:
 | Onboarding | Implemented | Currency, starter accounts, and starter category selection |
 | Savings Goals | Implemented | Goal CRUD, contribution history, progress tracking |
 | Dashboard | Partially implemented | Real account, transaction, goal, debt, and net worth data; some widgets still remain mock-backed |
-| Budgets | Planned | Sidebar placeholder exists, dedicated module not built yet |
 | Debts | Implemented | Debt CRUD and payment history |
+| Telegram agent | Implemented | Chat bot that reads and records transactions for a linked account |
+| Budgets | Planned | Sidebar placeholder exists, dedicated module not built yet |
 
 ---
 
@@ -40,13 +41,14 @@ The app is currently centered around:
 | Layer | Technology |
 |-------|------------|
 | Frontend | TanStack Start + TanStack Router + React 19 + React Query |
-| Backend | Convex |
-| Auth | Convex Auth with email/password |
+| Backend | Bun + Hono + Drizzle + Postgres (`apps/api`) |
+| Auth | Better Auth, email/password, cookie sessions |
 | UI | shadcn/ui v4 + Tailwind CSS v4 + Radix UI + Lucide |
 | Charts | Recharts |
 | Package Manager | Bun workspaces |
-| Backend Testing | Vitest + convex-test |
+| Unit Testing | Vitest (API tests on a real Postgres) |
 | E2E Testing | Playwright |
+| Deploy | One `docker compose` stack: Caddy, API, agent, Postgres, backups, cloudflared |
 
 ---
 
@@ -55,11 +57,12 @@ The app is currently centered around:
 ```text
 my-personal-finance/
 |- apps/web/                  @mpf/web              Frontend app
+|- apps/api/                  @mpf/api              Backend (Hono + Drizzle + Postgres)
 |- apps/agent/                @mpf/agent            Telegram chat agent
-|- packages/backend/          @mpf/backend          Convex backend
-|- packages/finance-contract/ @mpf/finance-contract Finance API schemas shared by backend and agent
+|- packages/finance-contract/ @mpf/finance-contract API contract shared by web, API and agent
+|- deploy/                                          Production compose stack
 |- scripts/                                         Local setup and dev helpers
-`- docs/                                            Product and design docs
+`- docs/                                            Product, design and deploy docs
 ```
 
 ---
@@ -69,7 +72,7 @@ my-personal-finance/
 Implemented today:
 
 - Marketing landing page with dark mode
-- Email/password auth with Convex Auth
+- Email/password auth with Better Auth
 - Auth-aware onboarding flow
 - Authenticated app shell with persistent sidebar and floating quick actions
 - Accounts management
@@ -115,7 +118,7 @@ bun run setup
 - applies the migrations
 - creates `apps/agent/.env` from the example if missing
 
-Other API variables (`DATABASE_URL`, `PORT`, `PUBLIC_URL`, `CLIENT_IP_HEADER`, `LOG_LEVEL`) are documented in `apps/api/.env.example`. Convex is not part of local dev any more: production runs it from the `legacy-convex` branch until the cutover.
+Other API variables (`DATABASE_URL`, `PORT`, `PUBLIC_URL`, `CLIENT_IP_HEADER`, `LOG_LEVEL`) are documented in `apps/api/.env.example`.
 
 ### Development
 
@@ -125,15 +128,12 @@ bun run dev
 
 Starts Postgres (if needed), the API on http://localhost:4000 with migrations applied, the web app on http://localhost:3000 and the Telegram agent. The web dev server proxies `/api` to the API (`DALVA_API_URL` overrides the target), so cookies stay first-party. The agent waits for the API, and exits on its own without breaking the others if `apps/agent/.env` has no bot token or LLM key yet.
 
-Transactions, transfers and the dashboard data still use Convex hooks and show empty or error states until they move to the API.
-
 Other useful commands:
 
 ```bash
 bun run dev:api      # Postgres + migrations + API
 bun run dev:web
 bun run dev:agent
-bun run dev:backend  # Convex dev (legacy)
 bun run build
 bun run build:web
 bun run typecheck
@@ -174,13 +174,14 @@ Authenticated pages share a persistent app shell with sidebar navigation, top ba
 - Transfers are modeled as two linked `transactions` records with a shared `transferGroupId`.
 - Categories are seeded during onboarding and can be extended later with custom categories and subcategories.
 - Savings goals track progress separately from account balances, with goal contributions stored in their own table.
-- The frontend uses `convexQuery(...)` with React Query for reads and `useConvexMutation(...)` for writes.
+- The frontend reads and writes through the typed `@mpf/finance-contract` client with React Query.
+- Every write runs in one `SERIALIZABLE` transaction; every query is scoped to the signed-in user.
 
 ---
 
 ## Testing
 
-Backend tests cover the Convex domain modules, including accounts, categories, onboarding/profile flows, transactions, transfers, savings goals, and goal contributions.
+Unit tests cover the contract, the API (domain and routes, against Postgres), the agent and the web app's helpers.
 
 Playwright E2E coverage currently includes:
 
@@ -191,6 +192,10 @@ Playwright E2E coverage currently includes:
 - transactions
 - transfers
 - goals
+- debts
+- categories
+- dashboard
+- settings
 
 Run them with:
 
@@ -208,6 +213,7 @@ bun run test:e2e
 | [`docs/business.md`](docs/business.md) | Product vision and module definitions |
 | [`docs/PRD.md`](docs/PRD.md) | Full requirements and roadmap |
 | [`docs/design-system.md`](docs/design-system.md) | Visual system, tokens, and UI rules |
+| [`docs/deploy.md`](docs/deploy.md) | Compose stack, secrets, backups, updates |
 | [`CLAUDE.md`](CLAUDE.md) | Repo-specific engineering and implementation guidance |
 
 ---

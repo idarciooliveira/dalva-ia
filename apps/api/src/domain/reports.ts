@@ -1,7 +1,5 @@
 /**
- * Reports, ported from the report functions of
- * `packages/backend/convex/domain/transactions.ts`, `dashboard.ts` and
- * `debts.ts`. Sums are in stored minor units, across accounts, without any
+ * Reports. Sums are in stored minor units, across accounts, without any
  * currency conversion: callers check the currencies of what was summed
  * (`*AccountIds`, `assetCurrencies`) before labelling a total.
  *

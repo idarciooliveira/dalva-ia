@@ -1,7 +1,5 @@
 /**
- * Debts and debt payments, ported from
- * `packages/backend/convex/domain/{debts,debtPayments}.ts` plus the checks
- * Convex kept in its API layer (`api/v1/debts.ts`). Every function takes the
+ * Debts and debt payments. Every function takes the
  * caller's user id and only touches that user's rows; missing and foreign
  * rows are both "not found". Amounts are stored minor units (value × 100), in
  * the user's base currency.

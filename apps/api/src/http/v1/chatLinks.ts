@@ -1,6 +1,5 @@
 /**
- * Chat links from the web app (Settings → Telegram). Ported from
- * `packages/backend/convex/channelLinks.ts` and `agentStore.deleteMyHistory`.
+ * Chat links from the web app (Settings → Telegram).
  * Web-only: chat tokens get `forbidden`. No `Idempotency-Key` (see the contract).
  */
 import { routes } from "@mpf/finance-contract";

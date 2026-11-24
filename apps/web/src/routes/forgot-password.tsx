@@ -37,7 +37,7 @@ function ForgotPasswordPage() {
   });
 
   function onSubmit(data: ForgotValues) {
-    // TODO: wire to Convex password reset
+    // TODO: wire to Better Auth password reset
     console.log("Reset password for:", data.email);
   }
 

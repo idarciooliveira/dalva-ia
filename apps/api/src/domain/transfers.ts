@@ -1,6 +1,5 @@
 /**
- * Transfers, ported from `packages/backend/convex/domain/transfers.ts` plus the
- * checks Convex kept in its API layer (`api/v1/transfers.ts`).
+ * Transfers.
  *
  * A transfer is two `transfer` rows sharing `transfer_group_id`: the outgoing
  * leg on the source account (it carries `destination_account_id`) and the

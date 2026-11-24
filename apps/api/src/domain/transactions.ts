@@ -1,7 +1,5 @@
 /**
- * Income, expense and adjustment transactions, ported from
- * `packages/backend/convex/domain/transactions.ts` plus the checks Convex kept
- * in its API layer (`api/v1/transactions.ts`). Every function takes the
+ * Income, expense and adjustment transactions. Every function takes the
  * caller's user id and only touches that user's rows; missing and foreign
  * rows are both "not found". Amounts are stored minor units (value × 100).
  *

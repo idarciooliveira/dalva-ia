@@ -1,4 +1,4 @@
-/** Ported from `packages/backend/convex/api/v1/channels.test.ts`: channel linking through the service routes. */
+/** Channel linking through the service routes. */
 import { FinanceApiError } from "@mpf/finance-contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";

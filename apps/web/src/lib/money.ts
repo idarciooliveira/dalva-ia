@@ -3,8 +3,8 @@ import { currencyExponent } from "@mpf/finance-contract";
 /*
  * Money from the API is `{ amountMinor, currency }` in ISO 4217 minor units
  * (USD cents, JPY yen, KWD fils). Format and parse through these helpers only;
- * `formatCurrency(cents)` in format.ts is the Convex-era helper (value × 100 for
- * every currency) kept for the pages that move in PR 10.
+ * `formatCurrency(cents)` in format.ts is only for the mock budget card (value × 100 for
+ * every currency).
  */
 
 /** Fraction digits of the currency's minor unit, 2 for an unknown or malformed code. */

@@ -1,7 +1,6 @@
 /**
  * The contract router: one handler for every `/api/v1/*` request, driven by
- * the `@mpf/finance-contract` route map. Same semantics as the Convex router
- * (`packages/backend/convex/api/v1/router.ts`):
+ * the `@mpf/finance-contract` route map:
  *
  * (principal middleware: a credential that is there but invalid is 401 on any
  * path) → match the route (else the next handler, 404) → credential of the

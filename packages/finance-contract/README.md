@@ -1,6 +1,6 @@
 # @mpf/finance-contract
 
-Backend-agnostic contract for the versioned Finance API (`/api/v1`): zod schemas, shared primitives, the route map and a typed fetch client. No Convex imports, no Node-only APIs (runs on Bun, the Convex runtime and the browser).
+Backend-agnostic contract for the versioned Finance API (`/api/v1`): zod schemas, shared primitives, the route map and a typed fetch client. No Node-only APIs (runs on Bun and the browser).
 
 ```ts
 import { createFinanceClient } from "@mpf/finance-contract";

@@ -1,6 +1,5 @@
 /**
- * Categories and subcategories, ported from
- * `packages/backend/convex/domain/categories.ts`. Every function takes the
+ * Categories and subcategories. Every function takes the
  * caller's user id and only touches that user's rows; missing and foreign
  * rows are both "not found".
  *

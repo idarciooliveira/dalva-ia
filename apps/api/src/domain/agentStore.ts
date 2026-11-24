@@ -1,6 +1,6 @@
 /**
  * State for the chat agent: inbound events, sessions, messages and pending
- * actions. Ported from `packages/backend/convex/domain/agentStore.ts`. Every
+ * actions. Every
  * function takes the already-authenticated user and chat identity from the
  * route; no id that came from a client is trusted without an ownership check.
  *

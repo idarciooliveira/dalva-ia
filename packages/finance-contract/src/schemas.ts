@@ -23,7 +23,7 @@ import {
 } from "./primitives";
 
 /*
- * Field names, enums and optionality mirror packages/backend/convex/schema.ts
+ * Field names, enums and optionality mirror apps/api/src/db/schema.ts
  * and the domain layer. Differences are deliberate and noted inline:
  *  - ids are opaque strings (`id`, not `_id`)
  *  - every amount is `Money` (minor units + currency) instead of a bare number

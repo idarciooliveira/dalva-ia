@@ -1,6 +1,6 @@
 /**
  * Agent-store routes (user token with `agent:state`, minted for a linked chat).
- * Ported from `packages/backend/convex/api/v1/agent.ts`. The user and the chat
+ * The user and the chat
  * identity come from the token; the router has already checked that the
  * identity is still linked, in this same transaction.
  */

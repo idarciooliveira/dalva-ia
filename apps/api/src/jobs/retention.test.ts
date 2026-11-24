@@ -1,9 +1,4 @@
-/**
- * Retention jobs. The data rules are ported from the Convex cron tests
- * (`packages/backend/convex/agentStore.test.ts`, the link code cleanup in
- * `api/v1/channels.test.ts`, the idempotency purge); batching, the advisory
- * lock and the scheduler are new.
- */
+/** Retention jobs: data rules, batching, the advisory lock and the scheduler. */
 import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 

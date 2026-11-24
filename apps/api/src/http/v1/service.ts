@@ -1,6 +1,5 @@
 /**
  * Service routes: the chat agent with its service key, acting for no user.
- * Ported from `packages/backend/convex/api/v1/{serviceRegistry,channels,agentEvents}.ts`.
  * None takes a user id: the user comes from the code row (redeem) or the
  * linked identity (resolve, unlink). Inbound events run before any identity
  * is resolved, so they know no user at all.

@@ -1,5 +1,5 @@
 /**
- * Ported from `packages/backend/convex/api/v1/agent.test.ts`: inbound events
+ * Inbound events
  * (service key) and the agent store (sessions, messages, pending actions,
  * history) behind `agent:state` tokens.
  */

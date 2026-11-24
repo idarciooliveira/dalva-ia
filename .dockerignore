@@ -10,6 +10,5 @@ docs
 apps/web/src
 apps/web/public
 apps/web/e2e
-packages/backend/convex
 **/*.test.ts
 apps/agent/test

@@ -1,6 +1,5 @@
 /**
- * Chat channel linking, ported from `packages/backend/convex/domain/channelLinks.ts`
- * and `lib/linkCodes.ts`. The web app creates a single-use code (only its hash
+ * Chat channel linking. The web app creates a single-use code (only its hash
  * is stored); the agent redeems it from the chat, which links that chat
  * account to the code's owner. The user id always comes from server state: the
  * session that created the code, or the code row on redeem.

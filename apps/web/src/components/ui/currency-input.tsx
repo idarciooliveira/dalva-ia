@@ -38,15 +38,6 @@ export function formatCurrencyInput(
   return negative ? `-${formatted}` : formatted;
 }
 
-/** Convex-era pages: the digits as cents. Use `parseCurrencyInput` with the API. */
-export function parseCurrencyInputToCents(value: string): number {
-  const digits = normalizeDigits(value);
-  if (!digits) return 0;
-
-  const cents = Number(digits);
-  return Number.isNaN(cents) ? Number.NaN : cents;
-}
-
 /**
  * The masked value as signed integer minor units, at the `fractionDigits` it was
  * typed with. Empty is 0; NaN for a lone "-" or when it doesn't fit a safe integer.

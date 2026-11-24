@@ -2,17 +2,21 @@
 
 ## What This Is
 
-A privacy-first personal finance app. Users manually track accounts, transactions, categories, transfers, and savings goals. No bank integrations -- the user is the source of truth.
+A privacy-first personal finance app. Users manually track accounts, transactions, categories, transfers, savings goals and debts. No bank integrations -- the user is the source of truth. A Telegram agent reads and records transactions for a linked account.
 
-Product docs: `docs/business.md` (vision), `docs/PRD.md` (requirements), `docs/design-system.md` (UI spec).
+Product docs: `docs/business.md` (vision), `docs/PRD.md` (requirements), `docs/design-system.md` (UI spec), `docs/deploy.md` (production).
 
 ## Monorepo Structure
 
 ```text
-my-personal-finance/
-|- apps/web/          @mpf/web     Frontend (TanStack Start + React 19)
-|- packages/backend/  @mpf/backend Backend (Convex)
-`- docs/                           Product docs and design system
+dalva-personal-finance-app/
+|- apps/web/                  @mpf/web              Frontend (TanStack Start + React 19)
+|- apps/api/                  @mpf/api              Backend (Bun + Hono + Drizzle + Postgres + Better Auth)
+|- apps/agent/                @mpf/agent            Telegram agent (Bun + Hono)
+|- packages/finance-contract/ @mpf/finance-contract API contract: zod schemas, route map, typed client
+|- deploy/                                          Production compose stack
+|- scripts/                                         Local setup and dev helpers
+`- docs/                                            Product, design and deploy docs
 ```
 
 **Package manager:** Bun workspaces (root `package.json`).
@@ -24,15 +28,16 @@ bun run setup        # One-time local setup: apps/api/.env.local secrets, Postgr
 bun run dev          # Start API (Postgres + migrations), web and agent together
 bun run dev:api      # Start the API only (Postgres + migrations first)
 bun run dev:web      # Start the web app only (proxies /api to localhost:4000)
-bun run dev:backend  # Start Convex dev only (legacy)
 bun run dev:agent    # Start the Telegram agent only (against apps/api; waits for it)
-bun run build        # Build apps/* (currently the web app)
+bun run build        # Build apps/*
 bun run build:web    # Build the web app
 bun run typecheck    # Typecheck all packages
 bun run lint         # Lint all packages
 bun run test         # Run unit tests in watch mode
-bun run test:once    # Run unit tests once (contract, Convex backend, agent, API, web)
+bun run test:once    # Run unit tests once (contract, API, agent, web)
 bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh dalva_e2e_<port> database)
+bun run db:generate  # Generate a Drizzle migration after changing apps/api/src/db/schema.ts
+bun run db:migrate   # Apply migrations
 ```
 
 ## apps/web -- Frontend
@@ -100,6 +105,7 @@ bun run test:e2e     # Run Playwright E2E tests (starts its own API on a fresh d
 | `apps/web/src/routes/_authenticated/transactions.tsx` | Transactions page with filters and transfer edit flow |
 | `apps/web/src/routes/_authenticated/categories.tsx` | Categories and subcategories management |
 | `apps/web/src/routes/_authenticated/goals.tsx` | Savings goals page |
+| `apps/web/src/routes/_authenticated/debts.tsx` | Debts page |
 | `apps/web/src/routes/_authenticated/settings.tsx` | Settings (Telegram linking) |
 | `apps/web/src/components/dashboard/app-sidebar.tsx` | Authenticated sidebar navigation |
 | `apps/web/src/components/accounts/account-form-dialog.tsx` | Canonical product form pattern |
@@ -129,13 +135,14 @@ apps/web/src/routes/
    |- transactions.tsx
    |- categories.tsx
    |- goals.tsx
+   |- debts.tsx
    `- settings.tsx
 ```
 
 ### Backend Integration
 
 - The web app talks to `apps/api` on the same origin: the Vite proxy in dev (`/api` → `DALVA_API_URL`, default `http://localhost:4000`), the reverse proxy in production
-- The web app has no Convex dependency; every page reads and writes through `apps/api`
+- Every page reads and writes through `apps/api`
 
 ### E2E Testing (Playwright)
 
@@ -152,6 +159,7 @@ Tests currently live in `apps/web/e2e/` and cover:
 - `goals.spec.ts`
 - `categories.spec.ts`
 - `dashboard.spec.ts`
+- `debts.spec.ts`
 - `settings.spec.ts` links a chat through the service route with the key `playwright.config.ts` generates per run (`E2E_FINANCE_API_SERVICE_KEY`)
 
 Playwright starts `apps/api` on a fresh `dalva_e2e_<port>` database (`apps/api/scripts/e2e-server.ts`) and the web dev server. `E2E_DATABASE_URL`, `E2E_WEB_PORT` and `E2E_API_PORT` override the defaults.
@@ -179,91 +187,72 @@ bunx playwright test --project=chromium
 - Wait explicitly for async auth and query-driven UI when needed
 - Each test is isolated in a fresh browser context
 
-## packages/backend -- Convex Backend
+## apps/api -- Backend
 
-**IMPORTANT:** When working on Convex code, always read `packages/backend/convex/_generated/ai/guidelines.md` first.
-
-**Stack:** Convex with Convex Auth.
+**Stack:** Bun + Hono + Drizzle + Postgres 18 + Better Auth. Details in `apps/api/README.md`.
 
 ### Backend Implementation Patterns
 
-- Amounts are stored in minor units (cents)
-- Most modules derive the current user via `getAuthUserId(ctx)` from `@convex-dev/auth/server`
-- Never accept `userId` from the client for authorization
-- Always include argument validators
-- Prefer indexed queries with bounded results (`take(...)`) over unbounded reads
-- Ownership checks are required before reading or mutating user-owned documents
+- Every `/api/v1` route comes from the `@mpf/finance-contract` route map; `src/http/router.ts` handles credentials, scopes, `Idempotency-Key`, body validation and the `{ ok, data }` envelope
+- Callers are resolved by `src/http/principal.ts`: session cookie (web), bearer user token (agent, per linked chat) or service key (agent service routes)
+- Never accept `userId` from the client; every query filters by the principal's user
+- Every write runs in one `SERIALIZABLE` transaction with retry on `40001` (`src/db/tx.ts`)
+- Amounts are `bigint` minor units; `src/domain/money.ts` converts to and from ISO minor units
+- Ids are UUIDv7; cross-row references are composite `(id, user_id)` foreign keys, `DEFERRABLE INITIALLY DEFERRED`
+- `transactions.account_id`, `debt_payments.from_account_id` and `debt_payments.source_transaction_id` are nullable on legacy rows; code must handle null
+- Schema changes: edit `src/db/schema.ts`, run `bun run db:generate`, commit `apps/api/drizzle/`. CI fails when they disagree
 
 ### Domain Patterns
 
-- `accounts` store balances directly and are updated by transaction and transfer mutations
-- `transactions` represent income, expense, adjustment, and transfer records
-- Transfers are modeled as two linked `transactions` documents with a shared `transferGroupId`
+- `accounts` store balances directly and are updated by transaction, transfer, goal and debt writes
+- `transactions` hold income, expense, adjustment and transfer rows
+- Transfers are two linked `transactions` rows with a shared `transfer_group_id`
 - Categories are seeded during onboarding and then customized by the user
-- Savings goals live in `savingsGoals`, with contribution history in `goalContributions`
-- Onboarding completion is tracked in `userProfiles.onboardingCompleted`
+- Savings goals with contributions; debts with payments. Both work in the base currency only
+- Chat agent state (`agent_*` tables) is ephemeral and cleaned by `src/jobs/retention.ts`
 
 ### Key Files
 
 | File | Purpose |
 | ---- | ------- |
-| `packages/backend/convex/schema.ts` | Full data model |
-| `packages/backend/convex/auth.ts` | Convex Auth setup |
-| `packages/backend/convex/auth.config.ts` | Auth provider config |
-| `packages/backend/convex/http.ts` | Auth HTTP routes |
-| `packages/backend/convex/userProfiles.ts` | Profile and onboarding state |
-| `packages/backend/convex/accounts.ts` | Accounts CRUD and balance adjustments |
-| `packages/backend/convex/categories.ts` | Category seeding and category/subcategory CRUD |
-| `packages/backend/convex/transactions.ts` | Transaction CRUD and summaries |
-| `packages/backend/convex/transfers.ts` | Paired transfer creation, update, and deletion |
-| `packages/backend/convex/savingsGoals.ts` | Savings goal CRUD |
-| `packages/backend/convex/goalContributions.ts` | Goal contribution history |
-| `packages/backend/convex/channelLinks.ts` | Telegram link codes, linked identities, read-only, unlink |
-| `packages/backend/convex/agentStore.ts` | Chat agent state: delete-history button, retention crons (logic in `domain/agentStore.ts`, routes in `api/v1/agent*.ts`) |
-| `packages/backend/convex/test.setup.ts` | Shared convex-test helpers |
-| `packages/backend/convex/*.test.ts` | Backend unit tests |
+| `apps/api/src/db/schema.ts` | Data model and conventions |
+| `apps/api/src/db/tx.ts` | Serializable transaction helper with retry |
+| `apps/api/src/auth/auth.ts` | Better Auth setup |
+| `apps/api/src/http/router.ts` | Contract router |
+| `apps/api/src/http/principal.ts` | Credential resolution |
+| `apps/api/src/domain/*.ts` | Domain logic per module |
+| `apps/api/src/http/v1/*.ts` | Route handlers per module |
+| `apps/api/src/jobs/retention.ts` | Retention jobs (croner) |
+| `apps/api/test/api.ts` | Seed and client helpers for tests |
+| `packages/finance-contract/src/schemas.ts` | Request and response schemas |
+| `packages/finance-contract/src/routes.ts` | Route map |
 
 ### Testing
 
-**Stack:** Vitest + `convex-test` + `@edge-runtime/vm`.
+**Stack:** Vitest against a real Postgres. Each test file gets its own database (`apps/api/test/global-setup.ts`).
 
-Current backend test coverage includes:
-
-- accounts
-- categories
-- userProfiles
-- transactions
-- transfers
-- savingsGoals
-- goalContributions
-
-#### Test Patterns
-
-- Use a fresh `setupTest()` per test
-- Use `asUser(t)` for authenticated scenarios
-- Use distinct `subject` values for multi-user isolation tests
-- Prefer `toThrow()` in Vitest 4
-- Prefer partial assertions like `toMatchObject()` for Convex documents
+- Domain tests in `src/domain/*.test.ts`, route tests in `src/http/v1/*.test.ts`
+- Use the helpers in `test/api.ts`: `seedUser`, `seedAccount`, `tokenFor`, `clientFor`, `twoUsers()` for isolation checks, `expectApiError`
+- Prefer partial assertions like `toMatchObject()`
 
 ### Development Workflow -- Test-First
 
-When adding or changing backend functionality:
-
-1. Write or update backend tests first in `packages/backend/convex/*.test.ts`
-2. Run the targeted backend tests and confirm they fail when appropriate
-3. Implement the Convex changes
-4. Re-run `bun run test:once`
-5. Typecheck with `bun run typecheck`
+1. Update the contract in `packages/finance-contract` if the API shape changes
+2. Write or update tests in `apps/api`
+3. Run them and confirm they fail when appropriate
+4. Implement the domain and route changes
+5. Re-run `bun run test:once` and `bun run typecheck`
 
 ## Development Workflow -- Full Feature Lifecycle
 
 For non-trivial product work:
 
-1. Backend first
-   - add/update Convex tests
-   - implement the Convex API
+1. Contract and backend first
+   - update `packages/finance-contract`
+   - add tests and implement in `apps/api`
 2. Frontend next
    - add/update routes and components
+   - add an `INVALIDATES` entry for every new write
    - follow the existing dialog and list-page patterns
 3. E2E last
    - add/update Playwright coverage in `apps/web/e2e/`
@@ -298,28 +287,21 @@ Wise-inspired. Full spec in `docs/design-system.md`.
 
 ## Project Status
 
-The app is beyond the original auth-only and Phase 1 placeholder state.
-
 **Implemented:**
 
 - Landing page with responsive nav and dark mode
-- Email/password auth with Convex Auth
+- Email/password auth with Better Auth
 - Onboarding flow for currency, starter accounts, and starter categories
 - Persistent authenticated shell with sidebar, sign out, theme toggle, and floating quick actions
-- Dashboard with real accounts, transaction summaries, cashflow, category spending, recent transactions, and goals progress
-- Accounts management with CRUD, archive/restore, and balance adjustments
-- Transactions management for income and expenses with filters
-- Transfer support backed by paired transfer transactions
-- Categories and subcategories management
-- Savings goals CRUD plus contribution history
-- Backend tests across the main financial modules
-- Playwright coverage for landing, auth, onboarding, accounts, transactions, transfers, and goals
+- Dashboard with real accounts, transaction summaries, cashflow, category spending, recent transactions, goals and debts
+- Accounts, transactions, transfers, categories, savings goals and debts
+- Settings with Telegram linking; Telegram agent for reads and writes
+- Production on one compose stack (`deploy/`)
 
 **Partial or not yet wired:**
 
 - Forgot password still needs email infrastructure
 - Google OAuth button is present but provider wiring is not done
-- Budgets, debts, and settings do not yet have dedicated pages or backend modules
-- Some dashboard cards still use mock data for upcoming modules
+- Budgets have no page or backend module yet; the budget card on the dashboard is mock data
 
-**Next steps per the PRD:** budgets, debts, recurring transactions, richer settings, and continued dashboard replacement of mock widgets with real data.
+**Next steps:** live updates (SSE), password reset email and Google OAuth, metrics and alerts, budgets, recurring transactions.

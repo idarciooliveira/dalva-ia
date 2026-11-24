@@ -1,6 +1,5 @@
 /**
- * Accounts, ported from `packages/backend/convex/domain/accounts.ts`. Every
- * function takes the caller's user id and only touches that user's rows;
+ * Accounts. Every function takes the caller's user id and only touches that user's rows;
  * missing and foreign accounts are both "Account not found". Amounts are
  * stored minor units (value × 100).
  */

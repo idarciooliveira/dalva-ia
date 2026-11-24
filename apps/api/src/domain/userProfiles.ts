@@ -1,4 +1,4 @@
-/** User profile (base currency, onboarding state), ported from `packages/backend/convex/domain/userProfiles.ts`. */
+/** User profile (base currency, onboarding state). */
 import { eq } from "drizzle-orm";
 
 import { userProfiles } from "../db/schema";
