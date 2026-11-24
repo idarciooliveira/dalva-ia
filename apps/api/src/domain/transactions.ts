@@ -16,7 +16,7 @@
  * missing account.
  */
 import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
-import { isoDateSchema } from "@mpf/finance-contract";
+import { isoDateSchema, type TransactionManagedBy } from "@mpf/finance-contract";
 
 import { isUuid } from "../db/ids";
 import { debtPayments, goalContributions, transactions } from "../db/schema";
@@ -76,6 +76,51 @@ export async function ownedByContribution(tx: Tx, userId: string, row: Transacti
     .where(and(eq(goalContributions.userId, userId), inArray(goalContributions.transactionId, legs)))
     .limit(1);
   return contribution !== undefined;
+}
+
+/**
+ * `ownedByContribution` and `managedTransactionKind` for a page of rows in two
+ * queries: which flow owns each row, the goal contribution first (it is a
+ * transfer too). Rows no flow owns are absent.
+ */
+export async function managedKinds(
+  tx: Tx,
+  userId: string,
+  rows: Transaction[],
+): Promise<Map<string, TransactionManagedBy>> {
+  const kinds = new Map<string, TransactionManagedBy>();
+  if (rows.length === 0) return kinds;
+  const legs = rows.filter(isTransferLeg);
+  const legIds = [...new Set(legs.flatMap((r) => (r.linkedTransactionId ? [r.id, r.linkedTransactionId] : [r.id])))];
+  const others = rows.filter((r) => !isTransferLeg(r)).map((r) => r.id);
+
+  const contributions =
+    legIds.length === 0
+      ? []
+      : await tx
+          .select({ transactionId: goalContributions.transactionId })
+          .from(goalContributions)
+          .where(and(eq(goalContributions.userId, userId), inArray(goalContributions.transactionId, legIds)));
+  const payments =
+    others.length === 0
+      ? []
+      : await tx
+          .select({ source: debtPayments.sourceTransactionId, liability: debtPayments.liabilityTransactionId })
+          .from(debtPayments)
+          .where(
+            and(
+              eq(debtPayments.userId, userId),
+              or(inArray(debtPayments.sourceTransactionId, others), inArray(debtPayments.liabilityTransactionId, others)),
+            ),
+          );
+  const contributed = new Set(contributions.map((c) => c.transactionId));
+  for (const leg of legs) {
+    const owned = contributed.has(leg.id) || (leg.linkedTransactionId !== null && contributed.has(leg.linkedTransactionId));
+    kinds.set(leg.id, owned ? "goal_contribution" : "transfer");
+  }
+  const paid = new Set(payments.flatMap((p) => [p.source, p.liability]));
+  for (const id of others) if (paid.has(id)) kinds.set(id, "debt_payment");
+  return kinds;
 }
 
 /** The user's transaction, unless another flow owns it (`conflict`). */
@@ -170,8 +215,19 @@ export async function createTransaction(tx: Tx, userId: string, args: Transactio
   return row!;
 }
 
+/** What an update may change: `null` clears the subcategory and the free-text fields. */
+export type TransactionChanges = Partial<Omit<TransactionFields, "subcategoryId" | "description" | "note" | "payee">> & {
+  subcategoryId?: string | null;
+  description?: string | null;
+  note?: string | null;
+  payee?: string | null;
+};
+
+/** The change if given (`null` included), else the stored value. */
+const changed = <T>(change: T | undefined, stored: T): T => (change === undefined ? stored : change);
+
 /**
- * Change the fields given (none can be cleared). Reverses the old balance
+ * Change the fields given; `null` clears a nullable one. Reverses the old balance
  * effect on the old account and applies the new one on the new account.
  * A new category without a subcategory drops the old subcategory, which
  * belongs to the old category.
@@ -180,7 +236,7 @@ export async function updateTransaction(
   tx: Tx,
   userId: string,
   id: string,
-  changes: Partial<TransactionFields>,
+  changes: TransactionChanges,
 ): Promise<Transaction> {
   return await updateLoadedTransaction(tx, userId, await getEditableTransaction(tx, userId, id), changes);
 }
@@ -190,7 +246,7 @@ export async function updateLoadedTransaction(
   tx: Tx,
   userId: string,
   row: Transaction,
-  changes: Partial<TransactionFields>,
+  changes: TransactionChanges,
 ): Promise<Transaction> {
   const id = row.id;
   assertWritableType(changes.type);
@@ -198,15 +254,15 @@ export async function updateLoadedTransaction(
   const type = changes.type ?? row.type;
   const amount = changes.amount ?? row.amount;
   if (type === "adjustment") {
-    assertNoCategoryOnAdjustment(changes.categoryId ?? row.categoryId, changes.subcategoryId ?? row.subcategoryId);
+    assertNoCategoryOnAdjustment(changes.categoryId ?? row.categoryId, changed(changes.subcategoryId, row.subcategoryId));
   }
-  await checkClassification(tx, userId, changes, row.categoryId);
+  await checkClassification(tx, userId, { categoryId: changes.categoryId, subcategoryId: changes.subcategoryId ?? undefined }, row.categoryId);
   const accountId = changes.accountId ?? row.accountId;
   if (changes.accountId && changes.accountId !== row.accountId) await getAccount(tx, userId, changes.accountId);
   assertAmount(type, amount);
 
   const categoryChanged = changes.categoryId !== undefined && changes.categoryId !== row.categoryId;
-  const subcategoryId = changes.subcategoryId ?? (categoryChanged ? null : row.subcategoryId);
+  const subcategoryId = changed(changes.subcategoryId, categoryChanged ? null : row.subcategoryId);
   const [updated] = await tx
     .update(transactions)
     .set({
@@ -216,9 +272,9 @@ export async function updateLoadedTransaction(
       categoryId: changes.categoryId ?? row.categoryId,
       subcategoryId,
       date: changes.date ?? row.date,
-      description: changes.description ?? row.description,
-      note: changes.note ?? row.note,
-      payee: changes.payee ?? row.payee,
+      description: changed(changes.description, row.description),
+      note: changed(changes.note, row.note),
+      payee: changed(changes.payee, row.payee),
     })
     .where(ownedTransaction(userId, id))
     .returning();

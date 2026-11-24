@@ -123,7 +123,7 @@ test.describe("Register page", () => {
 test.describe("Auth flows (apps/api)", () => {
   test("register, sign out, then log back in", async ({ page }) => {
     const user = await registerAndCompleteOnboarding(page, newUser("Flow Tester"));
-    // The shell renders the greeting from the session and profile (dashboard data stays on Convex until PR 10).
+    // The dashboard greets the user by the first name from the session and profile.
     await expect(page.getByRole("heading", { name: /, Flow$/ })).toBeVisible();
 
     await page.getByRole("button", { name: "Sign out" }).click();

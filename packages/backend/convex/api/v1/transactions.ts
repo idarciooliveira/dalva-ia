@@ -46,7 +46,8 @@ export const get = apiQuery(routes.transactions.get, async (ctx, userId, input) 
 async function resolveClassification(
   ctx: MutationCtx,
   userId: string,
-  input: { categoryId?: string; subcategoryId?: string },
+  // `null` (clear, apps/api only) is treated as omitted here.
+  input: { categoryId?: string; subcategoryId?: string | null },
   existing?: Doc<"transactions">,
 ) {
   const category = input.categoryId
