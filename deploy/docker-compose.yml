@@ -4,7 +4,7 @@
 # Every value comes from .env (compose interpolation). Each service gets only the
 # variables it needs. No published ports: traffic arrives through cloudflared.
 #
-#   cloudflared -> web:8080 (Caddy) -> /api/auth/*, /api/v1/*  -> api:4000 -> postgres
+#   cloudflared -> web:8080 (Caddy) -> /api/auth/*, /api/v1/*, /api/trpc/* -> api:4000 -> postgres
 #                                     /webhooks/telegram       -> agent:3000 -> api:4000
 #                                     everything else          -> static SPA
 #
@@ -168,7 +168,7 @@ services:
     environment:
       HOME: /tmp # Bun writes under $HOME; the root is read-only
       PORT: "3000"
-      # Origin only: the client appends /api/v1.
+      # Origin only: the clients append /api/v1 and /api/trpc.
       FINANCE_API_URL: http://api:4000
       FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN}

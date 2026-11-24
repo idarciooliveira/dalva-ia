@@ -57,6 +57,7 @@ expect "$(status http://127.0.0.1:8080/transactions)" 200 "GET /transactions (SP
 web_curl http://127.0.0.1:8080/does-not-exist | grep -q '<html' || fail "SPA fallback is not HTML"
 expect "$(status http://127.0.0.1:8080/api/unknown)" 404 "GET /api/unknown"
 expect "$(status http://127.0.0.1:8080/api/v1/accounts)" 401 "GET /api/v1/accounts without session"
+expect "$(status http://127.0.0.1:8080/api/trpc/accounts.list)" 401 "GET /api/trpc/accounts.list without session"
 # The agent answers 503 until boot recovery finishes, even while /health is already 200.
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   webhook=$(status -X POST http://127.0.0.1:8080/webhooks/telegram)
@@ -85,6 +86,7 @@ ok "sign-in"
 web_curl -H "cookie: $cookie" http://127.0.0.1:8080/api/auth/get-session | grep -q "\"$email\"" || fail "get-session"
 ok "get-session"
 expect "$(status -H "cookie: $cookie" http://127.0.0.1:8080/api/v1/accounts)" 200 "GET /api/v1/accounts with session"
+expect "$(status -H "cookie: $cookie" http://127.0.0.1:8080/api/trpc/accounts.list)" 200 "GET /api/trpc/accounts.list with session"
 
 # ---- backup, then restore into a scratch database ----
 out=$(docker compose run --rm -T backup now)

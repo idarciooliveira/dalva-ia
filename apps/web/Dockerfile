@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Build from the repo root: docker build -f apps/web/Dockerfile .
 # Context filter: apps/web/Dockerfile.dockerignore (BuildKit picks it over the root .dockerignore).
-# /api/auth/* and /api/v1/* to the API and /webhooks/telegram to the agent.
+# /api/auth/*, /api/v1/* and /api/trpc/* to the API and /webhooks/telegram to the agent.
 
 ARG BUN_VERSION=1.4.0
 

@@ -60,9 +60,10 @@ bun run db:migrate   # Apply migrations
   - shared create transaction / create transfer dialogs
 - Onboarding lives at `/onboarding` and must complete before authenticated users can access the main app.
 - Auth is Better Auth (`src/lib/auth-client.ts`): same-origin cookie session at `/api/auth/*`. `useSession()` reads it, `useSignOut()` signs out; sign in/up/out call `resetUserCache()` so no data of the previous user stays cached.
-- Data comes from `apps/api` through the contract client (`src/lib/api/`): reads with `useQuery(accountsQuery(...))` (options factories in `queries.ts`, keys in `keys.ts`), writes with `useApiMutation("accounts", "create")`.
-- `useApiMutation` sends one `Idempotency-Key` per submit (reused on retries of the same input) and invalidates what `INVALIDATES` in `mutations.ts` lists for that write. Add an entry for every new write.
-- Show failures with `apiErrorMessage()`: `ErrorState` for a page's data, `FormError` inside dialogs (`src/components/error-state.tsx`).
+- Data comes from `apps/api` through the contract client (`src/lib/api/`): reads with `useQuery(categoriesQuery(...))` (options factories in `queries.ts`, keys in `keys.ts`), writes with `useApiMutation("categories", "create")`.
+- Accounts go through tRPC (`src/lib/api/trpc.ts`, proof of concept): `useQuery(trpc.accounts.list.queryOptions(input))` (or `accountsQuery`), writes with `useTrpcMutation(trpc.accounts.create.mutationOptions())`. `idempotencyLink` sets the `Idempotency-Key`; invalidation is `TRPC_INVALIDATES` in `mutations.ts`. Types come from `type AppRouter` in `@mpf/api/trpc`, never a runtime import.
+- `useApiMutation` sends one `Idempotency-Key` per submit (reused on retries of the same input) and invalidates what `INVALIDATES` in `mutations.ts` lists for that write. Add an entry for every new write (`TRPC_INVALIDATES` for tRPC writes).
+- Show failures with `apiErrorMessage()`: `ErrorState` for a page's data, `FormError` inside dialogs (`src/components/error-state.tsx`). It reads both clients' errors (tRPC: `error.data.apiCode`).
 - Money from the API is `{ amountMinor, currency }` in ISO minor units: format with `formatMinor` and parse with `parseDecimalInput` (`src/lib/money.ts`), or `CurrencyInput` with `fractionDigits` + `parseCurrencyInput`. `formatCurrency(cents)` is only for the mock budget card.
 - Transactions, transfers and the dashboard read through `src/lib/api/ledger.ts` and `src/lib/api/dashboard.ts`. Rows owned by goals or debts (`managedBy` on search items) offer no edit or delete. Edits send only changed fields; `null` clears a nullable one.
 - Goal and debt account pickers list only accounts in the base currency (`accountsForBaseCurrency` in `src/lib/accounts.ts`): the API refuses others.
@@ -194,6 +195,7 @@ bunx playwright test --project=chromium
 ### Backend Implementation Patterns
 
 - Every `/api/v1` route comes from the `@mpf/finance-contract` route map; `src/http/router.ts` handles credentials, scopes, `Idempotency-Key`, body validation and the `{ ok, data }` envelope
+- Accounts are also on tRPC at `/api/trpc` (proof of concept, `src/trpc/`): procedure builders in `init.ts` do what the contract router does; schemas live next to the procedures; `type AppRouter` is exported as `@mpf/api/trpc`. The agent calls accounts through it (`apps/agent/src/core/trpc.ts`, `viaTrpc` maps errors back to `FinanceApiError`)
 - Callers are resolved by `src/http/principal.ts`: session cookie (web), bearer user token (agent, per linked chat) or service key (agent service routes)
 - Never accept `userId` from the client; every query filters by the principal's user
 - Every write runs in one `SERIALIZABLE` transaction with retry on `40001` (`src/db/tx.ts`)
@@ -219,6 +221,7 @@ bunx playwright test --project=chromium
 | `apps/api/src/db/tx.ts` | Serializable transaction helper with retry |
 | `apps/api/src/auth/auth.ts` | Better Auth setup |
 | `apps/api/src/http/router.ts` | Contract router |
+| `apps/api/src/trpc/init.ts` | tRPC context and procedure builders (accounts PoC) |
 | `apps/api/src/http/principal.ts` | Credential resolution |
 | `apps/api/src/domain/*.ts` | Domain logic per module |
 | `apps/api/src/http/v1/*.ts` | Route handlers per module |

@@ -4,7 +4,7 @@ The whole app runs from one compose stack on the VPS: web (Caddy + SPA), API, ag
 
 ```text
 Cloudflare edge -> tunnel -> cloudflared -> web:8080 (Caddy, single entry)
-                                             ├─ /api/auth/*, /api/v1/*  -> api:4000 -> postgres
+                                             ├─ /api/auth/*, /api/v1/*, /api/trpc/* -> api:4000 -> postgres
                                              ├─ /webhooks/telegram      -> agent:3000 -> api:4000
                                              └─ everything else         -> SPA (fallback to the shell)
 migrate (one-shot, before api) -> postgres     backup (daily pg_dump) -> postgres
