@@ -1,12 +1,15 @@
 import type { RouteInput, UserRoutes } from "@mpf/finance-contract";
 
+import { trpc, type RouterInputs } from "./trpc";
+
 /** Query keys for the API. `all` keys are invalidation prefixes. */
 export const queryKeys = {
   session: () => ["session"] as const,
   profile: () => ["api", "profile"] as const,
+  // tRPC keys (`[["accounts", ...]]`): accounts are read through /api/trpc.
   accounts: {
-    all: () => ["api", "accounts"] as const,
-    list: (input: RouteInput<UserRoutes["accounts"]["list"]>) => ["api", "accounts", "list", input] as const,
+    all: () => trpc.accounts.pathKey(),
+    list: (input: RouterInputs["accounts"]["list"]) => trpc.accounts.list.queryKey(input),
   },
   categories: {
     all: () => ["api", "categories"] as const,

@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { Account } from "@mpf/finance-contract";
 import { Landmark } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,7 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
 import { FormError } from "@/components/error-state";
-import { useApiMutation } from "@/lib/api/mutations";
+import { useTrpcMutation } from "@/lib/api/mutations";
+import { trpc, type Account } from "@/lib/api/trpc";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { formatMinor, fractionDigits, maskPlaceholder } from "@/lib/money";
 import { getCurrencySymbol } from "@/lib/currencies";
@@ -34,7 +34,7 @@ export function AdjustBalanceDialog({
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
-  const { mutateAsync: adjustBalance, isPending } = useApiMutation("accounts", "adjust");
+  const { mutateAsync: adjustBalance, isPending } = useTrpcMutation(trpc.accounts.adjust.mutationOptions());
 
   // Reset each time the dialog opens for an account (the parent opens it through `open`).
   // Keyed on the id: a refetch of the same account while open keeps what was typed.

@@ -3,6 +3,7 @@ import type { RouteInput, UserRoutes } from "@mpf/finance-contract";
 
 import { api } from "./client";
 import { queryKeys } from "./keys";
+import { trpc, type RouterInputs } from "./trpc";
 
 export const profileQuery = () =>
   queryOptions({
@@ -10,11 +11,7 @@ export const profileQuery = () =>
     queryFn: ({ signal }) => api.profile.get({}, { signal }),
   });
 
-export const accountsQuery = (input: RouteInput<UserRoutes["accounts"]["list"]> = {}) =>
-  queryOptions({
-    queryKey: queryKeys.accounts.list(input),
-    queryFn: ({ signal }) => api.accounts.list(input, { signal }),
-  });
+export const accountsQuery = (input: RouterInputs["accounts"]["list"] = {}) => trpc.accounts.list.queryOptions(input);
 
 export const categoriesQuery = (input: RouteInput<UserRoutes["categories"]["list"]> = {}) =>
   queryOptions({

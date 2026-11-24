@@ -1,5 +1,4 @@
 import { useState } from "react";
-import type { Account } from "@mpf/finance-contract";
 import {
   MoreVertical,
   Pencil,
@@ -19,7 +18,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
 import { ConfirmDeleteDialog } from "@/components/confirm-delete-dialog";
-import { useApiMutation } from "@/lib/api/mutations";
+import { useTrpcMutation } from "@/lib/api/mutations";
+import { trpc, type Account } from "@/lib/api/trpc";
 import { apiErrorMessage, isApiError } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 import { formatMinor } from "@/lib/money";
@@ -40,19 +40,19 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
   const Icon = accountType?.icon;
   const theme = ACCOUNT_THEMES.find((t) => t.id === (account.theme ?? "default")) ?? ACCOUNT_THEMES[0];
 
-  const { mutate: archiveAccount, isPending: isArchiving } = useApiMutation("accounts", "archive", {
+  const { mutate: archiveAccount, isPending: isArchiving } = useTrpcMutation(trpc.accounts.archive.mutationOptions({
     onMutate: () => setDeleteError(null),
     onError: (error) => {
       setDeleteError(apiErrorMessage(error, "Couldn't archive the account. Try again."));
       setCanArchive(false);
     },
     onSuccess: () => setCanArchive(false),
-  });
-  const { mutate: restoreAccount, isPending: isRestoring } = useApiMutation("accounts", "restore", {
+  }));
+  const { mutate: restoreAccount, isPending: isRestoring } = useTrpcMutation(trpc.accounts.restore.mutationOptions({
     onMutate: () => setDeleteError(null),
     onError: (error) => setDeleteError(apiErrorMessage(error, "Couldn't restore the account. Try again.")),
-  });
-  const { mutate: deleteAccount, isPending: isDeleting } = useApiMutation("accounts", "delete", {
+  }));
+  const { mutate: deleteAccount, isPending: isDeleting } = useTrpcMutation(trpc.accounts.delete.mutationOptions({
     onMutate: () => setDeleteError(null),
     // Accounts with transactions, goals or debts can't be deleted (`conflict`); archive instead.
     onError: (error) => {
@@ -64,7 +64,7 @@ export function AccountRow({ account, onEdit, onAdjustBalance }: AccountRowProps
       );
       setCanArchive(inUse);
     },
-  });
+  }));
   const isBusy = isArchiving || isRestoring || isDeleting;
 
   const balance = account.balance.amountMinor;

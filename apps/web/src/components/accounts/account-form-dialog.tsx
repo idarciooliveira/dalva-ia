@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import type { Account } from "@mpf/finance-contract";
 import {
   Landmark,
   FileText,
@@ -25,7 +24,8 @@ import {
 import { CurrencyInput, parseCurrencyInput } from "@/components/ui/currency-input";
 import { FormError } from "@/components/error-state";
 import { useAuthProfile } from "@/hooks/use-auth-profile";
-import { useApiMutation } from "@/lib/api/mutations";
+import { useTrpcMutation } from "@/lib/api/mutations";
+import { trpc, type Account } from "@/lib/api/trpc";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fractionDigits, maskPlaceholder } from "@/lib/money";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES, type AccountType } from "@/lib/accounts";
@@ -71,8 +71,8 @@ export function AccountFormDialog({
     setError("");
   }, [account, open, defaultCurrency]);
 
-  const { mutateAsync: createAccount, isPending: isCreating } = useApiMutation("accounts", "create");
-  const { mutateAsync: updateAccount, isPending: isUpdating } = useApiMutation("accounts", "update");
+  const { mutateAsync: createAccount, isPending: isCreating } = useTrpcMutation(trpc.accounts.create.mutationOptions());
+  const { mutateAsync: updateAccount, isPending: isUpdating } = useTrpcMutation(trpc.accounts.update.mutationOptions());
 
   const isPending = isCreating || isUpdating;
 

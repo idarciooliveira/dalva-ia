@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import type { QueryClient, QueryKey, UseMutationOptions } from "@tanstack/react-query";
+import type { MutationKey, QueryClient, QueryKey, UseMutationOptions } from "@tanstack/react-query";
 import type { CallOptions, RouteDef, RouteInput, RouteOutput, UserRoutes } from "@mpf/finance-contract";
 import { useState } from "react";
 
@@ -7,6 +7,7 @@ import { api } from "./client";
 import { isApiError } from "./errors";
 import { createIdempotencyKeys } from "./idempotency";
 import { queryKeys } from "./keys";
+import type { RouterInputs } from "./trpc";
 
 type Group = keyof UserRoutes;
 type WriteOp<G extends Group> = {
@@ -25,14 +26,6 @@ const LEDGER_WRITE = [queryKeys.accounts.all, queryKeys.transactions.all, queryK
 const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> = {
   "profile.create": [queryKeys.profile],
   "profile.completeOnboarding": [queryKeys.profile],
-  // Balances feed net worth and the account filters of the transaction pages.
-  "accounts.create": [queryKeys.accounts.all, queryKeys.reports.all],
-  // The type moves a balance between assets and debts in net worth.
-  "accounts.update": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
-  "accounts.adjust": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
-  "accounts.archive": [queryKeys.accounts.all, queryKeys.reports.all],
-  "accounts.restore": [queryKeys.accounts.all, queryKeys.reports.all],
-  "accounts.delete": [queryKeys.accounts.all, queryKeys.reports.all],
   // Transactions and transfers move account balances, so net worth, the monthly
   // reports and every list (and open transfer) change with them.
   "transactions.create": LEDGER_WRITE,
@@ -149,6 +142,50 @@ export function useApiMutation<G extends Group, O extends WriteOp<G>>(group: G, 
     },
     onError: async (...args) => {
       if (isApiError(args[0], "not_found")) void invalidateAfter(queryClient, name);
+      await options.onError?.(...args);
+    },
+  });
+}
+
+/* tRPC writes (/api/trpc) ----------------------------------------------------- */
+
+type TrpcWrite = `accounts.${Exclude<keyof RouterInputs["accounts"], "list" | "get">}`;
+
+/** What each tRPC write makes stale, as `INVALIDATES` for the contract writes. */
+const TRPC_INVALIDATES: Record<TrpcWrite, ReadonlyArray<() => QueryKey>> = {
+  // Balances feed net worth and the account filters of the transaction pages.
+  "accounts.create": [queryKeys.accounts.all, queryKeys.reports.all],
+  // The type moves a balance between assets and debts in net worth.
+  "accounts.update": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
+  "accounts.adjust": [queryKeys.accounts.all, queryKeys.transactions.all, queryKeys.reports.all],
+  "accounts.archive": [queryKeys.accounts.all, queryKeys.reports.all],
+  "accounts.restore": [queryKeys.accounts.all, queryKeys.reports.all],
+  "accounts.delete": [queryKeys.accounts.all, queryKeys.reports.all],
+};
+
+async function invalidateAfterTrpc(queryClient: QueryClient, mutationKey: MutationKey): Promise<void> {
+  // tRPC mutation keys are `[["accounts", "create"]]`.
+  const name = (mutationKey[0] as string[]).join(".") as TrpcWrite;
+  await Promise.all((TRPC_INVALIDATES[name] ?? []).map((key) => queryClient.invalidateQueries({ queryKey: key() })));
+}
+
+/**
+ * A tRPC write as a React Query mutation, with the same invalidation rules as
+ * `useApiMutation`: `useTrpcMutation(trpc.accounts.create.mutationOptions())`.
+ * The `Idempotency-Key` comes from `idempotencyLink` (`./trpc.ts`).
+ */
+export function useTrpcMutation<TData, TError, TVariables, TContext>(
+  options: UseMutationOptions<TData, TError, TVariables, TContext> & { mutationKey: MutationKey },
+) {
+  const queryClient = useQueryClient();
+  return useMutation<TData, TError, TVariables, TContext>({
+    ...options,
+    onSuccess: async (...args) => {
+      await invalidateAfterTrpc(queryClient, options.mutationKey);
+      await options.onSuccess?.(...args);
+    },
+    onError: async (...args) => {
+      if (isApiError(args[0], "not_found")) void invalidateAfterTrpc(queryClient, options.mutationKey);
       await options.onError?.(...args);
     },
   });

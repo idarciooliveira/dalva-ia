@@ -27,6 +27,9 @@
     "@tanstack/react-router-devtools": "^1.167.3",
     "@tanstack/react-router-ssr-query": "^1.167.3",
     "@tanstack/react-start": "~1.168.60",
+    "@trpc/client": "^11.31.1",
+    "@trpc/server": "^11.31.1",
+    "@trpc/tanstack-react-query": "^11.31.1",
     "better-auth": "^1.7.25",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -41,6 +44,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@mpf/api": "workspace:*",
     "@playwright/test": "^1.59.1",
     "@tailwindcss/typography": "^0.5.16",
     "@tailwindcss/vite": "^4.1.18",

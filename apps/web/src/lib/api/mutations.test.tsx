@@ -12,14 +12,14 @@ const addContribution = vi.fn();
 const recordPayment = vi.fn();
 vi.mock("./client", () => ({
   api: {
-    accounts: { create: (...args: unknown[]) => create(...args) },
+    categories: { create: (...args: unknown[]) => create(...args) },
     goalContributions: { add: (...args: unknown[]) => addContribution(...args) },
     debtPayments: { record: (...args: unknown[]) => recordPayment(...args) },
   },
 }));
 
-const input = { name: "Main", type: "bank" as const, balance: { amountMinor: 100, currency: "USD" } };
-const account = { id: "a1", name: "Main", type: "bank", balance: { amountMinor: 100, currency: "USD" } };
+const input = { name: "Food", type: "expense" as const, icon: "utensils", color: "#163300" };
+const category = { id: "c1", name: "Food", type: "expense", isDefault: false };
 
 function setup(retry: boolean | number = false) {
   const queryClient = new QueryClient({ defaultOptions: { mutations: { retry, retryDelay: 0 } } });
@@ -27,7 +27,7 @@ function setup(retry: boolean | number = false) {
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
   const invalidate = vi.spyOn(queryClient, "invalidateQueries");
-  const { result } = renderHook(() => useApiMutation("accounts", "create"), { wrapper });
+  const { result } = renderHook(() => useApiMutation("categories", "create"), { wrapper });
   return { result, invalidate };
 }
 
@@ -40,7 +40,7 @@ describe("useApiMutation", () => {
     const { result } = setup();
     create.mockRejectedValueOnce(new FinanceApiError("network_error", "Request failed", null));
     await act(() => result.current.mutateAsync(input).catch(() => undefined));
-    create.mockResolvedValue({ account });
+    create.mockResolvedValue({ category });
     await act(() => result.current.mutateAsync({ ...input }));
     await act(() => result.current.mutateAsync(input));
 
@@ -52,7 +52,7 @@ describe("useApiMutation", () => {
 
   it("keeps the key across React Query's own retries", async () => {
     const { result } = setup(1);
-    create.mockRejectedValueOnce(new FinanceApiError("network_error", "Request failed", null)).mockResolvedValue({ account });
+    create.mockRejectedValueOnce(new FinanceApiError("network_error", "Request failed", null)).mockResolvedValue({ category });
     await act(() => result.current.mutateAsync(input));
     expect(create).toHaveBeenCalledTimes(2);
     expect(keyOf(create.mock.calls[1]!)).toBe(keyOf(create.mock.calls[0]!));
@@ -64,12 +64,11 @@ describe("useApiMutation", () => {
     await act(() => result.current.mutateAsync(input).catch(() => undefined));
     expect(invalidate).not.toHaveBeenCalled();
 
-    create.mockResolvedValue({ account });
+    create.mockResolvedValue({ category });
     await act(() => result.current.mutateAsync(input));
     await waitFor(() =>
       expect(invalidate.mock.calls.map(([filters]) => filters?.queryKey)).toEqual([
-        queryKeys.accounts.all(),
-        queryKeys.reports.all(),
+        queryKeys.categories.all(),
       ]),
     );
   });

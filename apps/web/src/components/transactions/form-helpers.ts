@@ -1,4 +1,6 @@
-import type { Account, RouteInput, Transaction, UserRoutes } from "@mpf/finance-contract";
+import type { RouteInput, Transaction, UserRoutes } from "@mpf/finance-contract";
+
+import type { Account } from "@/lib/api/trpc";
 
 import { ACCOUNT_THEMES } from "@/lib/accounts";
 

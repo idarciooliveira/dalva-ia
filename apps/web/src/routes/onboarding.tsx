@@ -2,16 +2,16 @@ import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { formatMinorAmount } from "@mpf/finance-contract";
-import type { Account, RouteInput, UserRoutes } from "@mpf/finance-contract";
 
 import { useAuthGuard } from "@/hooks/use-auth-guard";
 import { useSignOut } from "@/hooks/use-session";
 import { createAccountDraft, type AccountDraft } from "@/lib/accounts";
-import { useApiMutation } from "@/lib/api/mutations";
+import { useApiMutation, useTrpcMutation } from "@/lib/api/mutations";
 import { accountsQuery, defaultCategoriesQuery } from "@/lib/api/queries";
 import { queryKeys } from "@/lib/api/keys";
 import { apiErrorMessage } from "@/lib/api/errors";
 import { fingerprint } from "@/lib/api/idempotency";
+import { trpc, type Account, type RouterInputs } from "@/lib/api/trpc";
 import { parseDecimalInput } from "@/lib/money";
 import { FormError, FullPageError } from "@/components/error-state";
 import { StepIndicator } from "@/components/onboarding/step-indicator";
@@ -46,7 +46,7 @@ function OnboardingPage() {
   return <OnboardingWizard initialCurrency={baseCurrency ?? "USD"} resumed={baseCurrency !== undefined} />;
 }
 
-type AccountInput = RouteInput<UserRoutes["accounts"]["create"]>;
+type AccountInput = RouterInputs["accounts"]["create"];
 /** What onboarding last saved for a draft, so a later Continue only sends the difference. */
 type SavedAccount = { accountId: string; input: AccountInput };
 
@@ -103,11 +103,11 @@ function OnboardingWizard({ initialCurrency, resumed }: { initialCurrency: strin
   const { mutateAsync: createProfile, isPending: isCreatingProfile } =
     useApiMutation("profile", "create");
   const { mutateAsync: createAccount, isPending: isCreatingAccount } =
-    useApiMutation("accounts", "create");
+    useTrpcMutation(trpc.accounts.create.mutationOptions());
   const { mutateAsync: updateAccount, isPending: isUpdatingAccount } =
-    useApiMutation("accounts", "update");
+    useTrpcMutation(trpc.accounts.update.mutationOptions());
   const { mutateAsync: deleteAccount, isPending: isDeletingAccount } =
-    useApiMutation("accounts", "delete");
+    useTrpcMutation(trpc.accounts.delete.mutationOptions());
 
   // Resumed onboarding: show the accounts created last time as the drafts.
   const existingAccounts = useQuery({ ...accountsQuery(), enabled: resumed });

@@ -5,6 +5,7 @@ import { routeTree } from "./routeTree.gen";
 
 import { queryKeys } from "@/lib/api/keys";
 import { isApiError, isTransientError } from "@/lib/api/errors";
+import { bindTrpcQueryClient } from "@/lib/api/trpc";
 import { resetDataOnUserChange } from "@/lib/auth-client";
 
 export function getRouter() {
@@ -35,6 +36,8 @@ export function getRouter() {
       },
     },
   });
+
+  bindTrpcQueryClient(queryClient);
 
   // No query of one user may serve another (sign out, or a sign-in in another tab).
   if (typeof window !== "undefined") resetDataOnUserChange(queryClient);
