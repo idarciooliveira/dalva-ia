@@ -4,11 +4,9 @@
  * the same and rolls back, so it also proves the rows pass every constraint.
  */
 import { randomBytes } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { verifyPassword } from "better-auth/crypto";
 import { sql } from "drizzle-orm";
+import { readMigrationFiles } from "drizzle-orm/migrator";
 import type { PgTable } from "drizzle-orm/pg-core";
 
 import type { Database } from "../db/client";
@@ -144,11 +142,16 @@ export async function writeImport(db: Database, plan: ImportPlan, options: { dry
 }
 
 async function assertMigrated(tx: Tx) {
-  const journal = JSON.parse(await readFile(join(MIGRATIONS_FOLDER, "meta", "_journal.json"), "utf8")) as { entries: { when: number }[] };
-  const expected = journal.entries.map((entry) => String(entry.when));
+  // Timestamps and content hashes, as drizzle's migrator records them: a different file with the same timestamp is
+  // a different schema.
+  const expected = readMigrationFiles({ migrationsFolder: MIGRATIONS_FOLDER }).map((m) => `${m.folderMillis}:${m.hash}`);
   const [table] = await tx.execute<{ exists: boolean }>(sql`select to_regclass('drizzle.__drizzle_migrations') is not null as exists`);
   const applied = table?.exists
-    ? (await tx.execute<{ when: string }>(sql`select created_at::text as when from drizzle.__drizzle_migrations order by created_at`)).map((row) => row.when)
+    ? (
+        await tx.execute<{ entry: string }>(
+          sql`select created_at::text || ':' || hash as entry from drizzle.__drizzle_migrations order by created_at`,
+        )
+      ).map((row) => row.entry)
     : [];
   if (applied.join() !== expected.join()) {
     throw new ImportRefusedError(

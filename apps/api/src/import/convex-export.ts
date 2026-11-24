@@ -20,14 +20,22 @@ export type ConvexExport = Map<string, unknown[]>;
 
 const TABLE_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 const DOCUMENTS_FILE = /^([A-Za-z][A-Za-z0-9_]*)\/documents\.jsonl$/;
+const SCHEMA_FILE = /^([A-Za-z][A-Za-z0-9_]*)\/generated_schema\.jsonl$/;
 
 export async function readConvexExport(path: string): Promise<ConvexExport> {
   const info = await stat(path);
-  const files = info.isDirectory() ? await readDirectory(path) : readZip(await readFile(path), (name) => DOCUMENTS_FILE.test(name));
+  const files = info.isDirectory()
+    ? await readDirectory(path)
+    : readZip(await readFile(path), (name) => DOCUMENTS_FILE.test(name) || SCHEMA_FILE.test(name));
   const tables: ConvexExport = new Map();
   for (const [name, content] of files) {
     const match = DOCUMENTS_FILE.exec(name);
     if (match) tables.set(match[1]!, parseJsonl(content, name));
+  }
+  for (const name of files.keys()) {
+    // An exported table always has its documents file, empty for an empty table: this export is incomplete.
+    const table = SCHEMA_FILE.exec(name)?.[1];
+    if (table && !tables.has(table)) throw new Error(`${table}/documents.jsonl is missing: the export is incomplete`);
   }
   if (tables.size === 0) throw new Error("no <table>/documents.jsonl in the export: is this a `npx convex export`?");
   return tables;
@@ -38,11 +46,9 @@ async function readDirectory(root: string): Promise<Map<string, Buffer>> {
   for (const entry of await readdir(root, { withFileTypes: true })) {
     // `_storage`, `_components`, `_tables`: not tables, never read.
     if (!entry.isDirectory() || !TABLE_NAME.test(entry.name)) continue;
-    const content = await readOptional(join(root, entry.name, "documents.jsonl"));
-    if (content) files.set(`${entry.name}/documents.jsonl`, content);
-    else if (await readOptional(join(root, entry.name, "generated_schema.jsonl"))) {
-      // An exported table always has its documents file, empty for an empty table: this export is incomplete.
-      throw new Error(`${entry.name}/documents.jsonl is missing: the export is incomplete`);
+    for (const file of ["documents.jsonl", "generated_schema.jsonl"]) {
+      const content = await readOptional(join(root, entry.name, file));
+      if (content) files.set(`${entry.name}/${file}`, content);
     }
   }
   return files;
@@ -154,8 +160,9 @@ export function readZip(zip: Buffer, wanted: (name: string) => boolean = () => t
 
 function findEocd(zip: Buffer): number {
   // The record is 22 bytes plus a comment of up to 64 KiB, at the very end.
+  // Its comment length must end it exactly at the end of the file: a signature inside a comment is not it.
   for (let at = zip.length - 22; at >= Math.max(0, zip.length - 22 - 0xffff); at--) {
-    if (zip.readUInt32LE(at) === EOCD) return at;
+    if (zip.readUInt32LE(at) === EOCD && at + 22 + zip.readUInt16LE(at + 20) === zip.length) return at;
   }
   throw new Error("not a zip file (no end of central directory)");
 }

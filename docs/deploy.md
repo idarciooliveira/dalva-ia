@@ -55,10 +55,11 @@ docker run -d --rm --name dalva-import -e POSTGRES_USER=dalva -e POSTGRES_PASSWO
   -p 127.0.0.1:55432:5432 postgres:18.7-alpine
 until docker exec dalva-import pg_isready -q -h 127.0.0.1 -U dalva -d dalva; do sleep 1; done   # TCP is up only after initdb
 export DATABASE_URL=postgres://dalva:dalva@127.0.0.1:55432/dalva
-(cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/rehearsal.zip --dry-run --report ~/dalva-cutover/rehearsal.json)
+IMPORT_FLAGS=""                                  # add --drop-invalid / --accept-lone-legs only if the rehearsal approves them
+(cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/rehearsal.zip --dry-run $IMPORT_FLAGS --report ~/dalva-cutover/rehearsal.json)
 ```
 
-Check that `source.users` in the report matches the user count in the dashboard: a wrong deployment still passes every check. Every error must be fixed in Convex, or accepted with `--drop-invalid` / `--accept-lone-legs`, before the real run. Read `changedByImport`. List the `email_case_merge` users: they keep one password (the other duplicate's stops working) and, with `identity_unlinked`, one Telegram chat; tell them before cutover. Also check that `convex export` works while the deployment is paused (step 2). If it doesn't, stop and find another way to block writes server-side before the cutover: an unpaused deployment still takes writes from browser tabs that are already open. Then rehearse step 3 end to end once (real run, dump, restore) against the staging stack, and `docker stop dalva-import`.
+Check that `source.users` in the report matches the user count in the dashboard: a wrong deployment still passes every check. Every error must be fixed in Convex, or accepted with `--drop-invalid` / `--accept-lone-legs` in `IMPORT_FLAGS`, before the real run; step 3 reuses the same flags. Read `changedByImport`. List the `email_case_merge` users: they keep one password (the other duplicate's stops working) and, with `identity_unlinked`, one Telegram chat; tell them before cutover. Also check that `convex export` works while the deployment is paused (step 2). If it doesn't, stop and find another way to block writes server-side before the cutover: an unpaused deployment still takes writes from browser tabs that are already open. Then rehearse step 3 end to end once (real run, dump, restore) against the staging stack, and `docker stop dalva-import`.
 
 Bring up the production stack beforehand with an empty database (the deploy steps in this file, production hostname and bot) but without routing traffic to it. The `backup restore` command and `dalva_backups` volume used below come from it.
 
@@ -75,7 +76,8 @@ Same as the rehearsal from the repo root, with a fresh scratch database and no `
 ```bash
 (cd packages/backend && CONVEX_DEPLOYMENT=$CONVEX_PROD bunx convex export --path ~/dalva-cutover/cutover.zip)
 # fresh dalva-import container and pg_isready wait, as in step 1
-(cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/cutover.zip --report ~/dalva-cutover/cutover.json)   # exit 0, "committed"
+(cd apps/api && bun run db:migrate && bun run migrate:convex ~/dalva-cutover/cutover.zip $IMPORT_FLAGS --report ~/dalva-cutover/cutover.json) \
+  || { echo "import not committed: stop here"; false; }   # exit 0, "committed"
 (umask 077; docker exec dalva-import pg_dump -U dalva -d dalva --format=custom --no-owner > ~/dalva-cutover/cutover.dump)
 ```
 
@@ -88,13 +90,18 @@ cd dalva/deploy
 docker run --rm -v dalva_backups:/b -v ~/dalva-cutover-in:/in alpine cp /in/cutover.dump /b/ && rm -r ~/dalva-cutover-in
 docker compose stop api agent web
 docker compose exec postgres psql -U dalva -d postgres -c 'drop database dalva with (force)'
-docker compose run --rm backup restore cutover.dump dalva
-docker compose up -d                              # migrate: Exited (0), nothing to apply
+docker compose run --rm backup restore cutover.dump dalva || echo "RESTORE FAILED: keep the stack stopped"
 docker compose exec postgres psql -U dalva -d dalva -c \
   "select (select count(*) from users) users, (select count(*) from accounts) accounts, (select count(*) from transactions) transactions"
 ```
 
-The counts must equal `verification.rowCounts` in `cutover.json`.
+Start the stack only after the restore succeeded and the counts equal `verification.rowCounts` in `cutover.json`:
+
+```bash
+docker compose up -d                              # migrate: Exited (0), nothing to apply
+```
+
+If the restore failed, api, agent and web are still stopped: drop the partial `dalva` database again and repeat the restore. Production is still frozen on Convex, so nothing is lost while you retry.
 
 ### 4. Switch
 
@@ -115,4 +122,4 @@ Sign in as a real user with their existing password, check accounts and balances
 
 Keep Convex (paused), the Vercel project, the legacy agent stack and `legacy-convex` untouched for two weeks. Delete the export, dumps and reports from the dev machine.
 
-Rollback: web in maintenance on the new stack, unpause Convex, point the hostname back to Vercel and take the maintenance page down, start the legacy agent and re-register the webhook on its URL. Anything written on the new stack since cutover is lost; there is no sync back.
+Rollback: web in maintenance on the new stack, then `docker compose stop agent api` so nothing writes to the new database (the agent may still be working on an update it received). Then unpause Convex, point the hostname back to Vercel and take the maintenance page down, start the legacy agent and re-register the webhook on its URL. Anything written on the new stack since cutover is lost; there is no sync back.

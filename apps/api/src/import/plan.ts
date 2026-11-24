@@ -353,6 +353,10 @@ class Fields {
   }
 }
 
+/** Convex ids are short base32 strings. Anything else (an email, free text) never goes into a report. */
+const CONVEX_ID = /^[A-Za-z0-9_]{1,64}$/;
+const reportedId = (value: string) => (CONVEX_ID.test(value) ? value : "<not an id>");
+
 /** `a` is strictly greater than `b`, compared element by element. */
 function ranksHigher(a: number[], b: number[]): boolean {
   const i = a.findIndex((value, index) => value !== b[index]);
@@ -420,12 +424,13 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
         candidate === null ||
         Array.isArray(candidate) ||
         typeof candidate._id !== "string" ||
+        !CONVEX_ID.test(candidate._id) ||
         typeof candidate._creationTime !== "number" ||
         !Number.isFinite(candidate._creationTime) ||
         candidate._creationTime < 0 ||
         candidate._creationTime >= 2 ** 48
       ) {
-        issues.add({ code: "invalid_document", table, id: typeof candidate?._id === "string" ? candidate._id : undefined, detail: "missing _id or _creationTime" });
+        issues.add({ code: "invalid_document", table, id: typeof candidate?._id === "string" && CONVEX_ID.test(candidate._id) ? candidate._id : undefined, detail: "missing or malformed _id or _creationTime" });
         continue;
       }
       if (seen.has(candidate._id)) {
@@ -450,7 +455,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
   // Sessions are not migrated, only read for the merge: a malformed one is ignored, not an error.
   for (const session of source.get("authSessions") ?? []) {
     const { userId, _creationTime: at } = (session ?? {}) as Partial<ConvexDoc>;
-    if (typeof userId === "string" && typeof at === "number") lastSignIn.set(userId, Math.max(lastSignIn.get(userId) ?? 0, at));
+    if (typeof userId === "string" && typeof at === "number" && Number.isFinite(at) && at >= 0 && at < 2 ** 48) lastSignIn.set(userId, Math.max(lastSignIn.get(userId) ?? 0, at));
   }
 
   const userIds = new Set(userDocs.map((doc) => doc._id));
@@ -594,11 +599,11 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     if (convexId === undefined) return null;
     const target = targets.get(targetTable)?.get(convexId);
     if (!target) {
-      issues.add({ code: "nulled_dangling_ref", table: fields.table, id: fields.doc._id, field, detail: `${targetTable} ${convexId}` });
+      issues.add({ code: "nulled_dangling_ref", table: fields.table, id: fields.doc._id, field, detail: `${targetTable} ${reportedId(convexId)}` });
       return null;
     }
     if (target.userId !== owner) {
-      issues.add({ code: "nulled_cross_user_ref", table: fields.table, id: fields.doc._id, field, detail: `${targetTable} ${convexId}` });
+      issues.add({ code: "nulled_cross_user_ref", table: fields.table, id: fields.doc._id, field, detail: `${targetTable} ${reportedId(convexId)}` });
       return null;
     }
     return target.id;
@@ -612,7 +617,7 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     const problem = !target ? "dangling" : target.userId !== owner ? "cross_user" : undefined;
     if (!problem) return target!.id;
     const code: IssueCode = options.dropInvalid ? `dropped_${problem}_required_ref` : `${problem}_required_ref`;
-    issues.add({ code, table: fields.table, id: fields.doc._id, field, detail: `${targetTable} ${convexId}` });
+    issues.add({ code, table: fields.table, id: fields.doc._id, field, detail: `${targetTable} ${reportedId(convexId)}` });
     return undefined;
   };
 
@@ -786,19 +791,19 @@ export function planImport(source: ConvexExport, options: PlanOptions = {}): Imp
     if (balance && fields.ok) balance.convexEffect += convexEffect(type, amount, typeof doc.destinationAccountId === "string");
   }
 
-  // An outgoing leg that lost its destination still reads as outgoing while its pair has no account (the
-  // usual case: the destination was deleted). If the pair kept an account, both legs read as incoming.
+  // An outgoing leg that lost its destination still reads as outgoing while its pair has neither account nor
+  // destination (the usual case: the destination was deleted). Otherwise it reads as incoming (see write.ts).
   const imported = new Map(rows.transactions.map((row) => [row.id, row]));
   for (const { doc } of transactionDocs) {
     const row = imported.get(idOf("transactions", doc));
     if (!row || row.type !== "transfer" || row.destinationAccountId !== null || row.linkedTransactionId == null) continue;
     const pair = imported.get(row.linkedTransactionId);
-    if (typeof doc.destinationAccountId !== "string" || !pair?.accountId) continue;
+    if (typeof doc.destinationAccountId !== "string" || !pair || (!pair.accountId && !pair.destinationAccountId)) continue;
     issues.add({
       code: options.acceptLoneLegs ? "accepted_lone_outgoing_leg" : "lone_outgoing_leg_without_destination",
       table: "transactions",
       id: doc._id,
-      detail: "its linked leg kept an account, so both legs read as incoming",
+      detail: "its linked leg kept an account or destination, so this leg reads as incoming",
     });
   }
 

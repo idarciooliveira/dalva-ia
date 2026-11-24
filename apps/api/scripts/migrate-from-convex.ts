@@ -94,7 +94,8 @@ try {
   const json = `${JSON.stringify(report, null, 2)}\n`;
   try {
     if (args.values.report) await writePrivate(args.values.report, json);
-    else process.stdout.write(json);
+    // Wait for the pipe to take it all: process.exit drops pending stdout writes.
+    else await new Promise<void>((done, fail) => process.stdout.write(json, (error) => (error ? fail(error) : done())));
   } catch (error) {
     // The import's outcome stands (see the summary); only the report is missing.
     process.stderr.write(`report not written: ${(error as Error).message}\n`);

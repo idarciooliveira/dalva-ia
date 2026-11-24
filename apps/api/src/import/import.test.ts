@@ -1,6 +1,6 @@
 /** The Convex import, on a synthetic export: rules, write, verification, and sign-in as an imported user. */
 import { execFile } from "node:child_process";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
@@ -128,6 +128,17 @@ describe("reading an export", () => {
     const dir = await writeExportDir(convexFixture());
     await rm(join(dir, "transactions", "documents.jsonl"));
     await expect(readConvexExport(dir)).rejects.toThrow(/transactions\/documents.jsonl is missing/);
+    const zipFile = join(await writeExportDir({}), "partial.zip");
+    await writeFile(zipFile, zip([["users/documents.jsonl", doc], ["transactions/generated_schema.jsonl", Buffer.from('"any"\n')]]));
+    await expect(readConvexExport(zipFile)).rejects.toThrow(/transactions\/documents.jsonl is missing/);
+  });
+
+  it("finds the end record even when the zip comment contains its signature", () => {
+    const good = zip([["users/documents.jsonl", Buffer.from('{"_id":"u","_creationTime":1}\n')]]);
+    const comment = Buffer.concat([Buffer.from([0x50, 0x4b, 0x05, 0x06]), Buffer.alloc(18, 0xff)]);
+    const withComment = Buffer.concat([good, comment]);
+    withComment.writeUInt16LE(comment.length, good.length - 2);
+    expect([...readZip(withComment).keys()]).toEqual(["users/documents.jsonl"]);
   });
 });
 
@@ -248,6 +259,18 @@ describe("plan", () => {
   it("skips rows whose owner doesn't exist", () => {
     const { report } = plan(asExport(convexFixture()));
     expect(issues(report.warnings, "orphan_owner").map((issue) => `${issue.table} ${issue.id}`)).toEqual(["accounts a_ghost", "transactions t_ghost"]);
+  });
+
+  it("never copies a value that is not a Convex id into the report", () => {
+    const fixture = variant((f) => void (find(f, "debtPayments", "dp_1").debtId = "someone@example.com"));
+    const { report } = plan(asExport(fixture));
+    expect(JSON.stringify(report)).not.toMatch(/@example\.com/);
+    expect(issues(report.errors, "dangling_required_ref")).toEqual([expect.objectContaining({ id: "dp_1", detail: "debts <not an id>" })]);
+  });
+
+  it("ignores sessions with a timestamp that is not a real instant when ranking a merge", () => {
+    const fixture = variant((f) => f.authSessions!.push({ _id: "s_bad", _creationTime: Infinity, userId: "u_ana" }));
+    expect(issues(plan(asExport(fixture)).report.warnings, "email_case_merge")).toEqual([expect.objectContaining({ id: "u_ana2" })]);
   });
 
   it("keeps a skipped transaction's Convex effect on a kept account in the balance baseline", () => {
@@ -499,6 +522,10 @@ describe("write", () => {
     await testDb().execute(sql`delete from drizzle.__drizzle_migrations where id = ${last!.id}`);
     try {
       await expect(importFixture()).rejects.toThrow(/not at the current migration/);
+      // Same timestamp, different file.
+      await testDb().execute(sql`insert into drizzle.__drizzle_migrations (id, hash, created_at) values (${last!.id}, 'other', ${last!.created_at}::bigint)`);
+      await expect(importFixture()).rejects.toThrow(/not at the current migration/);
+      await testDb().execute(sql`delete from drizzle.__drizzle_migrations where id = ${last!.id}`);
     } finally {
       await testDb().execute(sql`insert into drizzle.__drizzle_migrations (id, hash, created_at) values (${last!.id}, ${last!.hash}, ${last!.created_at}::bigint)`);
     }
