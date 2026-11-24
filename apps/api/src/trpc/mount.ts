@@ -1,4 +1,5 @@
 import { trpcServer } from "@hono/trpc-server";
+import type { AnyTRPCRouter } from "@trpc/server";
 import type { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 
@@ -6,13 +7,14 @@ import type { Database } from "../db/client";
 import { type AppEnv, INVALID_CREDENTIALS, type PrincipalSource, principalFrom } from "../http/principal";
 import { MAX_BODY_BYTES } from "../http/router";
 import { errorFields, type Logger } from "../log";
-import { IDEMPOTENCY_KEY_HEADER, type TrpcContext } from "./init";
+import type { UserTokens } from "../auth/tokens";
+import { IDEMPOTENCY_KEY_HEADER, type TrpcContext, type TrpcSettings } from "./init";
 import { appRouter } from "./router";
 
 export const TRPC_BASE_PATH = "/api/trpc";
 
 /** tRPC at `/api/trpc`, next to the `/api/v1` contract routes, with the same credentials. */
-export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Logger; sources: readonly PrincipalSource[] }): void {
+export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Logger; sources: readonly PrincipalSource[]; tokens: UserTokens; settings: TrpcSettings; router?: AnyTRPCRouter }): void {
   const path = `${TRPC_BASE_PATH}/*`;
 
   app.use(path, async (c, next) => {
@@ -39,7 +41,7 @@ export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Lo
     path,
     trpcServer({
       endpoint: TRPC_BASE_PATH,
-      router: appRouter,
+      router: options.router ?? appRouter,
       createContext: async (opts, c): Promise<TrpcContext> => {
         const result = await principalFrom(c, options.sources);
         return {
@@ -50,6 +52,8 @@ export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Lo
           idempotencyKey: c.req.header(IDEMPOTENCY_KEY_HEADER),
           batchSize: opts.info.calls.length,
           resHeaders: opts.resHeaders,
+          tokens: options.tokens,
+          settings: options.settings,
         };
       },
       responseMeta: ({ errors }) =>

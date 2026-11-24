@@ -1,4 +1,5 @@
-import type { ErrorCode } from "@mpf/finance-contract";
+/** The API's error codes, on `error.data.apiCode`. */
+export type ErrorCode = "unauthorized" | "forbidden" | "not_found" | "validation_failed" | "conflict" | "rate_limited" | "internal";
 
 /**
  * An expected failure, with the contract error code the API answers with.

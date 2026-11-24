@@ -1,27 +1,26 @@
-import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { raw, seedUser, tokenFor } from "../../test/api";
 import { testApp } from "../../test/app";
-import { createLogger } from "../log";
 import { ACCOUNT_IN_USE_MESSAGE } from "../domain/accounts";
 import { conflict, DomainError, invalid, notFound } from "../domain/errors";
-import { operation } from "./operation";
-import { operations } from "./v1";
+import { createLogger } from "../log";
+import { financeRead, router } from "./init";
 
-/** The app with `accounts.list` swapped for a handler that throws `error`. */
+/** The app with an `accounts.list` that throws `error`. */
 function throwing(error: unknown) {
   const lines: Array<Record<string, unknown>> = [];
   const logger = createLogger({ level: "debug", write: (line) => lines.push(JSON.parse(line)) });
-  const list = operation(routes.accounts.list, async () => {
+  const list = financeRead.input(z.object({}).optional()).query(() => {
     throw error;
   });
-  const { app } = testApp({ logger, operations: { ...operations, accounts: { ...operations.accounts, list } } });
+  const { app } = testApp({ logger, router: router({ accounts: router({ list }) }) });
   return { app, lines };
 }
 
-describe("api/v1 errors", () => {
-  it("maps a DomainError to its envelope and status", async () => {
+describe("errors", () => {
+  it("maps a DomainError to its code, message, details and status", async () => {
     const token = await tokenFor(await seedUser());
     const cases = [
       [notFound("Account"), 404, { code: "not_found", message: "Account not found" }],
@@ -38,7 +37,7 @@ describe("api/v1 errors", () => {
       [new DomainError("rate_limited", "Slow down", { retryAfter: 1 }), 429, { code: "rate_limited", message: "Slow down", details: { retryAfter: 1 } }],
     ] as const;
     for (const [error, status, body] of cases) {
-      const response = await raw(throwing(error).app, "GET", "/accounts", { token });
+      const response = await raw(throwing(error).app, "accounts.list", {}, { token });
       expect(response.status).toBe(status);
       expect(response.body).toEqual({ ok: false, error: body });
     }
@@ -47,9 +46,13 @@ describe("api/v1 errors", () => {
   it("answers anything else with a bare 500, logged without its message", async () => {
     const token = await tokenFor(await seedUser());
     const { app, lines } = throwing(Object.assign(new Error("relation secret_table: password=hunter2"), { code: "42P01" }));
-    const response = await raw(app, "GET", "/accounts", { token });
+    const response = await app.request(`/api/trpc/accounts.list?input=${encodeURIComponent("{}")}`, { headers: { authorization: `Bearer ${token}` } });
     expect(response.status).toBe(500);
-    expect(response.body).toEqual({ ok: false, error: { code: "internal", message: "Internal error" } });
+    const body = await response.text();
+    expect(JSON.parse(body)).toEqual({
+      error: { message: "Internal error", code: -32603, data: { code: "INTERNAL_SERVER_ERROR", httpStatus: 500, path: "accounts.list", apiCode: "internal" } },
+    });
+    expect(body).not.toContain("hunter2");
     expect(lines).toEqual([expect.objectContaining({ level: "error", msg: "request_failed", errorName: "Error", errorCode: "42P01" })]);
     expect(JSON.stringify(lines)).not.toContain("hunter2");
   });

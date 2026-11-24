@@ -1,11 +1,10 @@
-import { routes } from "@mpf/finance-contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
   clientFor,
   expectApiError,
-  expectConforms,
+  expectOk,
   expectError,
   oneUser,
   raw,
@@ -13,9 +12,9 @@ import {
   tokenFor,
   transactionRows,
   twoUsers,
-} from "../../../test/api";
-import { testDb } from "../../../test/db";
-import { categories, subcategories, transactions } from "../../db/schema";
+} from "../../test/api";
+import { testDb } from "../../test/db";
+import { categories, subcategories, transactions } from "../db/schema";
 
 const KEY = "categories-test-key";
 
@@ -41,7 +40,7 @@ describe("api/v1 categories and subcategories", () => {
     const food = await seedCategory(alice);
     const old = await seedCategory(alice, { name: "Old", archived: true });
 
-    const list = expectConforms(routes.categories.list, await raw(app, "GET", "/categories", { token: await tokenFor(alice) }));
+    const list = expectOk(await raw(app, "categories.list", {}, { token: await tokenFor(alice) }));
     expect(list).toEqual({ items: [{ id: food, name: "Food", type: "expense", isDefault: false }] });
     const all = await asAlice.categories.list({ includeArchived: true });
     expect(all.items.map((c) => c.id)).toEqual([food, old]);
@@ -56,10 +55,7 @@ describe("api/v1 categories and subcategories", () => {
     const archived = await seedSub(alice, food, { archived: true, name: "Old" });
     const games = await seedSub(alice, fun, { name: "Games" });
 
-    const one = expectConforms(
-      routes.subcategories.list,
-      await raw(app, "GET", `/subcategories?categoryId=${food}`, { token: await tokenFor(alice) }),
-    );
+    const one = expectOk(await raw(app, "subcategories.list", { categoryId: food }, { token: await tokenFor(alice) }));
     expect(one).toEqual({ items: [{ id: groceries, categoryId: food, name: "Groceries", archived: false, sortOrder: 0 }] });
     expect((await asAlice.subcategories.list({ categoryId: food, includeArchived: true })).items.map((s) => s.id)).toEqual([
       groceries,
@@ -148,10 +144,10 @@ describe("api/v1 categories and subcategories", () => {
     const token = await tokenFor(user);
     const food = await seedCategory(user);
     const sub = await seedSub(user, food);
-    const send = (method: string, path: string, body: unknown) => raw(app, method, path, { token, body, idempotencyKey: KEY });
-    expectError(await send("POST", "/categories", { name: "   ", type: "expense", icon: "a", color: "#000" }), "validation_failed", 400);
-    expectError(await send("POST", "/subcategories", { categoryId: food, name: "  " }), "validation_failed", 400);
-    expectError(await send("PATCH", `/subcategories/${sub}`, { name: "  " }), "validation_failed", 400);
+    const send = (path: string, input: unknown) => raw(app, path, input, { token, idempotencyKey: KEY });
+    expectError(await send("categories.create", { name: "   ", type: "expense", icon: "a", color: "#000" }), "validation_failed", 400);
+    expectError(await send("subcategories.create", { categoryId: food, name: "  " }), "validation_failed", 400);
+    expectError(await send("subcategories.update", { id: sub, name: "  " }), "validation_failed", 400);
     expect(await testDb().select().from(categories)).toHaveLength(1);
   });
 
@@ -194,9 +190,9 @@ describe("api/v1 categories and subcategories", () => {
     const { app, user } = await oneUser();
     const token = await tokenFor(user);
     const body = { selectedNames: ["Salary"] };
-    const first = await raw(app, "POST", "/categories/defaults", { token, body, idempotencyKey: KEY });
-    const again = await raw(app, "POST", "/categories/defaults", { token, body, idempotencyKey: KEY });
-    expect((expectConforms(routes.categories.seedDefaults, first) as { items: unknown[] }).items).toHaveLength(1);
+    const first = await raw(app, "categories.seedDefaults", body, { token, idempotencyKey: KEY });
+    const again = await raw(app, "categories.seedDefaults", body, { token, idempotencyKey: KEY });
+    expect((expectOk(first) as { items: unknown[] }).items).toHaveLength(1);
     expect(again.body).toEqual(first.body);
     expect(again.headers.get("Idempotent-Replayed")).toBe("true");
   });

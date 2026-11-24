@@ -1,4 +1,3 @@
-import { routes } from "@mpf/finance-contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -6,7 +5,7 @@ import {
   balanceOf,
   expectApiError,
   getTransactionRow,
-  expectConforms,
+  expectOk,
   raw,
   seedAccount,
   seedChannelIdentity,
@@ -15,10 +14,10 @@ import {
   tokenFor,
   transactionRows,
   twoUsers,
-} from "../../../test/api";
-import { testDb } from "../../../test/db";
-import { transactions } from "../../db/schema";
-import { MISSING_ACCOUNT_ID } from "./shared";
+} from "../../test/api";
+import { testDb } from "../../test/db";
+import { transactions } from "../db/schema";
+import { MISSING_ACCOUNT_ID } from "./dto";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
@@ -27,12 +26,13 @@ describe("api/v1 transfers", () => {
     const { app, alice, aliceAccount, asAlice } = await twoUsers();
     const savings = await seedAccount(alice, { name: "Savings" });
 
-    const created = await raw(app, "POST", "/transfers", {
-      token: await tokenFor(alice),
-      idempotencyKey: "transfer-create-01",
-      body: { amount: usd(2_000), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-02-01", note: "Move" },
-    });
-    const { transfer } = expectConforms(routes.transfers.create, created) as { transfer: Record<string, unknown> };
+    const created = await raw(
+      app,
+      "transfers.create",
+      { amount: usd(2_000), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-02-01", note: "Move" },
+      { token: await tokenFor(alice), idempotencyKey: "transfer-create-01" },
+    );
+    const { transfer } = expectOk(created) as { transfer: Record<string, unknown> };
     expect(transfer).toEqual({
       outgoingId: expect.any(String),
       incomingId: expect.any(String),
@@ -91,7 +91,7 @@ describe("api/v1 transfers", () => {
     for (const id of [transfer.outgoingId, transfer.incomingId]) {
       expect((await asAlice.transfers.get({ id })).transfer).toEqual(transfer);
     }
-    expectConforms(routes.transfers.get, await raw(app, "GET", `/transfers/${transfer.incomingId}`, { token: await tokenFor(alice) }));
+    expectOk(await raw(app, "transfers.get", { id: transfer.incomingId }, { token: await tokenFor(alice) }));
 
     const plain = await seedTransaction(alice, aliceAccount);
     await expectApiError(asAlice.transfers.get({ id: plain }), "not_found", 404);
@@ -106,13 +106,14 @@ describe("api/v1 transfers", () => {
     const { app, alice, aliceAccount } = await twoUsers();
     const savings = await seedAccount(alice, { name: "Savings" });
     const chat = await tokenFor(alice, undefined, { channelIdentityId: await seedChannelIdentity(alice) });
-    const created = await raw(app, "POST", "/transfers", {
-      token: chat,
-      idempotencyKey: "transfer-chat-0001",
-      body: { amount: usd(10), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-01" },
-    });
-    const { transfer } = expectConforms(routes.transfers.create, created) as { transfer: { outgoingId: string } };
-    const response = await raw(app, "GET", `/transfers/${transfer.outgoingId}`, { token: chat });
+    const created = await raw(
+      app,
+      "transfers.create",
+      { amount: usd(10), fromAccountId: aliceAccount, toAccountId: savings, date: "2026-01-01" },
+      { token: chat, idempotencyKey: "transfer-chat-0001" },
+    );
+    const { transfer } = expectOk(created) as { transfer: { outgoingId: string } };
+    const response = await raw(app, "transfers.get", { id: transfer.outgoingId }, { token: chat });
     expect(response.status).toBe(403);
   });
 

@@ -1,11 +1,10 @@
-import { routes } from "@mpf/finance-contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
   balanceOf,
   expectApiError,
-  expectConforms,
+  expectOk,
   linkedChat,
   raw,
   seedAccount,
@@ -14,10 +13,10 @@ import {
   tokenFor,
   transactionRows,
   twoUsers,
-} from "../../../test/api";
-import { testDb } from "../../../test/db";
-import { debtPayments, debts } from "../../db/schema";
-import { MISSING_ACCOUNT_ID, MISSING_TRANSACTION_ID } from "./shared";
+} from "../../test/api";
+import { testDb } from "../../test/db";
+import { debtPayments, debts } from "../db/schema";
+import { MISSING_ACCOUNT_ID, MISSING_TRANSACTION_ID } from "./dto";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
@@ -39,7 +38,7 @@ describe("api/v1 debts and payments", () => {
     const { app, alice } = await twoUsers();
     const debt = await carLoan(alice);
     const token = await tokenFor(alice);
-    const list = expectConforms(routes.debts.list, await raw(app, "GET", "/debts", { token })) as { items: unknown[] };
+    const list = expectOk(await raw(app, "debts.list", {}, { token })) as { items: unknown[] };
     expect(list.items).toEqual([
       {
         id: debt,
@@ -52,7 +51,7 @@ describe("api/v1 debts and payments", () => {
         createdAt: "2026-01-01",
       },
     ]);
-    expectConforms(routes.debts.get, await raw(app, "GET", `/debts/${debt}`, { token }));
+    expectOk(await raw(app, "debts.get", { id: debt }, { token }));
   });
 
   it("records a payment split into principal and interest, lists and removes it", async () => {
@@ -129,10 +128,10 @@ describe("api/v1 debts and payments", () => {
   it("creates, updates, archives, restores and deletes debts (web only)", async () => {
     const { app, alice, aliceAccount, asAlice } = await twoUsers();
     const loan = await seedAccount(alice, { name: "Loan", type: "loan", balance: -80_000 });
-    const created = await raw(app, "POST", "/debts", {
-      token: await tokenFor(alice),
-      idempotencyKey: "debt-create-01",
-      body: {
+    const created = await raw(
+      app,
+      "debts.create",
+      {
         name: "Car loan",
         debtType: "loan",
         lender: "Bank",
@@ -143,8 +142,9 @@ describe("api/v1 debts and payments", () => {
         dueDate: "2026-05-01",
         linkedAccountId: loan,
       },
-    });
-    const { debt } = expectConforms(routes.debts.create, created) as { debt: { id: string } };
+      { token: await tokenFor(alice), idempotencyKey: "debt-create-01" },
+    );
+    const { debt } = expectOk(created) as { debt: { id: string } };
     expect(debt).toEqual({
       id: expect.any(String),
       name: "Car loan",

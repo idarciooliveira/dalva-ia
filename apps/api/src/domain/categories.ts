@@ -1,4 +1,3 @@
-import { DEFAULT_CATEGORIES } from "@mpf/finance-contract";
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import { categories, subcategories } from "../db/schema";
@@ -9,7 +8,24 @@ export type Category = typeof categories.$inferSelect;
 export type Subcategory = typeof subcategories.$inferSelect;
 export type CategoryType = Category["type"];
 
-export { DEFAULT_CATEGORIES };
+/** What onboarding offers, in this order (also the seeded `sortOrder`). `name` is what seeding selects by. */
+export const DEFAULT_CATEGORIES: Array<{ name: string; type: CategoryType; icon: string; color: string }> = [
+  { name: "Salary", type: "income", icon: "banknote", color: "#2F5711" },
+  { name: "Freelance / Side Income", type: "income", icon: "laptop", color: "#4A7C23" },
+  { name: "Investments", type: "income", icon: "trending-up", color: "#1A6B3C" },
+  { name: "Gifts", type: "income", icon: "gift", color: "#7C3AED" },
+  { name: "Other Income", type: "income", icon: "plus-circle", color: "#6B7280" },
+  { name: "Food & Dining", type: "expense", icon: "utensils", color: "#F97316" },
+  { name: "Transport", type: "expense", icon: "car", color: "#3B82F6" },
+  { name: "Housing & Rent", type: "expense", icon: "home", color: "#8B5CF6" },
+  { name: "Utilities", type: "expense", icon: "zap", color: "#EAB308" },
+  { name: "Entertainment", type: "expense", icon: "tv", color: "#EC4899" },
+  { name: "Health", type: "expense", icon: "heart-pulse", color: "#EF4444" },
+  { name: "Shopping", type: "expense", icon: "shopping-bag", color: "#F59E0B" },
+  { name: "Education", type: "expense", icon: "graduation-cap", color: "#0EA5E9" },
+  { name: "Subscriptions", type: "expense", icon: "repeat", color: "#6366F1" },
+  { name: "Other Expenses", type: "expense", icon: "more-horizontal", color: "#6B7280" },
+];
 
 const CATEGORY_LIMIT = 200;
 const SUBCATEGORY_PER_CATEGORY_LIMIT = 100;

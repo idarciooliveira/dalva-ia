@@ -48,7 +48,7 @@ export function trpcError(error: DomainError): TRPCError {
 export const fail = (code: ApiErrorCode, message: string, details?: unknown) => trpcError(new DomainError(code, message, details));
 
 /** `{ issues: [{ path, message }] }`, the v1 `validation_failed` details. Works for Zod and Standard Schema issues. */
-function validationIssues(issues: ReadonlyArray<{ path?: ReadonlyArray<PropertyKey | { key: PropertyKey }>; message: string }>) {
+export function validationIssues(issues: ReadonlyArray<{ path?: ReadonlyArray<PropertyKey | { key: PropertyKey }>; message: string }>) {
   return {
     issues: issues.map((issue) => ({
       path: (issue.path ?? []).map((part) => String(typeof part === "object" ? part.key : part)).join("."),

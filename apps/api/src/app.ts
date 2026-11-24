@@ -1,4 +1,5 @@
 import { API_BASE_PATH } from "@mpf/finance-contract";
+import type { AnyTRPCRouter } from "@trpc/server";
 import { sql } from "drizzle-orm";
 import { Hono } from "hono";
 
@@ -31,6 +32,8 @@ export interface AppOptions {
   operationSettings?: OperationSettings;
   /** Service route implementations. Default: every ported service group. */
   serviceOperations?: ServiceOperations;
+  /** The tRPC router. Default: the whole API (tests swap in their own). */
+  trpcRouter?: AnyTRPCRouter;
   /** Public origin (config `PUBLIC_URL`): the only origin allowed to post to the auth routes. */
   publicUrl: string;
   /** How long `/health` waits for `select 1`. Default 2000 ms. */
@@ -120,7 +123,14 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   );
 
   // tRPC proof of concept (accounts only), same credentials as the contract routes.
-  mountTrpc(app, { db: options.db, logger: options.logger, sources: principalSources });
+  mountTrpc(app, {
+    db: options.db,
+    logger: options.logger,
+    sources: principalSources,
+    tokens: options.tokens,
+    settings: { telegramBotUsername: options.operationSettings?.telegramBotUsername },
+    router: options.trpcRouter,
+  });
 
   app.notFound((c) => errorResponse(c, "not_found", "Not found"));
   app.onError((error, c) => {

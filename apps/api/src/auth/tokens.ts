@@ -11,10 +11,17 @@
  * against the identity on every request, so unlinking or switching to
  * read-only applies at once.
  */
-import { type TokenScope, tokenScopeSchema } from "@mpf/finance-contract";
+/**
+ * Scope of the agent store (sessions, messages, pending actions, history).
+ * `channelIdentities.resolve` always grants it, read-only identities included,
+ * so the bot keeps its conversation state.
+ */
+export const AGENT_STATE_SCOPE = "agent:state" as const;
+/** Every scope a user token can carry. */
+export const TOKEN_SCOPES = ["finance:read", "finance:write", AGENT_STATE_SCOPE] as const;
+export type TokenScope = (typeof TOKEN_SCOPES)[number];
 
 export const FINANCE_API_AUDIENCE = "finance-api";
-export const TOKEN_SCOPES: readonly TokenScope[] = tokenScopeSchema.options;
 export const MIN_TOKEN_SECRET_BYTES = 32;
 const MAX_TTL_SECONDS = 365 * 24 * 60 * 60;
 /** Tolerated clock skew for `iat` / `nbf`. `exp` gets none. */

@@ -1,11 +1,10 @@
-import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
 import {
   balanceOf,
   clientFor,
   expectApiError,
-  expectConforms,
+  expectOk,
   getTransactionRow,
   oneUser,
   raw,
@@ -20,9 +19,9 @@ import {
   tokenFor,
   transactionRows,
   twoUsers,
-} from "../../../test/api";
-import { testApp } from "../../../test/app";
-import { MISSING_ACCOUNT_ID } from "./shared";
+} from "../../test/api";
+import { testApp } from "../../test/app";
+import { MISSING_ACCOUNT_ID } from "./dto";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
@@ -65,11 +64,12 @@ describe("api/v1 transactions: writes", () => {
 
   it("rejects type transfer, the wrong sign, a currency mismatch and foreign/malformed references", async () => {
     const { app, alice, bob, aliceAccount, asAlice } = await twoUsers();
-    const transfer = await raw(app, "POST", "/transactions", {
-      token: await tokenFor(alice),
-      idempotencyKey: "tx-transfer-0001",
-      body: { type: "transfer", amount: usd(1), accountId: aliceAccount, date: "2026-01-01" },
-    });
+    const transfer = await raw(
+      app,
+      "transactions.create",
+      { type: "transfer", amount: usd(1), accountId: aliceAccount, date: "2026-01-01" },
+      { token: await tokenFor(alice), idempotencyKey: "tx-transfer-0001" },
+    );
     expect(transfer.status).toBe(400);
 
     const base = { amount: usd(100), accountId: aliceAccount, date: "2026-01-01" } as const;
@@ -274,7 +274,7 @@ describe("api/v1 transactions: get", () => {
     const { transaction, managedBy } = await asAlice.transactions.get({ id });
     expect(transaction).toEqual({ id, type: "expense", amount: usd(1_250), accountId: aliceAccount, categoryId, date: "2026-03-01", description: "Lunch", tags: ["a"] });
     expect(managedBy).toBeUndefined();
-    expectConforms(routes.transactions.get, await raw(app, "GET", `/transactions/${id}`, { token: await tokenFor(alice) }));
+    expectOk(await raw(app, "transactions.get", { id }, { token: await tokenFor(alice) }));
   });
 
   it("flags managed rows: transfer legs, goal-contribution transfers and debt payments", async () => {
@@ -327,7 +327,7 @@ describe("api/v1 transactions: search", () => {
     expect(exact.nextCursor).toBeNull();
   });
 
-  it("filters by account, category, type and date range, and conforms to the contract", async () => {
+  it("filters by account, category, type and date range", async () => {
     const { app, alice, aliceAccount } = await twoUsers();
     const other = await seedAccount(alice, { name: "Other", currency: "EUR" });
     const food = await seedCategory(alice);
@@ -335,18 +335,18 @@ describe("api/v1 transactions: search", () => {
     const b = await seedTransaction(alice, aliceAccount, { date: "2026-03-10", type: "income" });
     const c = await seedTransaction(alice, other, { date: "2026-03-15", categoryId: food });
     const token = await tokenFor(alice);
-    const search = async (query: string) =>
-      expectConforms(routes.transactions.search, await raw(app, "GET", `/transactions?${query}`, { token })) as {
+    const search = async (query: Record<string, unknown>) =>
+      expectOk(await raw(app, "transactions.search", query, { token })) as {
         items: Array<{ id: string; amount: unknown }>;
       };
-    const ids = async (query: string) => (await search(query)).items.map((i) => i.id);
+    const ids = async (query: Record<string, unknown>) => (await search(query)).items.map((i) => i.id);
 
-    expect(await ids(`accountId=${aliceAccount}`)).toEqual([b, a]);
-    expect(await ids(`categoryId=${food}`)).toEqual([c, a]);
-    expect(await ids("type=income")).toEqual([b]);
-    expect(await ids("dateFrom=2026-03-01&dateTo=2026-03-12")).toEqual([b]);
-    expect(await ids(`categoryId=${food}&accountId=${other}&dateFrom=2026-03-01`)).toEqual([c]);
-    expect((await search(`accountId=${other}`)).items[0]?.amount).toEqual({ amountMinor: 100, currency: "EUR" });
+    expect(await ids({ accountId: aliceAccount })).toEqual([b, a]);
+    expect(await ids({ categoryId: food })).toEqual([c, a]);
+    expect(await ids({ type: "income" })).toEqual([b]);
+    expect(await ids({ dateFrom: "2026-03-01", dateTo: "2026-03-12" })).toEqual([b]);
+    expect(await ids({ categoryId: food, accountId: other, dateFrom: "2026-03-01" })).toEqual([c]);
+    expect((await search({ accountId: other })).items[0]?.amount).toEqual({ amountMinor: 100, currency: "EUR" });
   });
 
   it("matches q case-insensitively over description, note and payee", async () => {

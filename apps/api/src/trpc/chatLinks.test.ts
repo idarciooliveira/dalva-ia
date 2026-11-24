@@ -12,10 +12,10 @@ import {
   serviceClientFor,
   tokenFor,
   type TestApp,
-} from "../../../test/api";
-import { testApp } from "../../../test/app";
-import { testDb } from "../../../test/db";
-import { agentMessages, agentPendingActions, agentSessions, apiIdempotencyKeys, channelIdentities, channelLinkCodes } from "../../db/schema";
+} from "../../test/api";
+import { testApp } from "../../test/app";
+import { testDb } from "../../test/db";
+import { agentMessages, agentPendingActions, agentSessions, apiIdempotencyKeys, channelIdentities, channelLinkCodes } from "../db/schema";
 
 const TG = "telegram" as const;
 const LINKED_AT = new Date(1_700_000_000_000);
@@ -47,9 +47,9 @@ const identity = async (id: string) => (await testDb().select().from(channelIden
 describe("chatLinks (web)", () => {
   it("requires authentication", async () => {
     const { app } = testApp();
-    expectError(await raw(app, "POST", "/chat-links/codes", { body: { channel: TG, consent: true } }), "unauthorized", 401);
-    expectError(await raw(app, "GET", "/chat-links"), "unauthorized", 401);
-    expectError(await raw(app, "DELETE", "/chat-history"), "unauthorized", 401);
+    expectError(await raw(app, "chatLinks.createCode", { channel: TG, consent: true }), "unauthorized", 401);
+    expectError(await raw(app, "chatLinks.list"), "unauthorized", 401);
+    expectError(await raw(app, "chatHistory.delete"), "unauthorized", 401);
   });
 
   it("is not available to chat tokens", async () => {
@@ -64,7 +64,7 @@ describe("chatLinks (web)", () => {
   it("requires consent to create a code and stores nothing without it", async () => {
     const { app } = testApp();
     const { userId } = await newUser(app);
-    const response = await raw(app, "POST", "/chat-links/codes", { token: await tokenFor(userId), body: { channel: TG, consent: false } });
+    const response = await raw(app, "chatLinks.createCode", { channel: TG, consent: false }, { token: await tokenFor(userId) });
     expectError(response, "validation_failed", 400);
     expect(JSON.stringify(response.body.error?.details)).toContain("Consent is required");
     expect(await testDb().select().from(channelLinkCodes)).toHaveLength(0);

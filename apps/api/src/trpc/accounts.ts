@@ -1,16 +1,26 @@
-/**
- * Accounts on `/api/trpc`: the same behaviour as `/api/v1/accounts`
- * (`src/http/v1/accounts.ts`), on the same domain code. Schemas live here;
- * clients get their types from `AppRouter`.
- */
+/** Accounts. Balances are in each account's own currency. */
 import { z } from "zod";
 
 import { accountType } from "../db/schema";
 import * as accounts from "../domain/accounts";
 import { appAmount } from "../domain/money";
-import { accountDto, todayUtc } from "../http/v1/shared";
+import { accountDto, todayUtc } from "./dto";
 import { financeRead, financeWrite, router, webWrite } from "./init";
-import { hasChangesBesidesId, idSchema, isoDateSchema, moneyInputSchema, moneySchema, NO_CHANGES, nonZeroMoneySchema, shortText } from "./schemas";
+import {
+  byId,
+  deleted,
+  hasChangesBesidesId,
+  idSchema,
+  includeArchived,
+  isoDateSchema,
+  list,
+  moneyInputSchema,
+  moneySchema,
+  NO_CHANGES,
+  nonZeroMoneySchema,
+  noteField,
+  shortText,
+} from "./schemas";
 
 export const accountTypeSchema = z.enum(accountType.enumValues);
 
@@ -28,18 +38,25 @@ export const accountSchema = z.object({
 });
 
 const accountResult = z.object({ account: accountSchema });
-const byId = z.strictObject({ id: idSchema });
 const accountName = shortText(100);
 /** Visual theme id or Lucide icon name, as chosen in the app. */
 const accountStyle = shortText(64);
 
+export const accountAdjustInput = z.strictObject({
+  id: idSchema,
+  amount: nonZeroMoneySchema,
+  /** Defaults to today (server date). */
+  date: isoDateSchema.optional(),
+  note: noteField.optional(),
+});
+
 export const accountsRouter = router({
   /** Archived accounts only with `includeArchived`. */
   list: financeRead
-    .input(z.strictObject({ includeArchived: z.boolean().optional() }).optional())
-    .output(z.object({ items: z.array(accountSchema) }))
+    .input(includeArchived)
+    .output(list(accountSchema))
     .query(async ({ ctx, input }) => {
-      const rows = await accounts.listAccounts(ctx.tx, ctx.user.userId, { includeArchived: input?.includeArchived });
+      const rows = await accounts.listAccounts(ctx.tx, ctx.user.userId, { includeArchived: input.includeArchived });
       return { items: rows.map(accountDto) };
     }),
 
@@ -50,15 +67,7 @@ export const accountsRouter = router({
 
   /** Signed delta on the balance, recorded as an `adjustment` transaction. The agent proposes these too. */
   adjust: financeWrite
-    .input(
-      z.strictObject({
-        id: idSchema,
-        amount: nonZeroMoneySchema,
-        /** Defaults to today (server date). */
-        date: isoDateSchema.optional(),
-        note: shortText(1000).optional(),
-      }),
-    )
+    .input(accountAdjustInput)
     .output(accountResult)
     .mutation(async ({ ctx, input }) => {
       const { currency } = await accounts.getAccount(ctx.tx, ctx.user.userId, input.id);
@@ -124,7 +133,7 @@ export const accountsRouter = router({
   /** Only while nothing references the account (transactions, goals, debts); otherwise `conflict`: archive it instead. */
   delete: webWrite
     .input(byId)
-    .output(z.object({ id: z.string() }))
+    .output(deleted)
     .mutation(async ({ ctx, input }) => {
       await accounts.deleteAccount(ctx.tx, ctx.user.userId, input.id);
       return { id: input.id };

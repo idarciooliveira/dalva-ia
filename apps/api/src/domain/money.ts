@@ -1,4 +1,10 @@
-import { currencyExponent, type Money } from "@mpf/finance-contract";
+import { currencyExponent } from "@mpf/shared";
+
+/** Integer ISO minor units in a currency. */
+export interface Money {
+  amountMinor: number;
+  currency: string;
+}
 
 import { DomainError, invalid } from "./errors";
 

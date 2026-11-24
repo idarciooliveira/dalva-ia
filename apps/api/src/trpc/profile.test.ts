@@ -1,8 +1,7 @@
-import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
-import { clientFor, expectApiError, expectConforms, raw, seedUser, tokenFor } from "../../../test/api";
-import { testApp } from "../../../test/app";
+import { clientFor, expectApiError, expectOk, raw, seedUser, tokenFor } from "../../test/api";
+import { testApp } from "../../test/app";
 
 describe("api/v1 profile", () => {
   it("is null before onboarding, then created, re-created with a new currency and completed", async () => {
@@ -18,7 +17,7 @@ describe("api/v1 profile", () => {
     });
     expect((await client.profile.create({ baseCurrency: "EUR" })).profile.baseCurrency).toBe("EUR");
     expect(await client.profile.completeOnboarding()).toEqual({ profile: { baseCurrency: "EUR", onboardingCompleted: true } });
-    expectConforms(routes.profile.get, await raw(app, "GET", "/profile", { token: await tokenFor(user) }));
+    expectOk(await raw(app, "profile.get", undefined, { token: await tokenFor(user) }));
     expect((await client.profile.get()).profile).toEqual({ baseCurrency: "EUR", onboardingCompleted: true });
   });
 
@@ -32,7 +31,7 @@ describe("api/v1 profile", () => {
     const { app } = testApp();
     const token = await tokenFor(await seedUser({ profile: false }));
     for (const baseCurrency of ["usd", "DOLLAR", 840]) {
-      const response = await raw(app, "POST", "/profile", { token, idempotencyKey: `profile-key-${baseCurrency}`, body: { baseCurrency } });
+      const response = await raw(app, "profile.create", { baseCurrency }, { token, idempotencyKey: `profile-key-${baseCurrency}` });
       expect(response.status).toBe(400);
       expect(response.body.error?.code).toBe("validation_failed");
     }

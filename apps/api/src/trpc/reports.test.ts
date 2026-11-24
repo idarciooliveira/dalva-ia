@@ -1,10 +1,9 @@
-import { routes } from "@mpf/finance-contract";
 import { describe, expect, it } from "vitest";
 
 import {
   clientFor,
   expectApiError,
-  expectConforms,
+  expectOk,
   oneUser,
   raw,
   seedAccount,
@@ -15,8 +14,8 @@ import {
   seedUser,
   tokenFor,
   twoUsers,
-} from "../../../test/api";
-import { testApp } from "../../../test/app";
+} from "../../test/api";
+import { testApp } from "../../test/app";
 import { MIXED_CURRENCIES_MESSAGE, UNKNOWN_CURRENCY_MESSAGE } from "./currency";
 
 describe("api/v1 reports", () => {
@@ -29,7 +28,7 @@ describe("api/v1 reports", () => {
     await asAlice.transactions.create({ type: "expense", amount: { amountMinor: 999, currency: "USD" }, accountId: aliceAccount, date: "2026-03-31" });
     const token = await tokenFor(alice);
 
-    const summary = expectConforms(routes.reports.transactionSummary, await raw(app, "GET", "/reports/transaction-summary?month=2026-04", { token }));
+    const summary = expectOk(await raw(app, "reports.transactionSummary", { month: "2026-04" }, { token }));
     expect(summary).toMatchObject({
       month: "2026-04",
       totalIncome: { amountMinor: 10_000, currency: "USD" },
@@ -42,7 +41,7 @@ describe("api/v1 reports", () => {
       "2026-04-01",
     ]);
 
-    const spending = expectConforms(routes.reports.spendingByCategory, await raw(app, "GET", "/reports/spending-by-category?month=2026-04", { token }));
+    const spending = expectOk(await raw(app, "reports.spendingByCategory", { month: "2026-04" }, { token }));
     expect(spending).toEqual({
       month: "2026-04",
       total: { amountMinor: 3_500, currency: "USD" },
@@ -58,7 +57,7 @@ describe("api/v1 reports", () => {
     await asAlice.transactions.create({ type: "income", amount: { amountMinor: 700, currency: "USD" }, accountId: aliceAccount, date: "2025-12-31" });
     await asAlice.transactions.create({ type: "expense", amount: { amountMinor: 50, currency: "USD" }, accountId: aliceAccount, date: "2026-02-28" });
     const token = await tokenFor(alice);
-    const flow = expectConforms(routes.reports.cashflow, await raw(app, "GET", "/reports/cashflow?month=2026-02&trendMonths=4", { token })) as {
+    const flow = expectOk(await raw(app, "reports.cashflow", { month: "2026-02", trendMonths: 4 }, { token })) as {
       trend: Array<{ month: string; income: { amountMinor: number } }>;
       currentMonth: unknown;
     };
@@ -78,14 +77,14 @@ describe("api/v1 reports", () => {
     await seedAccount(user, { currency: "JPY", balance: 1_000_000 });
     await seedDebt(user, { originalAmount: 50_000, currentBalance: 20_000 });
     const token = await tokenFor(user);
-    const worth = expectConforms(routes.reports.netWorth, await raw(app, "GET", "/reports/net-worth", { token }));
+    const worth = expectOk(await raw(app, "reports.netWorth", undefined, { token }));
     expect(worth).toEqual({
       hasData: true,
       totalAssets: { amountMinor: 10_000, currency: "JPY" },
       totalDebts: { amountMinor: 200, currency: "JPY" },
       netWorth: { amountMinor: 9_800, currency: "JPY" },
     });
-    const debts = expectConforms(routes.reports.debtSummary, await raw(app, "GET", "/reports/debt-summary", { token }));
+    const debts = expectOk(await raw(app, "reports.debtSummary", undefined, { token }));
     expect(debts).toMatchObject({
       totalOriginal: { amountMinor: 500, currency: "JPY" },
       totalRemaining: { amountMinor: 200, currency: "JPY" },
@@ -138,13 +137,13 @@ describe("api/v1 reports", () => {
       const token = await tokenFor(user);
       await client.transactions.create({ type: "expense", amount: { amountMinor: 100, currency: "EUR" }, accountId: eur, date: "2026-04-02" });
 
-      for (const path of [
-        "/reports/net-worth",
-        "/reports/transaction-summary?month=2026-04",
-        "/reports/spending-by-category?month=2026-04",
-        "/reports/cashflow?month=2026-05&trendMonths=2",
-      ]) {
-        const response = await raw(app, "GET", path, { token });
+      for (const [path, input] of [
+        ["reports.netWorth", undefined],
+        ["reports.transactionSummary", { month: "2026-04" }],
+        ["reports.spendingByCategory", { month: "2026-04" }],
+        ["reports.cashflow", { month: "2026-05", trendMonths: 2 }],
+      ] as const) {
+        const response = await raw(app, path, input, { token });
         expect(response.status, path).toBe(409);
         expect(response.body.error).toEqual({ code: "conflict", message: MIXED_CURRENCIES_MESSAGE, details: MIXED });
       }

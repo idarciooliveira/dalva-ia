@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 
-import type { TokenScope } from "@mpf/finance-contract";
+import type { TokenScope } from "../auth/tokens";
 import { and, asc, eq, inArray, isNull, lt } from "drizzle-orm";
 
 import type { Database } from "../db/client";

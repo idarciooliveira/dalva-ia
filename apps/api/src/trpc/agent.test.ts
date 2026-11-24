@@ -1,10 +1,9 @@
-import { type ErrorCode, routes } from "@mpf/finance-contract";
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
   expectApiError,
-  expectConforms,
+  expectOk,
   expectError,
   expenseInput,
   getAccountRow,
@@ -15,10 +14,11 @@ import {
   serviceClientFor,
   tokenFor,
   type TestApp,
-} from "../../../test/api";
-import { TEST_SERVICE_KEY, testApp } from "../../../test/app";
-import { testDb } from "../../../test/db";
-import { agentInboundEvents, agentMessages, agentPendingActions, agentSessions } from "../../db/schema";
+} from "../../test/api";
+import { TEST_SERVICE_KEY, testApp } from "../../test/app";
+import { testDb } from "../../test/db";
+import { agentInboundEvents, agentMessages, agentPendingActions, agentSessions } from "../db/schema";
+import type { ErrorCode } from "../domain/errors";
 
 const TG = "telegram" as const;
 const MIN = 60_000;
@@ -102,7 +102,7 @@ describe("agentEvents (service key)", () => {
     await expectApiError(service.agentEvents.claim({ channel: TG, eventId: "1", payload: "nope" }), "validation_failed");
     await expectApiError(service.agentEvents.claim({ channel: TG, eventId: "1", payload: json("x".repeat(33 * 1024)) }), "validation_failed");
     for (const payload of ["nope", json("x".repeat(33 * 1024))]) {
-      const response = await raw(app, "POST", "/agent/events/claim", { token: TEST_SERVICE_KEY, body: { channel: TG, eventId: "1", payload } });
+      const response = await raw(app, "agentEvents.claim", { channel: TG, eventId: "1", payload }, { token: TEST_SERVICE_KEY });
       expect({ status: response.status, code: response.body.error?.code }).toEqual({ status: 400, code: "validation_failed" });
     }
     expect(await testDb().select().from(agentInboundEvents)).toHaveLength(0);
@@ -211,14 +211,12 @@ describe("agentEvents (service key)", () => {
       expect(await serviceClientFor(app).agentEvents.listRecoverable({ channel: TG, olderThanSeconds: 60 })).toEqual({ items: [] });
     });
 
-    it("works over raw HTTP with query strings", async () => {
+    it("works over raw HTTP", async () => {
       const { app } = testApp();
       await claim(app, "1");
       await age("1", 5 * MIN);
-      const response = await raw(app, "GET", "/agent/events/recoverable?channel=telegram&olderThanSeconds=60&limit=5", {
-        token: TEST_SERVICE_KEY,
-      });
-      const data = expectConforms(routes.agentEvents.listRecoverable, response) as { items: unknown[] };
+      const response = await raw(app, "agentEvents.listRecoverable", { channel: TG, olderThanSeconds: 60, limit: 5 }, { token: TEST_SERVICE_KEY });
+      const data = expectOk(response) as { items: unknown[] };
       expect(data.items).toHaveLength(1);
     });
   });
@@ -228,21 +226,20 @@ describe("agent routes auth", () => {
   const sessionInput = (chat: LinkedChat) => ({ channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30 });
   const missing = "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5c";
   const calls = (app: TestApp, token: string, chat: LinkedChat) => {
-    const request = (method: string, path: string, body?: unknown) =>
-      raw(app, method, path, { token, ...(body === undefined ? {} : { body }) });
+    const request = (path: string, input?: unknown) => raw(app, path, input, { token });
     return [
-      ["agentSessions.current", () => request("POST", "/agent/sessions/current", sessionInput(chat))],
-      ["agentMessages.list", () => request("GET", `/agent/sessions/${missing}/messages`)],
-      ["agentMessages.append", () => request("POST", `/agent/sessions/${missing}/messages`, { messages: [{ role: "user", content: "{}" }] })],
+      ["agentSessions.current", () => request("agentSessions.current", sessionInput(chat))],
+      ["agentMessages.list", () => request("agentMessages.list", { sessionId: missing })],
+      ["agentMessages.append", () => request("agentMessages.append", { sessionId: missing, messages: [{ role: "user", content: "{}" }] })],
       [
         "agentPendingActions.create",
-        () => request("POST", "/agent/pending-actions", { sessionId: missing, operation: "transactions.create", input: expenseInput(missing), summary: "x" }),
+        () => request("agentPendingActions.create", { sessionId: missing, operation: "transactions.create", input: expenseInput(missing), summary: "x" }),
       ],
-      ["agentPendingActions.get", () => request("GET", `/agent/pending-actions/${missing}`)],
-      ["agentPendingActions.confirm", () => request("POST", `/agent/pending-actions/${missing}/confirm`, {})],
-      ["agentPendingActions.cancel", () => request("POST", `/agent/pending-actions/${missing}/cancel`, {})],
-      ["agentPendingActions.complete", () => request("POST", `/agent/pending-actions/${missing}/complete`, { status: "executed", result: {} })],
-      ["agentHistory.delete", () => request("DELETE", "/agent/history")],
+      ["agentPendingActions.get", () => request("agentPendingActions.get", { id: missing })],
+      ["agentPendingActions.confirm", () => request("agentPendingActions.confirm", { id: missing })],
+      ["agentPendingActions.cancel", () => request("agentPendingActions.cancel", { id: missing })],
+      ["agentPendingActions.complete", () => request("agentPendingActions.complete", { id: missing, status: "executed", result: {} })],
+      ["agentHistory.delete", () => request("agentHistory.delete")],
     ] as const;
   };
 
@@ -270,11 +267,10 @@ describe("agent routes auth", () => {
     const { app } = testApp();
     const chat = await linkedChat(app, { withAccount: true });
     const agentOnly = await tokenFor(chat.userId, ["agent:state"], { channelIdentityId: chat.identityId });
-    expect((await raw(app, "GET", "/accounts", { token: agentOnly })).body.error?.code).toBe("forbidden");
-    expect(
-      (await raw(app, "POST", `/accounts/${chat.accountId}/adjustments`, { token: agentOnly, idempotencyKey: "k-agent-0001", body: {} })).body
-        .error?.code,
-    ).toBe("forbidden");
+    expect((await raw(app, "accounts.list", {}, { token: agentOnly })).body.error?.code).toBe("forbidden");
+    expect((await raw(app, "accounts.adjust", { id: chat.accountId }, { token: agentOnly, idempotencyKey: "k-agent-0001" })).body.error?.code).toBe(
+      "forbidden",
+    );
   });
 
   it("forbids an agent:state token that has no channel identity", async () => {
@@ -295,7 +291,7 @@ describe("agent routes auth", () => {
       expect({ name, status: response.status, code: response.body.error?.code }).toEqual({ name, status: 401, code: "unauthorized" });
     }
     const event = { channel: TG, eventId: "1", payload: "{}" };
-    const withUserToken = await raw(app, "POST", "/agent/events/claim", { token: chat.token, body: event });
+    const withUserToken = await raw(app, "agentEvents.claim", event, { token: chat.token });
     expect(withUserToken.status).toBe(401);
     expect(await testDb().select().from(agentInboundEvents)).toHaveLength(0);
   });
@@ -314,9 +310,9 @@ describe("agent routes auth", () => {
   it("accepts no Idempotency-Key and ignores one if sent", async () => {
     const { app } = testApp();
     const chat = await linkedChat(app);
-    expect((await raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: sessionInput(chat) })).status).toBe(200);
+    expect((await raw(app, "agentSessions.current", sessionInput(chat), { token: chat.token })).status).toBe(200);
     const fresh = () =>
-      raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: { ...sessionInput(chat), startNew: true }, idempotencyKey: "whatever-key-0001" });
+      raw(app, "agentSessions.current", { ...sessionInput(chat), startNew: true }, { token: chat.token, idempotencyKey: "whatever-key-0001" });
     const [first, second] = [await fresh(), await fresh()];
     const id = (r: Awaited<ReturnType<typeof fresh>>) => (r.body.data as { session: { id: string } }).session.id;
     expect([first.status, second.status]).toEqual([200, 200]);
@@ -517,12 +513,9 @@ describe("agentMessages", () => {
       chat.agent.agentMessages.append({ sessionId: s.id, messages: [{ role: "user", content: json("x".repeat(33 * 1024)) }] }),
       "validation_failed",
     );
-    const tooBig = await raw(app, "POST", `/agent/sessions/${s.id}/messages`, {
-      token: chat.token,
-      body: { messages: [{ role: "user", content: json("x".repeat(33 * 1024)) }] },
-    });
+    const tooBig = await raw(app, "agentMessages.append", { sessionId: s.id, messages: [{ role: "user", content: json("x".repeat(33 * 1024)) }] }, { token: chat.token });
     expect(tooBig.status).toBe(400);
-    const bad = await raw(app, "POST", `/agent/sessions/${s.id}/messages`, { token: chat.token, body: { messages: [{ role: "bot", content: "{}" }] } });
+    const bad = await raw(app, "agentMessages.append", { sessionId: s.id, messages: [{ role: "bot", content: "{}" }] }, { token: chat.token });
     expect(bad.status).toBe(400);
     await expectApiError(chat.agent.agentMessages.list({ sessionId: "does-not-exist" }), "not_found", 404);
     await expectApiError(chat.agent.agentMessages.list({ sessionId: s.id, limit: 500 }), "validation_failed");
@@ -649,7 +642,7 @@ describe("agentPendingActions", () => {
     const accountInput = { name: "Checking", type: "bank", balance: { amountMinor: 0, currency: "USD" } };
     const cases = [["transactions.search", {}], ["agentHistory.delete", {}], ["accounts.create", accountInput], ["nope", {}]] as const;
     for (const [operation, input] of cases) {
-      const response = await raw(app, "POST", "/agent/pending-actions", { token: chat.token, body: { sessionId: s.id, operation, input, summary: "x" } });
+      const response = await raw(app, "agentPendingActions.create", { sessionId: s.id, operation, input, summary: "x" }, { token: chat.token });
       expect({ operation, status: response.status }).toEqual({ operation, status: 400 });
     }
   });
@@ -729,8 +722,8 @@ describe("agentPendingActions", () => {
     const chat = await linkedChat(app, { withAccount: true });
     const { action } = await newAction(chat);
     await chat.agent.agentPendingActions.confirm({ id: action.id });
-    const deep = `{"status":"failed","result":${"[".repeat(30_000)}${"]".repeat(30_000)}}`;
-    const nested = await raw(app, "POST", `/agent/pending-actions/${action.id}/complete`, { token: chat.token, rawBody: deep });
+    const deep = `{"id":"${action.id}","status":"failed","result":${"[".repeat(30_000)}${"]".repeat(30_000)}}`;
+    const nested = await raw(app, "agentPendingActions.complete", undefined, { token: chat.token, rawBody: deep });
     expect({ status: nested.status, code: nested.body.error?.code }).toEqual({ status: 400, code: "validation_failed" });
     expect((await chat.agent.agentPendingActions.get({ id: action.id })).action.status).toBe("confirmed");
   });
@@ -890,7 +883,7 @@ describe("agentPendingActions", () => {
     const chat = await linkedChat(app, { withAccount: true });
     await expectApiError(chat.agent.agentPendingActions.get({ id: "missing" }), "not_found", 404);
     await expectApiError(chat.agent.agentPendingActions.confirm({ id: chat.accountId! }), "not_found", 404);
-    expect((await raw(app, "GET", "/agent/pending-actions/bad%3Bid", { token: chat.token })).status).toBe(400);
+    expect((await raw(app, "agentPendingActions.get", { id: "bad;id" }, { token: chat.token })).status).toBe(400);
   });
 });
 
@@ -995,50 +988,41 @@ describe("history and unlink", () => {
   });
 });
 
-describe("contract conformance", () => {
-  it("every agent route's success response parses with its contract schema", async () => {
+describe("over raw HTTP", () => {
+  it("every agent procedure answers its output (validated on the server)", async () => {
     const { app } = testApp();
     const chat = await linkedChat(app, { withAccount: true });
-    const authed = (method: string, path: string, body?: unknown) => raw(app, method, path, { token: chat.token, ...(body === undefined ? {} : { body }) });
+    const authed = (path: string, input?: unknown) => raw(app, path, input, { token: chat.token });
 
-    expectConforms(routes.agentEvents.claim, await raw(app, "POST", "/agent/events/claim", { token: TEST_SERVICE_KEY, body: { channel: TG, eventId: "1", payload: "{}" } }));
-    expectConforms(
-      routes.agentEvents.updateStatus,
-      await raw(app, "POST", "/agent/events/status", { token: TEST_SERVICE_KEY, body: { channel: TG, eventId: "1", status: "processing" } }),
-    );
-    expectConforms(
-      routes.agentEvents.listRecoverable,
-      await raw(app, "GET", "/agent/events/recoverable?channel=telegram&olderThanSeconds=0", { token: TEST_SERVICE_KEY }),
-    );
+    expectOk(await raw(app, "agentEvents.claim", { channel: TG, eventId: "1", payload: "{}" }, { token: TEST_SERVICE_KEY }));
+    expectOk(await raw(app, "agentEvents.updateStatus", { channel: TG, eventId: "1", status: "processing" }, { token: TEST_SERVICE_KEY }));
+    expectOk(await raw(app, "agentEvents.listRecoverable", { channel: TG, olderThanSeconds: 0 }, { token: TEST_SERVICE_KEY }));
 
-    const current = expectConforms(
-      routes.agentSessions.current,
-      await authed("POST", "/agent/sessions/current", { channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30 }),
-    ) as { session: { id: string } };
+    const current = expectOk(await authed("agentSessions.current", { channel: TG, chatId: chat.chatId, idleTimeoutMinutes: 30 })) as {
+      session: { id: string };
+    };
     const sid = current.session.id;
-    expectConforms(routes.agentMessages.append, await authed("POST", `/agent/sessions/${sid}/messages`, { messages: [{ role: "user", content: "{}" }] }));
-    expectConforms(routes.agentMessages.list, await authed("GET", `/agent/sessions/${sid}/messages?limit=10`));
+    expectOk(await authed("agentMessages.append", { sessionId: sid, messages: [{ role: "user", content: "{}" }] }));
+    expectOk(await authed("agentMessages.list", { sessionId: sid, limit: 10 }));
 
     const actionBody = { sessionId: sid, operation: "transactions.create", input: expenseInput(chat.accountId!), summary: "Add expense" };
-    const created = expectConforms(routes.agentPendingActions.create, await authed("POST", "/agent/pending-actions", actionBody)) as {
-      action: { id: string };
-    };
+    const created = expectOk(await authed("agentPendingActions.create", actionBody)) as { action: { id: string } };
     const id = created.action.id;
-    expectConforms(routes.agentPendingActions.get, await authed("GET", `/agent/pending-actions/${id}`));
-    expectConforms(routes.agentPendingActions.confirm, await authed("POST", `/agent/pending-actions/${id}/confirm`, {}));
-    expectConforms(routes.agentPendingActions.complete, await authed("POST", `/agent/pending-actions/${id}/complete`, { status: "executed", result: { ok: true } }));
-    const other = (expectConforms(routes.agentPendingActions.create, await authed("POST", "/agent/pending-actions", actionBody)) as { action: { id: string } }).action.id;
-    expectConforms(routes.agentPendingActions.cancel, await authed("POST", `/agent/pending-actions/${other}/cancel`, {}));
-    expectConforms(routes.agentHistory.delete, await authed("DELETE", "/agent/history"));
+    expectOk(await authed("agentPendingActions.get", { id }));
+    expectOk(await authed("agentPendingActions.confirm", { id }));
+    expectOk(await authed("agentPendingActions.complete", { id, status: "executed", result: { ok: true } }));
+    const other = (expectOk(await authed("agentPendingActions.create", actionBody)) as { action: { id: string } }).action.id;
+    expectOk(await authed("agentPendingActions.cancel", { id: other }));
+    expectOk(await authed("agentHistory.delete"));
   });
 
-  it("errors use the contract envelope with the right codes", async () => {
+  it("errors carry the API codes", async () => {
     const { app } = testApp();
     const chat = await linkedChat(app);
     const codes: Array<[Promise<RawResponse>, ErrorCode, number]> = [
-      [raw(app, "GET", "/agent/pending-actions/missing", { token: chat.token }), "not_found", 404],
-      [raw(app, "POST", "/agent/pending-actions/missing/confirm", { token: chat.token, body: {} }), "not_found", 404],
-      [raw(app, "POST", "/agent/sessions/current", { token: chat.token, body: {} }), "validation_failed", 400],
+      [raw(app, "agentPendingActions.get", { id: "missing" }, { token: chat.token }), "not_found", 404],
+      [raw(app, "agentPendingActions.confirm", { id: "missing" }, { token: chat.token }), "not_found", 404],
+      [raw(app, "agentSessions.current", {}, { token: chat.token }), "validation_failed", 400],
     ];
     for (const [response, code, status] of codes) expectError(await response, code, status);
   });

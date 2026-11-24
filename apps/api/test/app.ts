@@ -5,7 +5,7 @@ import { createAuth } from "../src/auth/auth";
 import type { SignInLimiter } from "../src/auth/sign-in-limit";
 import { createUserTokens } from "../src/auth/tokens";
 import { users } from "../src/db/schema";
-import type { Operations, ServiceOperations } from "../src/http/operation";
+import type { AnyTRPCRouter } from "@trpc/server";
 import type { OperationSettings } from "../src/http/v1";
 import { createLogger, type Logger } from "../src/log";
 import { testDb } from "./db";
@@ -24,8 +24,8 @@ export function testApp(
     logger?: Logger;
     clientIpHeader?: string;
     signInLimiter?: SignInLimiter;
-    operations?: Operations;
-    serviceOperations?: ServiceOperations;
+    /** A router in place of the API's (procedures built with the builders of `src/trpc/init.ts`). */
+    router?: AnyTRPCRouter;
     serviceKey?: string | null;
     operationSettings?: OperationSettings;
   } = {},
@@ -40,8 +40,7 @@ export function testApp(
     tokens: testTokens,
     publicUrl,
     signInLimiter: options.signInLimiter,
-    operations: options.operations,
-    serviceOperations: options.serviceOperations,
+    trpcRouter: options.router,
     serviceKey: options.serviceKey === null ? undefined : (options.serviceKey ?? TEST_SERVICE_KEY),
     operationSettings: options.operationSettings,
   });

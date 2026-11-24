@@ -1,4 +1,3 @@
-import { routes } from "@mpf/finance-contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
@@ -6,7 +5,7 @@ import {
   balanceOf,
   clientFor,
   expectApiError,
-  expectConforms,
+  expectOk,
   linkedChat,
   raw,
   seedAccount,
@@ -14,10 +13,10 @@ import {
   tokenFor,
   transactionRows,
   twoUsers,
-} from "../../../test/api";
-import { testApp } from "../../../test/app";
-import { testDb } from "../../../test/db";
-import { savingsGoals } from "../../db/schema";
+} from "../../test/api";
+import { testApp } from "../../test/app";
+import { testDb } from "../../test/db";
+import { savingsGoals } from "../db/schema";
 
 const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
@@ -46,7 +45,7 @@ describe("api/v1 goals and contributions", () => {
     const goal = await seedGoal(user);
     await seedGoal(user, { archived: true, name: "Old" });
     const token = await tokenFor(user);
-    const list = expectConforms(routes.goals.list, await raw(app, "GET", "/goals", { token })) as { items: unknown[] };
+    const list = expectOk(await raw(app, "goals.list", {}, { token })) as { items: unknown[] };
     expect(list.items).toEqual([
       {
         id: goal,
@@ -126,12 +125,13 @@ describe("api/v1 goals and contributions", () => {
 
   it("creates, updates, archives, restores and deletes goals (web only)", async () => {
     const { app, alice, aliceAccount, asAlice } = await twoUsers();
-    const created = await raw(app, "POST", "/goals", {
-      token: await tokenFor(alice),
-      idempotencyKey: "goal-create-01",
-      body: { name: "Trip", targetAmount: usd(50_000), isVirtual: true, targetDate: "2027-01-01", color: "#a3e635" },
-    });
-    const { goal } = expectConforms(routes.goals.create, created) as { goal: { id: string } };
+    const created = await raw(
+      app,
+      "goals.create",
+      { name: "Trip", targetAmount: usd(50_000), isVirtual: true, targetDate: "2027-01-01", color: "#a3e635" },
+      { token: await tokenFor(alice), idempotencyKey: "goal-create-01" },
+    );
+    const { goal } = expectOk(created) as { goal: { id: string } };
     expect(goal).toEqual({
       id: expect.any(String),
       name: "Trip",

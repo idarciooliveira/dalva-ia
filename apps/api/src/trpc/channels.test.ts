@@ -1,8 +1,8 @@
-import { FinanceApiError } from "@mpf/finance-contract";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
+  ApiError,
   clientFor,
   expectApiError,
   getAccountRow,
@@ -13,11 +13,11 @@ import {
   serviceClientFor,
   tokenFor,
   type TestApp,
-} from "../../../test/api";
-import { TEST_SERVICE_KEY, testApp, testTokens } from "../../../test/app";
-import { testDb } from "../../../test/db";
-import { channelIdentities, channelLinkCodes } from "../../db/schema";
-import { hashLinkCode, INVALID_LINK_CODE } from "../../domain/channelLinks";
+} from "../../test/api";
+import { TEST_SERVICE_KEY, testApp, testTokens } from "../../test/app";
+import { testDb } from "../../test/db";
+import { channelIdentities, channelLinkCodes } from "../db/schema";
+import { hashLinkCode, INVALID_LINK_CODE } from "../domain/channelLinks";
 import { RESOLVED_TOKEN_TTL_SECONDS } from "./service";
 
 const TG = "telegram" as const;
@@ -103,7 +103,7 @@ describe("channelLinks.redeem", () => {
 
     const bodies = [];
     for (const code of ["W".repeat(43), superseded, used, expired]) {
-      const response = await raw(app, "POST", "/channel-links/redeem", { token: TEST_SERVICE_KEY, body: { ...chat("3003"), code } });
+      const response = await raw(app, "channelLinks.redeem", { ...chat("3003"), code }, { token: TEST_SERVICE_KEY });
       expect(response.status).toBe(404);
       bodies.push(response.body);
     }
@@ -155,7 +155,7 @@ describe("channelLinks.redeem", () => {
     const { app } = testApp();
     const userId = await seedUser();
     const { code } = await createCode(app, userId);
-    const response = await raw(app, "POST", "/channel-links/redeem", { token: TEST_SERVICE_KEY, body: { ...chat("1001"), code, userId } });
+    const response = await raw(app, "channelLinks.redeem", { ...chat("1001"), code, userId }, { token: TEST_SERVICE_KEY });
     expect(response.status).toBe(400);
   });
 
@@ -274,7 +274,7 @@ describe("channelIdentities.resolve", () => {
     const { service, token } = await linkedChat(app);
     const asUserToken = serviceClientFor(app, token);
     const error = await expectApiError(asUserToken.channelIdentities.resolve(chat("1001")), "unauthorized", 401);
-    expect(error).toBeInstanceOf(FinanceApiError);
+    expect(error).toBeInstanceOf(ApiError);
     await expectApiError(asUserToken.channelIdentities.unlink({ channel: TG, externalUserId: "1001" }), "unauthorized", 401);
     await service.channelIdentities.resolve(chat("1001"));
   });

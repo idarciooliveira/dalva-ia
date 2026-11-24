@@ -1,15 +1,20 @@
 /**
- * tRPC on `/api/trpc`: context and procedure builders. They do what
- * `src/http/router.ts` does for `/api/v1`, in the same order:
+ * The API: tRPC at `/api/trpc`. Context and procedure builders; every
+ * procedure picks one, and the builder does the rest in this order:
  *
- *   credential (401) → web-only (403) → scope (403) → Idempotency-Key (400)
+ *   credential (401) → web-only / scope (403) → Idempotency-Key (400)
  *   → transaction [channel identity re-check → idempotency claim → input (400) → procedure]
  *
- * Pick a builder per procedure: `financeRead` / `financeWrite` (web app and
- * chat agent), `webRead` / `webWrite` (web app only). Procedures get `ctx.tx`
- * (a read-only snapshot for queries, the SERIALIZABLE write transaction for
- * mutations, rerun on serialization failure) and `ctx.user`; filter every
- * query by `ctx.user.userId`. Throw `DomainError` as in `/api/v1`.
+ * - `financeRead` / `financeWrite`: finance data, web app and chat agent.
+ * - `webRead` / `webWrite`: web app only (chat tokens get `forbidden`).
+ * - `webWriteNoKey`: web-only writes without `Idempotency-Key` (chat links).
+ * - `agentRead` / `agentWrite`: the agent store, `agent:state` scope, a token for a linked chat.
+ * - `serviceRead` / `serviceWrite`: the agent's service key, acting for no user.
+ *
+ * Procedures get `ctx.tx` (a read-only snapshot for queries, the SERIALIZABLE
+ * write transaction for mutations, rerun on serialization failure) and
+ * `ctx.user`; filter every query by `ctx.user.userId`, never take a user id
+ * from the input. Throw `DomainError` (`src/domain/errors.ts`).
  */
 import { initTRPC } from "@trpc/server";
 import type { MiddlewareResult } from "@trpc/server/unstable-core-do-not-import";
@@ -20,6 +25,7 @@ import { channelTokenProblem } from "../domain/channelLinks";
 import { DomainError } from "../domain/errors";
 import { claimKey, requestHash, storeResponse } from "../http/idempotency";
 import type { Principal, Scope, UserPrincipal } from "../http/principal";
+import type { UserTokens } from "../auth/tokens";
 import type { Logger } from "../log";
 import { domainErrorOf, fail, formatError, trpcError } from "./errors";
 
@@ -40,7 +46,29 @@ export type TrpcContext = {
   batchSize: number;
   /** Headers of the HTTP response. */
   resHeaders: Headers;
+  /** Mints the user tokens `channelIdentities.resolve` hands out. */
+  tokens: UserTokens;
+  /** Server settings procedures read. */
+  settings: TrpcSettings;
 };
+
+export interface TrpcSettings {
+  /** `TELEGRAM_BOT_USERNAME`, for the web's `t.me` deep link. */
+  telegramBotUsername?: string;
+}
+
+/**
+ * Agent-store writes that must keep what they wrote and still fail (a pending
+ * action found expired on confirm is marked `expired`): `throw commitThenFail(error)`.
+ */
+export class CommittedFailure extends Error {
+  override name = "CommittedFailure";
+  constructor(readonly error: DomainError) {
+    super(error.message);
+  }
+}
+
+export const commitThenFail = (error: DomainError) => new CommittedFailure(error);
 
 const t = initTRPC.context<TrpcContext>().create({
   errorFormatter: ({ shape, error }) => ({ ...shape, ...formatError(error, shape.data) }),
@@ -132,6 +160,82 @@ function write(base: typeof authed) {
     return replay;
   });
 }
+
+/** Web-only writes that take no `Idempotency-Key`: a stored replay of a link code would keep the raw code. */
+export const webWriteNoKey = webOnly.use(async ({ ctx, path, next }) => {
+  requireScope(ctx.user, "finance:write");
+  return await withTx(
+    ctx.db,
+    async (tx) => {
+      const result = await next({ ctx: { tx } });
+      if (!result.ok) throw result.error;
+      return result;
+    },
+    { onRetry: ({ attempt, code }) => ctx.logger.debug("tx_retry", { operation: path, attempt, sqlState: code }) },
+  );
+});
+
+/** The agent store: `agent:state`, and only with a token minted for a linked chat. */
+const agentStore = authed.use(({ ctx, next }) => {
+  requireScope(ctx.user, "agent:state");
+  if (ctx.user.channelIdentityId === undefined) throw fail("forbidden", "Agent routes need a token for a linked chat");
+  return next();
+});
+
+export const agentRead = agentStore.use(async ({ ctx, next }) => {
+  return await readTx(ctx.db, async (tx) => {
+    await assertChannelIdentity(tx, ctx.user, "agent:state");
+    const result = await next({ ctx: { tx } });
+    if (!result.ok) throw result.error;
+    return result;
+  });
+});
+
+/** No `Idempotency-Key`. A `CommittedFailure` commits the transaction, then answers its error. */
+export const agentWrite = agentStore.use(async ({ ctx, path, next }) => {
+  const outcome = await withTx(
+    ctx.db,
+    async (tx) => {
+      await assertChannelIdentity(tx, ctx.user, "agent:state");
+      const result = await next({ ctx: { tx } });
+      if (!result.ok) {
+        if (result.error.cause instanceof CommittedFailure) return { committed: false as const, failure: result.error.cause.error };
+        throw result.error;
+      }
+      return { committed: true as const, result };
+    },
+    { onRetry: ({ attempt, code }) => ctx.logger.debug("tx_retry", { operation: path, attempt, sqlState: code }) },
+  );
+  if (!outcome.committed) throw trpcError(outcome.failure);
+  return outcome.result;
+});
+
+/** The agent's service key. Service procedures act for no user: each finds the user from server state. */
+const service = t.procedure.use(mapErrors).use(({ ctx, next }) => {
+  if (ctx.credentialError !== null) throw fail("unauthorized", ctx.credentialError);
+  if (ctx.principal?.kind !== "service") throw fail("unauthorized", "Invalid service credentials");
+  return next();
+});
+
+export const serviceRead = service.use(async ({ ctx, next }) => {
+  return await readTx(ctx.db, async (tx) => {
+    const result = await next({ ctx: { tx } });
+    if (!result.ok) throw result.error;
+    return result;
+  });
+});
+
+export const serviceWrite = service.use(async ({ ctx, path, next }) => {
+  return await withTx(
+    ctx.db,
+    async (tx) => {
+      const result = await next({ ctx: { tx } });
+      if (!result.ok) throw result.error;
+      return result;
+    },
+    { onRetry: ({ attempt, code }) => ctx.logger.debug("tx_retry", { operation: path, attempt, sqlState: code }) },
+  );
+});
 
 /** Web app and chat agent. */
 export const financeRead = read(authed);

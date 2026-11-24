@@ -14,7 +14,7 @@
  * A request that carries `Authorization` is never authenticated by cookie, so
  * a bad or unknown bearer credential can't fall back to a browser session.
  */
-import { parseBearerToken, type TokenScope } from "@mpf/finance-contract";
+import type { TokenScope } from "../auth/tokens";
 import { isAPIError } from "better-auth/api";
 import { getSessionCookie } from "better-auth/cookies";
 import type { Context, MiddlewareHandler } from "hono";
@@ -26,6 +26,12 @@ import { isUuid } from "../db/ids";
 import { errorResponse } from "./errors";
 
 export type Scope = TokenScope;
+
+/** The token of an `Authorization: Bearer <token>` header value. */
+export function parseBearerToken(header: string | null | undefined): string | null {
+  const match = /^Bearer\s+(\S+)$/i.exec(header ?? "");
+  return match?.[1] ?? null;
+}
 
 export interface UserPrincipal {
   kind: "user";
