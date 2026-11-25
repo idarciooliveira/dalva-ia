@@ -293,6 +293,17 @@ describe("domain/ledger", () => {
     });
   });
 
+  describe("exact sums", () => {
+    it("sums an amend's deltas exactly past 2^53", async () => {
+      const alice = await createTestUser();
+      const accountId = await seedAccount(alice, { balance: 0 });
+      const adjustment = await post(alice, { type: "adjustment", amount: -(2 ** 52), accountId, date: DAY });
+      // Net move: 2^53 + 1, which a number sum rounds to 2^53.
+      await tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, adjustment.id, "manual"), { amount: 2 ** 52 + 1 }));
+      expect(await balanceOf(accountId)).toBe(2 ** 52 + 1);
+    });
+  });
+
   describe("legacy rows without an account", () => {
     it("amends and reverses a single row without an account, and moves it onto one", async () => {
       const alice = await createTestUser();

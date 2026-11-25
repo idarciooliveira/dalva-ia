@@ -229,17 +229,18 @@ export async function open(tx: Tx, userId: string, id: string, as: Owner, mode: 
 
 /* Balances ----------------------------------------------------------------- */
 
-type Effect = [accountId: string | null, delta: number];
+/** Exact: a sum of safe-integer amounts can leave the safe range before the final balance comes back into it. */
+type Effect = [accountId: string | null, delta: bigint];
 
 /** What the entry's rows did to their accounts. Rows without an account did nothing. */
 function effects(entry: Entry): Effect[] {
   if (entry.kind === "single") {
     const { row } = entry;
-    return [[row.accountId, row.type === "expense" ? -row.amount : row.amount]];
+    return [[row.accountId, BigInt(row.type === "expense" ? -row.amount : row.amount)]];
   }
   return [
-    ...(entry.outgoing ? [[entry.outgoing.accountId, -entry.outgoing.amount] as Effect] : []),
-    ...(entry.incoming ? [[entry.incoming.accountId, entry.incoming.amount] as Effect] : []),
+    ...(entry.outgoing ? [[entry.outgoing.accountId, -BigInt(entry.outgoing.amount)] as Effect] : []),
+    ...(entry.incoming ? [[entry.incoming.accountId, BigInt(entry.incoming.amount)] as Effect] : []),
   ];
 }
 
@@ -247,15 +248,16 @@ const negate = (list: Effect[]): Effect[] => list.map(([accountId, delta]) => [a
 
 /** Applies the deltas, one update per account in id order (no deadlocks), each balance checked against its currency's range. */
 async function move(tx: Tx, userId: string, list: Effect[]): Promise<void> {
-  const sums = new Map<string, number>();
+  const sums = new Map<string, bigint>();
   for (const [accountId, delta] of list) {
-    if (accountId !== null) sums.set(accountId, (sums.get(accountId) ?? 0) + delta);
+    if (accountId !== null) sums.set(accountId, (sums.get(accountId) ?? 0n) + delta);
   }
   for (const [accountId, delta] of [...sums].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    if (delta === 0) continue;
+    if (delta === 0n) continue;
     const [account] = await tx
       .update(accounts)
-      .set({ balance: sql`${accounts.balance} + ${delta}` })
+      // Bound as text: the exact value, never through a number.
+      .set({ balance: sql`${accounts.balance} + ${delta.toString()}::bigint` })
       .where(and(eq(accounts.id, accountId), eq(accounts.userId, userId)))
       .returning({ balance: accounts.balance, currency: accounts.currency });
     if (!account) throw notFound("Account");
