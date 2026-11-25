@@ -81,7 +81,7 @@ Implemented today:
 - Categories and subcategories management
 - Savings goals with contribution tracking
 - Debts with payment tracking
-- Settings with Telegram linking
+- Settings with Telegram linking, and the owner's assistant setup (Telegram bot, AI provider)
 - Dashboard with real recent transactions, spending, cashflow, goals, debt, and net worth data
 
 Still not fully wired:
@@ -115,9 +115,10 @@ bun run setup
   - `FINANCE_API_SERVICE_KEY`: the chat agent's own key for the service routes
 - starts Postgres with `docker compose -f compose.dev.yml up -d` (skipped when a server already answers on `DATABASE_URL`)
 - applies the migrations
-- creates `apps/agent/.env` from the example if missing
 
-Other API variables (`DATABASE_URL`, `PORT`, `PUBLIC_URL`, `CLIENT_IP_HEADER`, `LOG_LEVEL`) are documented in `apps/api/.env.example`.
+Other API variables (`DATABASE_URL`, `PORT`, `PUBLIC_URL`, `CLIENT_IP_HEADER`, `LOG_LEVEL`) are documented in `apps/api/.env.example`. The agent needs no env file: `dev:agent` takes the API's URL and service key.
+
+The Telegram bot and the AI provider are not env. The first user to sign up owns the instance and sets them in Settings → Assistant setup; they are stored encrypted in Postgres and the agent reads them from the API. Locally `PUBLIC_URL` is http, so the bot polls (no webhook). Use a dev bot, not the production one.
 
 ### Development
 
@@ -125,7 +126,7 @@ Other API variables (`DATABASE_URL`, `PORT`, `PUBLIC_URL`, `CLIENT_IP_HEADER`, `
 bun run dev
 ```
 
-Starts Postgres (if needed), the API on http://localhost:4000 with migrations applied, the web app on http://localhost:3000 and the Telegram agent. The web dev server proxies `/api` to the API (`DALVA_API_URL` overrides the target), so cookies stay first-party. The agent waits for the API, and exits on its own without breaking the others if `apps/agent/.env` has no bot token or LLM key yet.
+Starts Postgres (if needed), the API on http://localhost:4000 with migrations applied, the web app on http://localhost:3000 and the Telegram agent. The web dev server proxies `/api` to the API (`DALVA_API_URL` overrides the target), so cookies stay first-party. The agent waits for the API, then idles until a bot is set in Settings and picks it up within seconds.
 
 Other useful commands:
 

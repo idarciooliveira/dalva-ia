@@ -3,10 +3,9 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { apiDir, apiEnv, ensurePostgres, migrate, root } from "./lib/api-env";
+import { apiDir, apiEnv, ensurePostgres, migrate } from "./lib/api-env";
 
 const apiEnvFile = join(apiDir, ".env.local");
-const agentDir = join(root, "apps/agent");
 
 const secret = () => randomBytes(32).toString("hex");
 const GENERATED = ["BETTER_AUTH_SECRET", "FINANCE_API_SERVICE_KEY"] as const;
@@ -43,10 +42,5 @@ await ensurePostgres(databaseUrl, "setup");
 migrate("setup");
 console.log("setup: database migrated");
 
-const agentEnv = join(agentDir, ".env");
-if (!existsSync(agentEnv)) {
-  writeFileSync(agentEnv, readFileSync(join(agentDir, ".env.example"), "utf8"), { mode: 0o600 });
-  console.log("setup: created apps/agent/.env from .env.example. Fill TELEGRAM_BOT_TOKEN and an LLM key to run the bot.");
-}
-
 console.log("\nDone. Start everything with: bun run dev");
+console.log("The first user to sign up owns this DALVA: set the Telegram bot and AI provider in Settings → Assistant setup.");

@@ -9,12 +9,15 @@
 #                                  /webhooks/telegram       -> agent:3000 -> api:4000
 #                                  everything else          -> static SPA
 #
-# Networks: only `egress` reaches the internet (agent: Telegram and the model
-# provider). Postgres, migrate, API and backup have no route out; web sits on
-# dokploy-network for Traefik only.
+# Networks: only `egress` reaches the internet: the agent (Telegram, the model provider)
+# and the API (Telegram, when the owner saves the bot). Postgres, migrate and backup have
+# no route out; web sits on dokploy-network for Traefik only.
 #
 # Fixed here, not in .env: database and role name (dalva), NODE_ENV, CLIENT_IP_HEADER,
 # image versions of Postgres, backup schedule. Tuning knobs keep their code defaults.
+# The Telegram bot and the AI provider are not env: the instance owner (first user to
+# sign up) sets them in the web app, Settings → Assistant setup. They live in Postgres,
+# secrets encrypted with a key derived from BETTER_AUTH_SECRET.
 
 name: ${COMPOSE_PROJECT_NAME:-dalva}
 
@@ -109,8 +112,6 @@ services:
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
       FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
       CLIENT_IP_HEADER: cf-connecting-ip
-      # Settings → Telegram links to the bot with it.
-      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?set TELEGRAM_BOT_USERNAME}
     healthcheck:
       # Distroless image: no curl or shell, so use bun. 503 while Postgres doesn't answer.
       test:
@@ -135,6 +136,8 @@ services:
     networks:
       - backend
       - app
+      # Telegram's Bot API: saving the bot checks the token and sets the webhook.
+      - egress
 
   web:
     <<: *hardening
@@ -172,15 +175,9 @@ services:
       # Origin only: the client appends /api/trpc.
       FINANCE_API_URL: http://api:4000
       FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?set TELEGRAM_BOT_TOKEN}
-      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?set TELEGRAM_BOT_USERNAME}
-      # Never polling here: it deletes the webhook at boot.
-      TELEGRAM_MODE: webhook
-      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:?set TELEGRAM_WEBHOOK_SECRET}
-      AI_PROVIDER: ${AI_PROVIDER:-gateway}
-      AGENT_MODEL: ${AGENT_MODEL:?set AGENT_MODEL}
-      AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      # Bot and model settings come from the API (instance.agentConfig), re-read every 15s.
+      # Webhook delivery follows from the https PUBLIC_URL; until a bot is saved the agent
+      # stays healthy and the webhook route answers 503.
     healthcheck:
       test:
         - CMD
@@ -295,5 +292,5 @@ networks:
   dokploy:
     name: dokploy-network
     external: true
-  # Internet access for the agent.
+  # Internet access for the agent and the API.
   egress:

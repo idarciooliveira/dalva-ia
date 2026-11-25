@@ -1,8 +1,9 @@
 name: Compose stack
 
 # Builds the three images, runs deploy/docker-compose.yml on an empty database (with a stand-in
-# for Dokploy's network) and runs deploy/smoke.sh: health, routing, sign-up and sign-in through the
-# web entry, backup and restore. Nothing is pushed.
+# for Dokploy's network) and a .env of only the operator's five values, and runs deploy/smoke.sh:
+# health, routing, the agent waiting for a bot, sign-up and sign-in through the web entry, backup
+# and restore. Nothing is pushed.
 
 on:
   pull_request:
@@ -54,7 +55,7 @@ jobs:
           file: apps/api/Dockerfile
           load: true
           provenance: false
-          tags: ghcr.io/ci/dalva-api:ci
+          tags: ghcr.io/ci/dalva-api:latest
           cache-from: type=gha,scope=dalva-api
       - name: Build web
         uses: docker/build-push-action@v6
@@ -63,7 +64,7 @@ jobs:
           file: apps/web/Dockerfile
           load: true
           provenance: false
-          tags: ghcr.io/ci/dalva-web:ci
+          tags: ghcr.io/ci/dalva-web:latest
           cache-from: type=gha,scope=dalva-web
       - name: Build agent
         uses: docker/build-push-action@v6
@@ -72,30 +73,24 @@ jobs:
           file: apps/agent/Dockerfile
           load: true
           provenance: false
-          tags: ghcr.io/ci/dalva-agent:ci
+          tags: ghcr.io/ci/dalva-agent:latest
           cache-from: type=gha,scope=dalva-agent
 
-      - name: Write deploy/.env from .env.example
+      # Only what an operator sets. The bot and the AI provider are not env (Settings in the web
+      # app), so the agent must boot and stay healthy without them. Image names come from
+      # GHCR_OWNER=ci and the default :latest tag; the project name from the job env.
+      - name: Write deploy/.env
         working-directory: deploy
         run: |
-          cp .env.example .env
-          set_env() { sed -i "s|^$1=.*|$1=$2|" .env; grep -q "^$1=$2\$" .env || echo "$1=$2" >> .env; }
           secret() { openssl rand -hex 32; }
-          set_env COMPOSE_PROJECT_NAME "$COMPOSE_PROJECT_NAME"
-          set_env GHCR_OWNER ci
-          set_env API_IMAGE_TAG ci
-          set_env WEB_IMAGE_TAG ci
-          set_env AGENT_IMAGE_TAG ci
-          set_env POSTGRES_PASSWORD "$(secret)"
-          set_env PUBLIC_URL https://dalva-ci.example.com
-          set_env BETTER_AUTH_SECRET "$(secret)"
-          set_env FINANCE_API_SERVICE_KEY "$(secret)"
-          # Shaped like real values; webhook mode never calls Telegram at boot.
-          set_env TELEGRAM_BOT_TOKEN "123456789:$(openssl rand -hex 20)"
-          set_env TELEGRAM_WEBHOOK_SECRET "$(secret)"
-          set_env AI_GATEWAY_API_KEY "ci-$(secret)"
-          # Fail on any placeholder left behind.
-          ! grep -n 'replace-with' .env
+          {
+            echo "GHCR_OWNER=ci"
+            echo "POSTGRES_PASSWORD=$(secret)"
+            echo "PUBLIC_URL=https://dalva-ci.example.com"
+            echo "BETTER_AUTH_SECRET=$(secret)"
+            echo "FINANCE_API_SERVICE_KEY=$(secret)"
+          } > .env
+          [ "$(grep -c . .env)" = 5 ]
 
       - name: Validate compose file
         working-directory: deploy
@@ -110,8 +105,11 @@ jobs:
           docker compose pull postgres backup
           docker compose up -d --pull never postgres migrate api web agent backup
 
+      # An empty database: the smoke user is the first user, so it owns the instance.
       - name: Smoke test
         run: deploy/smoke.sh
+        env:
+          SMOKE_FIRST_USER: "1"
 
       - name: Logs
         if: always()

@@ -1,8 +1,11 @@
 #!/bin/sh
 # Smoke test for a running stack (CI, or staging after a deploy): health, routing through
-# the web entry, sign-up and sign-in, then a backup restored into a scratch database.
+# the web entry, sign-up and sign-in, the agent's settings contract, then a backup restored
+# into a scratch database.
 #   deploy/smoke.sh            uses deploy/docker-compose.yml and deploy/.env
 # Leaves one smoke-*@example.com user behind. Never touches the live database otherwise.
+# The first user to sign up owns the instance: on an empty database the smoke user would.
+# It refuses that unless SMOKE_FIRST_USER=1 (CI); sign up yourself first.
 set -eu
 cd "$(dirname "$0")"
 
@@ -58,15 +61,33 @@ web_curl http://127.0.0.1:8080/does-not-exist | grep -q '<html' || fail "SPA fal
 expect "$(status http://127.0.0.1:8080/api/unknown)" 404 "GET /api/unknown"
 expect "$(status http://127.0.0.1:8080/api/v1/accounts)" 404 "GET /api/v1/accounts (removed)"
 expect "$(status http://127.0.0.1:8080/api/trpc/accounts.list)" 401 "GET /api/trpc/accounts.list without session"
-# The agent answers 503 until boot recovery finishes, even while /health is already 200.
-for _ in 1 2 3 4 5 6 7 8 9 10; do
-  webhook=$(status -X POST http://127.0.0.1:8080/webhooks/telegram)
-  [ "$webhook" = 503 ] || break
-  sleep 3
-done
-expect "$webhook" 401 "POST /webhooks/telegram without secret (agent)"
+# The agent reads the bot from the API (instance settings). Without one it stays healthy and
+# the webhook answers 503 "telegram not configured"; with one, 503 until boot recovery
+# finished, then 401 without the secret.
+agent_config=$(docker compose exec -T agent bun -e "const r=await fetch('http://api:4000/api/trpc/instance.agentConfig',{headers:{authorization:'Bearer '+process.env.FINANCE_API_SERVICE_KEY}});const j=await r.json();console.log(r.status, j.result?.data?.telegram ? 'telegram' : 'no-telegram', j.result?.data?.ai ? 'ai' : 'no-ai')") \
+  || fail "agent -> api instance.agentConfig"
+case "$agent_config" in 200\ *) ok "agent reads instance.agentConfig ($agent_config)" ;; *) fail "instance.agentConfig: $agent_config" ;; esac
+if echo "$agent_config" | grep -q ' no-telegram'; then
+  webhook_body=$(web_curl -X POST http://127.0.0.1:8080/webhooks/telegram)
+  expect "$(status -X POST http://127.0.0.1:8080/webhooks/telegram)" 503 "POST /webhooks/telegram, no bot configured (agent)"
+  [ "$webhook_body" = "telegram not configured" ] || fail "webhook body: $webhook_body"
+  docker compose exec -T agent bun -e "const j=await (await fetch('http://127.0.0.1:3000/health')).json();process.exit(j.ok&&j.mode==='unconfigured'?0:1)" \
+    || fail "agent /health while unconfigured"
+  ok "agent healthy and waiting for a bot"
+else
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    webhook=$(status -X POST http://127.0.0.1:8080/webhooks/telegram)
+    [ "$webhook" = 503 ] || break
+    sleep 3
+  done
+  expect "$webhook" 401 "POST /webhooks/telegram without secret (agent)"
+fi
 
 # ---- sign-up, sign-in, session through the web entry ----
+users=$(docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select count(*) from users"' | tr -d '\r ')
+if [ "$users" = 0 ] && [ "${SMOKE_FIRST_USER:-}" != 1 ]; then
+  fail "no users yet: the smoke user would own this instance. Sign up yourself first (or SMOKE_FIRST_USER=1)"
+fi
 email="smoke-$(date +%s)-$$@example.com"
 password="Smoke-$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 auth() {
@@ -86,6 +107,14 @@ ok "sign-in"
 web_curl -H "cookie: $cookie" http://127.0.0.1:8080/api/auth/get-session | grep -q "\"$email\"" || fail "get-session"
 ok "get-session"
 expect "$(status -H "cookie: $cookie" http://127.0.0.1:8080/api/trpc/accounts.list)" 200 "GET /api/trpc/accounts.list with session"
+instance=$(web_curl -H "cookie: $cookie" http://127.0.0.1:8080/api/trpc/instance.get)
+if [ "$users" = 0 ]; then
+  echo "$instance" | grep -q '"owner":true' || fail "first user is not the instance owner: $instance"
+  ok "first user owns the instance"
+else
+  echo "$instance" | grep -q '"owner":false' || fail "smoke user sees the instance settings: $instance"
+  ok "smoke user doesn't see the instance settings"
+fi
 
 # ---- backup, then restore into a scratch database ----
 out=$(docker compose run --rm -T backup now)
