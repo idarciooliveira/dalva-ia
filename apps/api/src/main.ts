@@ -1,10 +1,12 @@
 import { createApp } from "./app";
 import { createAuth } from "./auth/auth";
+import { createSecretBox } from "./auth/secret-box";
 import { createUserTokens, deriveTokenSecret } from "./auth/tokens";
 import { ConfigError, configSecrets, loadConfig } from "./config";
 import { createDatabase } from "./db/client";
 import { startRetentionJobs } from "./jobs/retention";
 import { createLogger, errorFields } from "./log";
+import { createTelegramBotApi } from "./telegram/bot-api";
 
 /** Below Docker's default 10s stop timeout (SIGKILL after). */
 const SHUTDOWN_TIMEOUT_MS = 8_000;
@@ -22,7 +24,9 @@ function main() {
     throw error;
   }
 
-  const logger = createLogger({ level: config.LOG_LEVEL, secrets: configSecrets(config) });
+  // Instance secrets (bot token, AI key, webhook secret) join the scrub list as the API reads or receives them.
+  const secrets = new Set(configSecrets(config));
+  const logger = createLogger({ level: config.LOG_LEVEL, secrets: () => secrets });
   // Connections open lazily; /health reports whether the database answers.
   const database = createDatabase({ url: config.DATABASE_URL, max: config.DATABASE_POOL_MAX });
   const auth = createAuth({
@@ -41,7 +45,9 @@ function main() {
     auth,
     tokens,
     serviceKey: config.FINANCE_API_SERVICE_KEY,
-    settings: { telegramBotUsername: config.TELEGRAM_BOT_USERNAME },
+    secretBox: createSecretBox(config.BETTER_AUTH_SECRET),
+    telegram: createTelegramBotApi({ origin: config.TELEGRAM_API_URL }),
+    onSecret: (value) => secrets.add(value),
     publicUrl: config.PUBLIC_URL,
   });
   const server = Bun.serve({ port: config.PORT, fetch: app.fetch, maxRequestBodySize: MAX_REQUEST_BODY_BYTES });

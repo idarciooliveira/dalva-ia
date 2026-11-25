@@ -3,7 +3,8 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 
 import type { Database } from "../db/client";
 import { authAccounts, authSessions, authVerifications, users } from "../db/schema";
-import type { Logger } from "../log";
+import { claimOwner } from "../domain/instance";
+import { errorFields, type Logger } from "../log";
 
 /** Mounted here by `createApp`; the web app reaches it on the same origin through the proxy. */
 export const AUTH_BASE_PATH = "/api/auth";
@@ -73,6 +74,17 @@ export function createAuth(options: AuthOptions) {
       defaultCookieAttributes: { httpOnly: true, sameSite: "lax", secure, path: "/" },
     },
     telemetry: { enabled: false },
+    // The first user to sign up owns the instance (Settings → Assistant). Without the stored owner the
+    // earliest user still counts as it, so a failure here changes nothing.
+    databaseHooks: {
+      user: {
+        create: {
+          after: async () => {
+            await claimOwner(options.db).catch((error: unknown) => options.logger.error("owner_claim_failed", errorFields(error)));
+          },
+        },
+      },
+    },
     // Unexpected errors (database down, ...) are rethrown to the app's error handler, which logs only
     // their name and SQLSTATE. Left to Better Auth, they would be printed whole, query parameters
     // (emails, hashes, session tokens) included. Its own 4xx errors still answer normally.

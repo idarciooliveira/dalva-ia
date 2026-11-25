@@ -26,7 +26,7 @@ test.describe("Settings → Telegram", () => {
     const command = page.getByTestId("telegram-start-command");
     await expect(command).toHaveText(/^\/start [A-Za-z0-9_-]{43}$/);
     const code = (await command.textContent())!.replace("/start ", "");
-    // The bot username comes from the API (TELEGRAM_BOT_USERNAME), not a build variable.
+    // The bot username comes from the instance settings (the owner saved a bot), not a build variable.
     await expect(page.getByRole("link", { name: /open telegram/i })).toHaveAttribute(
       "href",
       `https://t.me/${E2E_BOT_USERNAME}?start=${code}`,

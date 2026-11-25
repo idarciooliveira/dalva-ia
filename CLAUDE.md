@@ -66,7 +66,8 @@ bun run db:migrate   # Apply migrations
 - Money from the API is `{ amountMinor, currency }` in ISO minor units: format with `formatMinor` and parse with `parseDecimalInput` (`src/lib/money.ts`), or `CurrencyInput` with `fractionDigits` + `parseCurrencyInput`. `formatCurrency(cents)` is only for the mock budget card.
 - Transactions, transfers and the dashboard read through `src/lib/api/ledger.ts` and `src/lib/api/dashboard.ts`. Rows owned by goals or debts (`managedBy` on search items) offer no edit or delete. Edits send only changed fields; `null` clears a nullable one.
 - Goal and debt account pickers list only accounts in the base currency (`accountsForBaseCurrency` in `src/lib/accounts.ts`): the API refuses others.
-- Settings → Telegram gets the bot username from `chatLinks.list` (`botUsernames`, API setting `TELEGRAM_BOT_USERNAME`) and polls the list while a link code is pending.
+- Settings → Telegram gets the bot username from `chatLinks.list` (`botUsernames`, from the instance settings) and polls the list while a link code is pending.
+- Settings → Assistant setup is the instance owner's (first user to sign up; `instance.get` returns `owner: false` for anyone else): Telegram bot token and AI provider/model/key, stored encrypted in `instance_settings`. Secrets are write-only: the web gets `configured`, the last 4 characters and the bot username, never the value.
 - `src/router.tsx` sets a 30 second `staleTime`, retries transient errors only, and turns any API 401 into a session re-check (the guard then redirects to /login).
 
 ### Frontend UI Rule
@@ -106,7 +107,7 @@ bun run db:migrate   # Apply migrations
 | `apps/web/src/routes/_authenticated/categories.tsx` | Categories and subcategories management |
 | `apps/web/src/routes/_authenticated/goals.tsx` | Savings goals page |
 | `apps/web/src/routes/_authenticated/debts.tsx` | Debts page |
-| `apps/web/src/routes/_authenticated/settings.tsx` | Settings (Telegram linking) |
+| `apps/web/src/routes/_authenticated/settings.tsx` | Settings (Telegram linking, owner's assistant setup) |
 | `apps/web/src/components/dashboard/app-sidebar.tsx` | Authenticated sidebar navigation |
 | `apps/web/src/components/accounts/account-form-dialog.tsx` | Canonical product form pattern |
 | `apps/web/src/components/transactions/transaction-form-dialog.tsx` | Income/expense dialog |
@@ -161,6 +162,7 @@ Tests currently live in `apps/web/e2e/` and cover:
 - `dashboard.spec.ts`
 - `debts.spec.ts`
 - `settings.spec.ts` links a chat through the service route with the key `playwright.config.ts` generates per run (`E2E_FINANCE_API_SERVICE_KEY`)
+- `assistant-setup.spec.ts` covers the owner's settings. The E2E API signs up the owner (`E2E_OWNER`) with a bot before serving and calls a Telegram stub (`apps/api/scripts/telegram-stub.ts`), never Telegram
 
 Playwright starts `apps/api` on a fresh `dalva_e2e_<port>` database (`apps/api/scripts/e2e-server.ts`) and the web dev server. `E2E_DATABASE_URL`, `E2E_WEB_PORT` and `E2E_API_PORT` override the defaults.
 
@@ -228,6 +230,7 @@ bunx playwright test --project=chromium
 | `apps/api/src/http/principal.ts` | Credential resolution |
 | `apps/api/src/domain/*.ts` | Domain logic per module |
 | `apps/api/src/domain/ledger.ts` | Entries, owners and every balance move |
+| `apps/api/src/domain/instance.ts` | Instance owner, bot and AI settings, agent runtime config |
 | `apps/api/src/trpc/*.ts` | Routers per module, schemas next to the procedures |
 | `apps/api/src/jobs/retention.ts` | Retention jobs (croner) |
 | `apps/api/test/api.ts` | Seed and client helpers for tests |
@@ -299,6 +302,7 @@ Wise-inspired. Full spec in `docs/design-system.md`.
 - Dashboard with real accounts, transaction summaries, cashflow, category spending, recent transactions, goals and debts
 - Accounts, transactions, transfers, categories, savings goals and debts
 - Settings with Telegram linking; Telegram agent for reads and writes
+- Instance settings in the web app (owner only): Telegram bot (webhook set by the API) and AI provider. The agent reads them from the API (`instance.agentConfig`) and applies changes without a restart
 - Production on one compose stack (`deploy/`)
 
 **Partial or not yet wired:**

@@ -114,7 +114,16 @@ const ACCESS: Record<string, Access> = {
   "agentEvents.claim": "service",
   "agentEvents.updateStatus": "service",
   "agentEvents.listRecoverable": "service",
+  "instance.get": "web",
+  "instance.saveTelegram": "webNoKey",
+  "instance.removeTelegram": "webNoKey",
+  "instance.telegramStatus": "web",
+  "instance.saveAi": "webNoKey",
+  "instance.agentConfig": "service",
 };
+
+/** Service procedures without input: the service key alone gets an answer. */
+const SERVICE_NO_INPUT = new Set(["instance.agentConfig"]);
 
 const procedures = appRouter._def.procedures as unknown as Record<string, { _def: { type: "query" | "mutation" } }>;
 const typeOf = (path: string) => procedures[path]!._def.type;
@@ -159,7 +168,9 @@ describe("procedure access", () => {
 
     it("accepts the service key without an Idempotency-Key and validates the input", async () => {
       const { app } = testApp();
-      expectError(await raw(app, path, input, { token: TEST_SERVICE_KEY }), "validation_failed", 400);
+      const response = await raw(app, path, input, { token: TEST_SERVICE_KEY });
+      if (SERVICE_NO_INPUT.has(path)) expect(response.status).toBe(200);
+      else expectError(response, "validation_failed", 400);
     });
 
     it("answers 401 to every credential when no service key is configured", async () => {

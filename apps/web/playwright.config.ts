@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 
 import { defineConfig, devices } from "@playwright/test";
 
-import { E2E_BOT_USERNAME } from "./e2e/helpers/stack";
+import { E2E_BOT_USERNAME, E2E_OWNER } from "./e2e/helpers/stack";
 
 /**
  * Playwright E2E test configuration for @mpf/web.
@@ -18,6 +18,8 @@ import { E2E_BOT_USERNAME } from "./e2e/helpers/stack";
  *
  * The API gets a service key made here (`E2E_FINANCE_API_SERVICE_KEY`): the
  * workers inherit it and call the bot's service routes with it (settings.spec.ts).
+ * It signs up the instance owner (`E2E_OWNER`) before serving and talks to a
+ * Telegram stub, never to Telegram (apps/api/scripts/telegram-stub.ts).
  *
  * @see https://playwright.dev/docs/test-configuration
  */
@@ -73,7 +75,9 @@ export default defineConfig({
         PORT: String(apiPort),
         PUBLIC_URL: webOrigin,
         E2E_FINANCE_API_SERVICE_KEY: process.env.E2E_FINANCE_API_SERVICE_KEY,
-        TELEGRAM_BOT_USERNAME: E2E_BOT_USERNAME,
+        E2E_BOT_USERNAME,
+        E2E_OWNER_EMAIL: E2E_OWNER.email,
+        E2E_OWNER_PASSWORD: E2E_OWNER.password,
         ...(process.env.E2E_DATABASE_URL ? { E2E_DATABASE_URL: process.env.E2E_DATABASE_URL } : {}),
       },
       reuseExistingServer: false,

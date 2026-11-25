@@ -97,7 +97,7 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
   const pollRetryMs = options.pollRetryMs ?? 3000;
 
   if (options.mode === "webhook" && !options.webhookSecret) {
-    throw new Error("TELEGRAM_WEBHOOK_SECRET is required in webhook mode");
+    throw new Error("A webhook secret is required in webhook mode");
   }
 
   let polling: { controller: AbortController; loop: Promise<void> } | null = null;

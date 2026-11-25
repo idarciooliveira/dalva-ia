@@ -24,3 +24,9 @@ export const debtPaymentsQuery = (debtId: string) => trpc.debtPayments.list.quer
 export const debtSummaryQuery = () => trpc.reports.debtSummary.queryOptions();
 
 export const chatLinksQuery = () => trpc.chatLinks.list.queryOptions();
+
+/** Instance settings: `owner: false` for everyone but the instance owner. */
+export const instanceQuery = () => trpc.instance.get.queryOptions();
+
+/** What Telegram reports for the bot's webhook (owner only). */
+export const telegramStatusQuery = () => trpc.instance.telegramStatus.queryOptions();

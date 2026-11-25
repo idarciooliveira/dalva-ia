@@ -5,6 +5,7 @@ import { chatHistoryRouter, chatLinksRouter } from "./chatLinks";
 import { debtPaymentsRouter, debtsRouter } from "./debts";
 import { goalContributionsRouter, goalsRouter } from "./goals";
 import { router } from "./init";
+import { instanceRouter } from "./instance";
 import { profileRouter } from "./profile";
 import { reportsRouter } from "./reports";
 import { agentEventsRouter, channelIdentitiesRouter, channelLinksRouter } from "./service";
@@ -36,6 +37,7 @@ export const appRouter = router({
   channelLinks: channelLinksRouter,
   channelIdentities: channelIdentitiesRouter,
   agentEvents: agentEventsRouter,
+  instance: instanceRouter,
 });
 
 /** What clients import, type-only: `import type { AppRouter } from "@mpf/api/trpc"`. */

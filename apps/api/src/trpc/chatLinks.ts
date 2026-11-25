@@ -8,6 +8,7 @@ import { z } from "zod";
 import { channel } from "../db/schema";
 import * as agentStore from "../domain/agentStore";
 import * as channelLinks from "../domain/channelLinks";
+import * as instance from "../domain/instance";
 import { iso } from "./dto";
 import { router, webRead, webWriteNoKey } from "./init";
 import { byId, deleted, idSchema, noInput } from "./schemas";
@@ -39,8 +40,8 @@ export const chatLinksRouter = router({
     .input(noInput)
     .output(z.object({ items: z.array(chatLinkSchema), botUsernames: z.record(z.string(), z.string()).optional() }))
     .query(async ({ ctx }) => {
-      const { telegramBotUsername } = ctx.settings;
-      const botUsernames: Record<string, string> = telegramBotUsername ? { telegram: telegramBotUsername } : {};
+      const telegramBot = await instance.botUsername(ctx.tx);
+      const botUsernames: Record<string, string> = telegramBot ? { telegram: telegramBot } : {};
       return { items: (await channelLinks.listActiveForUser(ctx.tx, ctx.user.userId)).map(chatLinkDto), botUsernames };
     }),
 

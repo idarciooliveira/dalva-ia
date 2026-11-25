@@ -33,7 +33,7 @@ const linkedDate = (iso: string) =>
 export function TelegramSection() {
   const links = useQuery(chatLinksQuery());
   const telegram = links.data?.items.find((link) => link.channel === "telegram");
-  // Validated by the API config (TELEGRAM_BOT_USERNAME); absent when unset.
+  // The bot the instance owner set up (Settings → Assistant setup); absent until then.
   const bot = links.data?.botUsernames?.telegram ?? null;
 
   return (
@@ -68,8 +68,12 @@ export function TelegramSection() {
           />
         ) : telegram ? (
           <LinkedTelegram link={telegram} />
-        ) : (
+        ) : bot ? (
           <ConnectTelegram bot={bot} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No Telegram bot is set up on this DALVA yet. Its owner adds one under Assistant setup.
+          </p>
         )}
       </div>
     </section>
@@ -80,7 +84,7 @@ export function TelegramSection() {
 /*  Not linked: consent, then a single-use link                               */
 /* -------------------------------------------------------------------------- */
 
-function ConnectTelegram({ bot }: { bot: string | null }) {
+function ConnectTelegram({ bot }: { bot: string }) {
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [pending, setPending] = useState<{ code: string; expiresAt: number } | null>(null);

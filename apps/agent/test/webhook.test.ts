@@ -14,7 +14,7 @@ function setup(options: { accepting?: () => boolean; limits?: { maxPerChat?: num
   const app = createApp({
     adapter,
     pipeline,
-    mode: "webhook",
+    mode: () => "webhook",
     probeFinance: async () => "ok",
     isAccepting: options.accepting ?? (() => true),
   });
@@ -113,7 +113,7 @@ describe("webhook", () => {
     const { adapter } = telegramAdapter(logger, "polling");
     const finance = fakeFinance();
     const pipeline = createPipeline({ adapter, service: finance.clients.service, handle: async () => {}, logger });
-    const app = createApp({ adapter, pipeline, mode: "polling", probeFinance: async () => "ok", isAccepting: () => true });
+    const app = createApp({ adapter, pipeline, mode: () => "polling", probeFinance: async () => "ok", isAccepting: () => true });
     const response = await app.request("/webhooks/telegram", { method: "POST", body: "{}" });
     expect(response.status).toBe(404);
   });

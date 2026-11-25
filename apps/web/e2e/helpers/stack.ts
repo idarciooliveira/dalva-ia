@@ -1,7 +1,17 @@
 /** The local stack Playwright starts (playwright.config.ts), as the tests reach it. */
 
-/** The bot username the API is configured with: Settings → Telegram links to it. */
+/** The bot username the Telegram stub answers with, for any token: Settings → Telegram links to it. */
 export const E2E_BOT_USERNAME = "dalva_e2e_bot";
+
+/**
+ * The instance owner, signed up by the API before it serves (apps/api/scripts/e2e-server.ts),
+ * onboarded, with a bot configured. Only it sees Settings → Assistant setup.
+ */
+export const E2E_OWNER = { name: "Owner", email: "owner@e2e.test", password: "owner-password-123" };
+
+/** A token the Telegram stub accepts (any bot id), and one it refuses with 401. */
+export const stubToken = (botId: number) => `${botId}:${"A".repeat(31)}${String(botId).slice(-4).padStart(4, "0")}`;
+export const REJECTED_TOKEN = `200000002:rejected${"x".repeat(27)}`;
 
 /**
  * Calls a service procedure (the chat agent's own credential) on the test API,

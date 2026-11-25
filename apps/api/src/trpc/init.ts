@@ -26,6 +26,7 @@ import { DomainError } from "../domain/errors";
 import { claimKey, requestHash, storeResponse } from "../http/idempotency";
 import type { Principal, Scope, UserPrincipal } from "../http/principal";
 import type { UserTokens } from "../auth/tokens";
+import type { InstanceDeps } from "../domain/instance";
 import type { Logger } from "../log";
 import { domainErrorOf, fail, formatError, trpcError } from "./errors";
 
@@ -48,14 +49,9 @@ export type TrpcContext = {
   resHeaders: Headers;
   /** Mints the user tokens `channelIdentities.resolve` hands out. */
   tokens: UserTokens;
-  /** Server settings procedures read. */
-  settings: TrpcSettings;
+  /** Instance settings: public origin, secret box, Telegram Bot API (`src/domain/instance.ts`). */
+  instance: InstanceDeps;
 };
-
-export interface TrpcSettings {
-  /** `TELEGRAM_BOT_USERNAME`, for the web's `t.me` deep link. */
-  telegramBotUsername?: string;
-}
 
 /**
  * Agent-store writes that must keep what they wrote and still fail (a pending

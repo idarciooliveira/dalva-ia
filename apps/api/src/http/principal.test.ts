@@ -1,7 +1,8 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { apiCodeOf, probeRouter, silentLogger, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL, TEST_SERVICE_KEY } from "../../test/app";
+import { apiCodeOf, probeRouter, silentLogger, testApp, testTokens, TEST_AUTH_SECRET, TEST_PUBLIC_URL, TEST_SERVICE_KEY, testSecretBox } from "../../test/app";
+import { fakeTelegram } from "../../test/telegram";
 import { testDb } from "../../test/db";
 import { createApp } from "../app";
 import { createAuth } from "../auth/auth";
@@ -96,7 +97,7 @@ describe("principal sources", () => {
     const unreachable = createDatabase({ url: "postgres://nobody:x@127.0.0.1:1/none", max: 1, connectTimeoutSeconds: 1 });
     try {
       const auth = createAuth({ db: unreachable.db, logger: silentLogger, publicUrl: TEST_PUBLIC_URL, secret: TEST_AUTH_SECRET });
-      const app = createApp({ db: unreachable.db, logger: silentLogger, auth, tokens: testTokens, publicUrl: TEST_PUBLIC_URL, trpcRouter: probeRouter });
+      const app = createApp({ db: unreachable.db, logger: silentLogger, auth, tokens: testTokens, publicUrl: TEST_PUBLIC_URL, secretBox: testSecretBox, telegram: fakeTelegram(), trpcRouter: probeRouter });
       const res = await app.request(ME, { headers: { cookie } });
       await expectError(res, 500, "internal");
     } finally {

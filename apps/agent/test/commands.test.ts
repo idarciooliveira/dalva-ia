@@ -266,11 +266,11 @@ describe("commands", () => {
     expect(lastReply()).toContain("history with DALVA was deleted");
   });
 
-  test("plain text: chat is coming soon, with the command list", async () => {
+  test("plain text: chat is off until an AI provider is set, with the command list", async () => {
     const { finance, run, lastReply } = setup();
     finance.link(USER);
     await run("spent 12 on lunch");
-    expect(lastReply()).toContain("coming soon");
+    expect(lastReply()).toContain("isn't set up");
     expect(lastReply()).toContain("/balance");
   });
 
@@ -285,7 +285,7 @@ describe("commands", () => {
     const { finance, runUpdate, lastReply } = setup();
     finance.link(USER);
     await runUpdate(fixture("photo"));
-    expect(lastReply()).toContain("coming soon");
+    expect(lastReply()).toContain("isn't set up");
   });
 
   test("records user and bot messages in the current session; /start args are never stored", async () => {
@@ -300,7 +300,7 @@ describe("commands", () => {
     });
     const stored = finance.messages.map((m) => ({ role: m.role, content: JSON.parse(m.content) }));
     expect(stored[0]).toEqual({ role: "user", content: { v: 1, kind: "text", text: "spent 12 on lunch" } });
-    expect(stored[1]).toMatchObject({ role: "assistant", content: { v: 1, text: expect.stringContaining("coming soon") } });
+    expect(stored[1]).toMatchObject({ role: "assistant", content: { v: 1, text: expect.stringContaining("isn't set up") } });
     expect(stored[2]).toEqual({ role: "user", content: { v: 1, kind: "command", command: "start" } });
     expect(new Set(finance.messages.map((m) => m.sessionId)).size).toBe(1);
   });

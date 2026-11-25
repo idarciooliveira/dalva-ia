@@ -88,12 +88,10 @@ describe("loadConfig", () => {
     );
   });
 
-  it("takes an optional Telegram bot username, with or without @", () => {
-    expect(loadConfig(valid).TELEGRAM_BOT_USERNAME).toBeUndefined();
-    expect(loadConfig({ ...valid, TELEGRAM_BOT_USERNAME: "dalva_bot" }).TELEGRAM_BOT_USERNAME).toBe("dalva_bot");
-    expect(loadConfig({ ...valid, TELEGRAM_BOT_USERNAME: "@dalva_bot" }).TELEGRAM_BOT_USERNAME).toBe("dalva_bot");
-    expect(configError({ ...valid, TELEGRAM_BOT_USERNAME: "bot" })).toContain("TELEGRAM_BOT_USERNAME must be a Telegram username");
-    expect(configError({ ...valid, TELEGRAM_BOT_USERNAME: "dalva bot!" })).toContain("TELEGRAM_BOT_USERNAME must be a Telegram username");
+  it("takes an optional Bot API origin (tests), nothing Telegram besides", () => {
+    expect(loadConfig(valid).TELEGRAM_API_URL).toBeUndefined();
+    expect(loadConfig({ ...valid, TELEGRAM_API_URL: "http://127.0.0.1:9999/" }).TELEGRAM_API_URL).toBe("http://127.0.0.1:9999");
+    expect(configError({ ...valid, TELEGRAM_API_URL: "ftp://x" })).toContain("TELEGRAM_API_URL must be an http(s) origin");
   });
 
   it("lists the secrets to scrub from logs", () => {
