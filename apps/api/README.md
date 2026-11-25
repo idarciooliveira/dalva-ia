@@ -15,6 +15,16 @@ bun run dev:api   # Postgres up, migrations, then http://localhost:4000/health i
 
 Config is validated at boot (`src/config.ts`); a bad variable is named in the error, its value never is.
 
+## Instance settings
+
+The Telegram bot and the AI provider are data, not env: one `instance_settings` row (`src/domain/instance.ts`, procedures in `src/trpc/instance.ts`).
+
+- Owner: the first user to sign up (stored by a Better Auth hook; the migration backfilled the earliest user). Anyone else gets `owner: false` and `forbidden` on writes.
+- Secrets (bot token, AI key, generated webhook secret) are sealed with AES-256-GCM under a key derived from `BETTER_AUTH_SECRET` (`src/auth/secret-box.ts`). Web reads return only `configured`, the last 4 characters and the bot username. Rotating `BETTER_AUTH_SECRET` makes them `unreadable`: the owner enters them again; the agent gets `null` meanwhile.
+- `instance.saveTelegram` calls Telegram (`src/telegram/bot-api.ts`): `getMe` for the username, then `setWebhook` to `<PUBLIC_URL>/webhooks/telegram` when `PUBLIC_URL` is https (http: the agent polls). Telegram's refusal is `validation_failed` on `token` with its reason. `TELEGRAM_API_URL` points it at a stub in E2E.
+- `instance.agentConfig` (service key) is the agent's runtime config, secrets included. `chatLinks.list` names the saved bot.
+- Every secret the API reads or receives joins the log scrubber.
+
 ## Auth
 
 Better Auth, email and password, mounted at `/api/auth/*` (`src/auth/auth.ts`). Sessions are httpOnly, SameSite=Lax cookies (`Secure` when `PUBLIC_URL` is https) that last 30 days and renew daily while in use. Web and API share one origin behind the proxy, so auth writes posted from any other origin are refused. Rate limits on sign-in and sign-up are per client address and need `CLIENT_IP_HEADER`, a header the proxy overwrites (required in production, off locally).

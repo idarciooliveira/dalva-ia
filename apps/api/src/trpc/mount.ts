@@ -7,7 +7,8 @@ import type { Database } from "../db/client";
 import { type AppEnv, INVALID_CREDENTIALS, type PrincipalSource, principalFrom } from "../http/principal";
 import { errorFields, type Logger } from "../log";
 import type { UserTokens } from "../auth/tokens";
-import { IDEMPOTENCY_KEY_HEADER, type TrpcContext, type TrpcSettings } from "./init";
+import type { InstanceDeps } from "../domain/instance";
+import { IDEMPOTENCY_KEY_HEADER, type TrpcContext } from "./init";
 import { appRouter } from "./router";
 
 export const TRPC_BASE_PATH = "/api/trpc";
@@ -15,7 +16,7 @@ export const TRPC_BASE_PATH = "/api/trpc";
 export const MAX_BODY_BYTES = 64 * 1024;
 
 /** The API: tRPC at `/api/trpc`, the caller resolved from `sources` (see `src/http/principal.ts`). */
-export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Logger; sources: readonly PrincipalSource[]; tokens: UserTokens; settings: TrpcSettings; router?: AnyTRPCRouter }): void {
+export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Logger; sources: readonly PrincipalSource[]; tokens: UserTokens; instance: InstanceDeps; router?: AnyTRPCRouter }): void {
   const path = `${TRPC_BASE_PATH}/*`;
 
   app.use(path, async (c, next) => {
@@ -54,7 +55,7 @@ export function mountTrpc(app: Hono<AppEnv>, options: { db: Database; logger: Lo
           batchSize: opts.info.calls.length,
           resHeaders: opts.resHeaders,
           tokens: options.tokens,
-          settings: options.settings,
+          instance: options.instance,
         };
       },
       responseMeta: ({ errors }) =>

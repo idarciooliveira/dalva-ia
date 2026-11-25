@@ -134,10 +134,13 @@ describe("chatLinks (web)", () => {
     expect((await bob.web.chatLinks.list()).items).toHaveLength(1);
   });
 
-  it("names the configured bot, so the web can link to it", async () => {
-    const { app } = testApp({ settings: { telegramBotUsername: "dalva_test_bot" } });
+  it("names the bot the owner configured, so the web can link to it", async () => {
+    const { app } = testApp();
+    const owner = await newUser(app);
     const { web } = await newUser(app);
-    expect(await web.chatLinks.list()).toEqual({ items: [], botUsernames: { telegram: "dalva_test_bot" } });
+    expect(await web.chatLinks.list()).toEqual({ items: [], botUsernames: {} });
+    await owner.web.instance.saveTelegram({ token: `4242:${"A".repeat(35)}` });
+    expect(await web.chatLinks.list()).toEqual({ items: [], botUsernames: { telegram: "bot_4242" } });
   });
 
   it("toggles read-only by switching scopes", async () => {

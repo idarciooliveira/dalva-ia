@@ -9,7 +9,8 @@ import type { UserTokens } from "./auth/tokens";
 import type { Database } from "./db/client";
 import { type AppEnv, serviceKeySource, sessionSource, userTokenSource } from "./http/principal";
 import { errorFields, type Logger } from "./log";
-import type { TrpcSettings } from "./trpc/init";
+import type { SecretBox } from "./auth/secret-box";
+import type { TelegramBotApi } from "./telegram/bot-api";
 import { mountTrpc } from "./trpc/mount";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -22,8 +23,12 @@ export interface AppOptions {
   tokens: UserTokens;
   /** The chat agent's key for the service routes (config `FINANCE_API_SERVICE_KEY`). Unset: they answer 401. */
   serviceKey?: string;
-  /** Config procedures read (`TELEGRAM_BOT_USERNAME` for the web's deep link). */
-  settings?: TrpcSettings;
+  /** Seals the instance settings' secrets (key derived from `BETTER_AUTH_SECRET`). */
+  secretBox: SecretBox;
+  /** Telegram Bot API, for saving the bot from Settings. */
+  telegram: TelegramBotApi;
+  /** Gets every instance secret the API reads or receives, for log scrubbing. */
+  onSecret?: (value: string) => void;
   /** The tRPC router. Default: the whole API (tests swap in their own). */
   trpcRouter?: AnyTRPCRouter;
   /** Public origin (config `PUBLIC_URL`): the only origin allowed to post to the auth routes. */
@@ -102,7 +107,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       sessionSource(options.auth, { publicUrl: options.publicUrl }),
     ],
     tokens: options.tokens,
-    settings: options.settings ?? {},
+    instance: { publicUrl: options.publicUrl, box: options.secretBox, telegram: options.telegram, onSecret: options.onSecret },
     router: options.trpcRouter,
   });
 

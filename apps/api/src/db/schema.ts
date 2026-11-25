@@ -7,6 +7,7 @@ import {
   type PgColumn,
   bigint,
   boolean,
+  check,
   date,
   doublePrecision,
   foreignKey,
@@ -15,6 +16,7 @@ import {
   jsonb,
   pgEnum,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
@@ -73,6 +75,7 @@ export const debtType = pgEnum("debt_type", [
 ]);
 export const channel = pgEnum("channel", ["telegram"]);
 export const channelScope = pgEnum("channel_scope", ["finance:read", "finance:write"]);
+export const aiProvider = pgEnum("ai_provider", ["gateway", "openrouter"]);
 export const agentEventStatus = pgEnum("agent_event_status", ["received", "processing", "done", "failed"]);
 export const agentMessageRole = pgEnum("agent_message_role", ["user", "assistant", "tool", "system"]);
 export const agentActionStatus = pgEnum("agent_action_status", [
@@ -458,5 +461,43 @@ export const agentPendingActions = pgTable(
       columns: [t.sessionId, t.userId],
       foreignColumns: [agentSessions.id, agentSessions.userId],
     }).onDelete("cascade"),
+  ],
+);
+
+/**
+ * One row (`id = 1`): the instance's own settings, edited by its owner in the
+ * web app (Settings). The owner is the first user who signed up. `*_sealed`
+ * columns hold secrets encrypted with a key derived from `BETTER_AUTH_SECRET`
+ * (`src/auth/secret-box.ts`); `*_hint` keeps their last 4 characters to show.
+ */
+export const instanceSettings = pgTable(
+  "instance_settings",
+  {
+    id: smallint("id").primaryKey().default(1),
+    ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "restrict" }),
+    telegramBotTokenSealed: text("telegram_bot_token_sealed"),
+    telegramBotTokenHint: text("telegram_bot_token_hint"),
+    telegramBotId: bigint("telegram_bot_id", { mode: "number" }),
+    telegramBotUsername: text("telegram_bot_username"),
+    telegramWebhookSecretSealed: text("telegram_webhook_secret_sealed"),
+    telegramUpdatedAt: instant("telegram_updated_at"),
+    aiProvider: aiProvider("ai_provider"),
+    aiModel: text("ai_model"),
+    aiApiKeySealed: text("ai_api_key_sealed"),
+    aiApiKeyHint: text("ai_api_key_hint"),
+    aiUpdatedAt: instant("ai_updated_at"),
+    createdAt: createdAt(),
+    updatedAt: instant("updated_at").notNull().defaultNow(),
+  },
+  (t) => [
+    check("instance_settings_singleton", sql`${t.id} = 1`),
+    check(
+      "instance_settings_telegram_complete",
+      sql`(${t.telegramBotTokenSealed} is null) = (${t.telegramBotUsername} is null) and (${t.telegramBotTokenSealed} is null) = (${t.telegramWebhookSecretSealed} is null)`,
+    ),
+    check(
+      "instance_settings_ai_complete",
+      sql`(${t.aiProvider} is null) = (${t.aiModel} is null) and (${t.aiProvider} is null) = (${t.aiApiKeySealed} is null)`,
+    ),
   ],
 );

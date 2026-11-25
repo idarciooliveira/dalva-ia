@@ -22,10 +22,10 @@ const configSchema = z
       .refine((value) => new TextEncoder().encode(value).length >= MIN_SERVICE_KEY_BYTES, `must be at least ${MIN_SERVICE_KEY_BYTES} bytes`)
       .refine((value) => !value.includes("replace-with"), "must not be the .env.example placeholder")
       .optional(),
-    TELEGRAM_BOT_USERNAME: z
-      .string()
-      .transform((value) => value.replace(/^@/, ""))
-      .pipe(z.string().regex(/^[A-Za-z0-9_]{5,32}$/, "must be a Telegram username"))
+    /** Bot API origin. Tests point it at a stub; nothing else should set it. */
+    TELEGRAM_API_URL: z
+      .url({ protocol: /^https?$/, error: "must be an http(s) origin" })
+      .transform((value) => new URL(value).origin)
       .optional(),
     CLIENT_IP_HEADER: z
       .string()

@@ -5,7 +5,10 @@ import { createAuth } from "../src/auth/auth";
 import type { SignInLimiter } from "../src/auth/sign-in-limit";
 import { createUserTokens } from "../src/auth/tokens";
 import { users } from "../src/db/schema";
-import { agentRead, financeRead, router, serviceRead, type TrpcSettings, webWriteNoKey } from "../src/trpc/init";
+import { agentRead, financeRead, router, serviceRead, webWriteNoKey } from "../src/trpc/init";
+import { createSecretBox, type SecretBox } from "../src/auth/secret-box";
+import type { TelegramBotApi } from "../src/telegram/bot-api";
+import { fakeTelegram } from "./telegram";
 import type { AnyTRPCRouter } from "@trpc/server";
 import { createLogger, type Logger } from "../src/log";
 import { testDb } from "./db";
@@ -14,6 +17,7 @@ export const TEST_PUBLIC_URL = "http://localhost:3000";
 export const TEST_AUTH_SECRET = "test-secret-test-secret-test-secret-0123";
 export const TEST_TOKEN_SECRET = "finance-api-test-secret-0123456789abcdef";
 export const testTokens = createUserTokens(TEST_TOKEN_SECRET);
+export const testSecretBox = createSecretBox(TEST_AUTH_SECRET);
 export const TEST_SERVICE_KEY = "finance-api-test-service-key-fedcba9876543210";
 
 export const silentLogger = createLogger({ level: "error", write: () => {} });
@@ -27,7 +31,10 @@ export function testApp(
     /** A router in place of the API's (procedures built with the builders of `src/trpc/init.ts`). */
     router?: AnyTRPCRouter;
     serviceKey?: string | null;
-    settings?: TrpcSettings;
+    /** Default: a fresh `fakeTelegram()`. */
+    telegram?: TelegramBotApi;
+    secretBox?: SecretBox;
+    onSecret?: (value: string) => void;
   } = {},
 ) {
   const logger = options.logger ?? silentLogger;
@@ -42,7 +49,9 @@ export function testApp(
     signInLimiter: options.signInLimiter,
     trpcRouter: options.router,
     serviceKey: options.serviceKey === null ? undefined : (options.serviceKey ?? TEST_SERVICE_KEY),
-    settings: options.settings,
+    secretBox: options.secretBox ?? testSecretBox,
+    telegram: options.telegram ?? fakeTelegram(),
+    onSecret: options.onSecret,
   });
   return { app, auth };
 }

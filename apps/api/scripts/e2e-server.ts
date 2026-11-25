@@ -10,16 +10,30 @@
  *
  * E2E_FINANCE_API_SERVICE_KEY  the service key the tests call the bot's routes with
  *                    (playwright.config.ts makes one per run). Default: random.
- * TELEGRAM_BOT_USERNAME  as set by Playwright (Settings → Telegram deep link).
+ * E2E_OWNER_EMAIL, E2E_OWNER_PASSWORD  the instance owner, signed up here before the API
+ *                    serves, so no test's user can become the owner first.
+ * E2E_BOT_USERNAME   the bot the Telegram stub answers for every token. The owner starts
+ *                    with a bot configured, so Settings → Telegram can link from the first test.
+ *
+ * Telegram is a local stub (scripts/telegram-stub.ts, `TELEGRAM_API_URL`): no test reaches it.
  *
  * The other secrets are random per run; of apps/api/.env.local only the server
  * address, DATABASE_POOL_MAX and LOG_LEVEL are used.
  */
 import { randomBytes } from "node:crypto";
 
+import { eq } from "drizzle-orm";
 import postgres from "postgres";
 
+import { createAuth } from "../src/auth/auth";
+import { createSecretBox } from "../src/auth/secret-box";
+import { createDatabase } from "../src/db/client";
 import { runMigrations } from "../src/db/migrate";
+import { instanceSettings, userProfiles, users } from "../src/db/schema";
+import { saveTelegram } from "../src/domain/instance";
+import { createLogger } from "../src/log";
+import { createTelegramBotApi } from "../src/telegram/bot-api";
+import { startTelegramStub } from "./telegram-stub";
 
 const port = process.env.PORT || "4000";
 function defaultUrl(): string {
@@ -47,6 +61,7 @@ try {
 await runMigrations(url.toString());
 
 const secret = () => randomBytes(32).toString("hex");
+const telegram = startTelegramStub({ username: process.env.E2E_BOT_USERNAME || "dalva_e2e_bot" });
 Object.assign(process.env, {
   DATABASE_URL: url.toString(),
   NODE_ENV: "test",
@@ -55,7 +70,44 @@ Object.assign(process.env, {
   BETTER_AUTH_SECRET: secret(),
   FINANCE_API_SERVICE_KEY: process.env.E2E_FINANCE_API_SERVICE_KEY || secret(),
   LOG_LEVEL: process.env.LOG_LEVEL || "warn",
+  TELEGRAM_API_URL: `http://127.0.0.1:${telegram.port}`,
 });
+
+// The owner: signed up first (the sign-up hook stores it), onboarded, with a bot configured.
+{
+  const env = {
+    DATABASE_URL: process.env.DATABASE_URL!,
+    PUBLIC_URL: process.env.PUBLIC_URL!,
+    BETTER_AUTH_SECRET: process.env.BETTER_AUTH_SECRET!,
+    TELEGRAM_API_URL: process.env.TELEGRAM_API_URL!,
+    E2E_OWNER_EMAIL: process.env.E2E_OWNER_EMAIL || "owner@e2e.test",
+    E2E_OWNER_PASSWORD: process.env.E2E_OWNER_PASSWORD || "owner-password-123",
+  };
+  const database = createDatabase({ url: env.DATABASE_URL, max: 2 });
+  const logger = createLogger({ level: "warn" });
+  try {
+    const auth = createAuth({ db: database.db, logger, publicUrl: env.PUBLIC_URL, secret: env.BETTER_AUTH_SECRET });
+    await auth.api.signUpEmail({
+      body: { name: "Owner", email: env.E2E_OWNER_EMAIL, password: env.E2E_OWNER_PASSWORD },
+    });
+    const [owner] = await database.db.select().from(instanceSettings).where(eq(instanceSettings.id, 1));
+    if (!owner?.ownerUserId) throw new Error("the owner was not stored at sign-up");
+    await database.db.insert(userProfiles).values({ userId: owner.ownerUserId, baseCurrency: "USD", onboardingCompleted: true });
+    await database.db.transaction((tx) =>
+      saveTelegram(
+        tx,
+        owner.ownerUserId!,
+        `100000001:${"E2E".repeat(11)}`,
+        { publicUrl: env.PUBLIC_URL, box: createSecretBox(env.BETTER_AUTH_SECRET), telegram: createTelegramBotApi({ origin: env.TELEGRAM_API_URL }) },
+        new Date(),
+      ),
+    );
+    const [ownerUser] = await database.db.select({ email: users.email }).from(users).where(eq(users.id, owner.ownerUserId));
+    console.log(`e2e-server: instance owner ${ownerUser?.email}, Telegram stub on :${telegram.port}`);
+  } finally {
+    await database.close(1);
+  }
+}
 // Rate limits per client address would trip on the suite's many sign-ups.
 delete process.env.CLIENT_IP_HEADER;
 console.log(`e2e-server: ${name} migrated, API on :${process.env.PORT} for ${process.env.PUBLIC_URL}`);
