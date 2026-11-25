@@ -80,6 +80,10 @@ const INVALIDATES: Partial<Record<MutationName, ReadonlyArray<() => QueryKey>>> 
   // `chatHistory.delete` changes nothing the web reads, so it has no entry.
   "chatLinks.unlink": [queryKeys.chatLinks.all],
   "chatLinks.setReadOnly": [queryKeys.chatLinks.all],
+  // The bot's username feeds the Telegram link flow (`chatLinks.list`).
+  "instance.saveTelegram": [queryKeys.instance.all, queryKeys.chatLinks.all],
+  "instance.removeTelegram": [queryKeys.instance.all, queryKeys.chatLinks.all],
+  "instance.saveAi": [queryKeys.instance.all],
 };
 
 async function invalidateAfter(queryClient: QueryClient, name: MutationName): Promise<void> {

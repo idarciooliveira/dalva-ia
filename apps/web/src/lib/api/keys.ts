@@ -45,6 +45,9 @@ export const queryKeys = {
   chatLinks: {
     all: () => trpc.chatLinks.pathKey(),
   },
+  instance: {
+    all: () => trpc.instance.pathKey(),
+  },
   transactions: { all: () => trpc.transactions.pathKey() },
   transfers: { all: () => trpc.transfers.pathKey() },
 };

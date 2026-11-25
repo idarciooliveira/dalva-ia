@@ -16,3 +16,9 @@ export type Debt = RouterOutputs["debts"]["get"]["debt"];
 export type DebtType = Debt["debtType"];
 export type DebtPayment = RouterOutputs["debtPayments"]["record"]["payment"];
 export type ChatLink = RouterOutputs["chatLinks"]["list"]["items"][number];
+/** The instance settings as the owner sees them. */
+export type InstanceSettings = Extract<RouterOutputs["instance"]["get"], { owner: true }>;
+export type TelegramBotState = InstanceSettings["telegram"];
+export type AiProviderState = InstanceSettings["ai"];
+export type AiProvider = Extract<AiProviderState, { provider: string }>["provider"];
+export type TelegramWebhookStatus = RouterOutputs["instance"]["telegramStatus"];
