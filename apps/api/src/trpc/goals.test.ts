@@ -196,24 +196,6 @@ describe("goals and contributions", () => {
     expect(await goalRow(goal)).toMatchObject({ name: "Trip", archived: false });
   });
 
-  it("refuses a contribution that would take the goal total out of the money range", async () => {
-    const { alice, aliceAccount, asAlice } = await twoUsers();
-    const savings = await seedAccount(alice, { name: "Savings" });
-    const goal = await seedGoal(alice, { linkedAccountId: savings });
-    const nearMax = Number.MAX_SAFE_INTEGER - 50;
-    await testDb().update(savingsGoals).set({ currentAmount: nearMax }).where(eq(savingsGoals.id, goal));
-
-    await expectApiError(
-      asAlice.goalContributions.add({ goalId: goal, amount: usd(100), date: "2026-01-01", fromAccountId: aliceAccount }),
-      "validation_failed",
-      400,
-    );
-    expect((await goalRow(goal))?.currentAmount).toBe(nearMax);
-    expect(await transactionRows()).toEqual([]);
-    expect(await balanceOf(aliceAccount)).toBe(100_000);
-    expect((await asAlice.goals.get({ id: goal })).goal.currentAmount).toEqual(usd(nearMax));
-  });
-
   it("keeps balances and the goal exact under parallel contributions and removals", async () => {
     const { alice, aliceAccount, asAlice } = await twoUsers();
     const savings = await seedAccount(alice, { name: "Savings" });

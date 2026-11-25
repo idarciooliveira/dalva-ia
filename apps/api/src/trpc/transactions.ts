@@ -9,11 +9,8 @@ import { z } from "zod";
 import { transactionType } from "../db/schema";
 import * as accounts from "../domain/accounts";
 import * as categories from "../domain/categories";
-import { invalid, notFound } from "../domain/errors";
-import { appAmount } from "../domain/money";
 import * as transactions from "../domain/transactions";
 import { transactionDtos } from "./currency";
-import { transactionDto } from "./dto";
 import { financeRead, financeWrite, router } from "./init";
 import {
   byId,
@@ -179,56 +176,21 @@ export const transactionsRouter = router({
   create: financeWrite
     .input(transactionCreateInput)
     .output(transactionResult)
-    .mutation(async ({ ctx, input }) => {
-      const account = await accounts.getAccount(ctx.tx, ctx.user.userId, input.accountId);
-      const row = await transactions.createTransaction(ctx.tx, ctx.user.userId, {
-        type: input.type,
-        amount: appAmount(input.amount, account.currency, "amount"),
-        accountId: account.id,
-        categoryId: input.categoryId,
-        subcategoryId: input.subcategoryId,
-        date: input.date,
-        description: input.description,
-        note: input.note,
-        payee: input.payee,
-      });
-      return { transaction: transactionDto(row, account.currency) };
+    .mutation(async ({ ctx: { tx, user }, input }) => {
+      const row = await transactions.createTransaction(tx, user.userId, input);
+      const [transaction] = await transactionDtos(tx, user.userId, [row]);
+      return { transaction: transaction! };
     }),
 
+  /** The sign rule needs the row's effective type, and a move across currencies a new amount: the domain checks both. */
   update: financeWrite
     .input(transactionUpdateInput)
     .output(transactionResult)
-    .mutation(async ({ ctx, input }) => {
-      const { tx, user } = ctx;
-      const entry = await transactions.getEditableTransaction(tx, user.userId, input.id);
-      const { row } = entry;
-      const targetId = input.accountId ?? row.accountId;
-      if (targetId === null) throw notFound("Account");
-      const account = await accounts.getAccount(tx, user.userId, targetId);
-
-      // Amounts carry the account's currency: moving a row across currencies needs a new amount.
-      let amount: number | undefined;
-      if (input.amount) {
-        amount = appAmount(input.amount, account.currency, "amount");
-      } else if (row.accountId !== null && row.accountId !== account.id) {
-        const previous = await accounts.getAccount(tx, user.userId, row.accountId);
-        if (previous.currency !== account.currency) {
-          throw invalid("amount", "Provide amount when moving a transaction to an account in another currency");
-        }
-      }
-      // The sign rule needs the effective type, which the input schema can't see: the domain checks it.
-      const updated = await transactions.updateLoadedTransaction(tx, user.userId, entry, {
-        type: input.type,
-        amount,
-        accountId: input.accountId === undefined ? undefined : account.id,
-        categoryId: input.categoryId,
-        subcategoryId: input.subcategoryId,
-        date: input.date,
-        description: input.description,
-        note: input.note,
-        payee: input.payee,
-      });
-      return { transaction: transactionDto(updated, account.currency) };
+    .mutation(async ({ ctx: { tx, user }, input }) => {
+      const { id, ...changes } = input;
+      const row = await transactions.updateTransaction(tx, user.userId, id, changes);
+      const [transaction] = await transactionDtos(tx, user.userId, [row]);
+      return { transaction: transaction! };
     }),
 
   delete: financeWrite

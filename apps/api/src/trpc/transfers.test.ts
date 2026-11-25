@@ -151,41 +151,6 @@ describe("transfers", () => {
     expect(await balanceOf(eur)).toBe(0);
   });
 
-  it("requires a new amount to move a transfer to accounts in another currency", async () => {
-    const { alice, aliceAccount, asAlice } = await twoUsers();
-    const usd2 = await seedAccount(alice, { name: "Second" });
-    const eur1 = await seedAccount(alice, { currency: "EUR", balance: 1_000 });
-    const eur2 = await seedAccount(alice, { currency: "EUR", name: "Euro 2" });
-    const { transfer } = await asAlice.transfers.create({ amount: usd(100), fromAccountId: aliceAccount, toAccountId: usd2, date: "2026-01-01" });
-    await expectApiError(asAlice.transfers.update({ id: transfer.outgoingId, fromAccountId: eur1, toAccountId: eur2 }), "validation_failed");
-    const moved = await asAlice.transfers.update({
-      id: transfer.outgoingId,
-      fromAccountId: eur1,
-      toAccountId: eur2,
-      amount: { amountMinor: 90, currency: "EUR" },
-    });
-    expect(moved.transfer).toMatchObject({ amount: { amountMinor: 90, currency: "EUR" }, fromAccountId: eur1, toAccountId: eur2 });
-    expect([await balanceOf(aliceAccount), await balanceOf(usd2), await balanceOf(eur1), await balanceOf(eur2)]).toEqual([100_000, 0, 910, 90]);
-  });
-
-  it("requires a new amount when a legacy cross-currency leg changes currency", async () => {
-    const { alice, aliceAccount, asAlice } = await twoUsers();
-    const usd2 = await seedAccount(alice, { name: "Second" });
-    const eur = await seedAccount(alice, { currency: "EUR", balance: 900 });
-    // Legacy: 1,000 USD out of aliceAccount, 900 EUR into eur.
-    const outgoing = await seedTransaction(alice, aliceAccount, { type: "transfer", amount: 1_000, destinationAccountId: eur });
-    const incoming = await seedTransaction(alice, eur, { type: "transfer", amount: 900, linkedTransactionId: outgoing });
-    await testDb().update(transactions).set({ linkedTransactionId: incoming }).where(eq(transactions.id, outgoing));
-
-    const error = await expectApiError(asAlice.transfers.update({ id: outgoing, toAccountId: usd2 }), "validation_failed");
-    expect(error.message).toBe("Provide amount when moving a transfer to accounts in another currency");
-    expect([await balanceOf(aliceAccount), await balanceOf(usd2), await balanceOf(eur)]).toEqual([100_000, 0, 900]);
-
-    const moved = await asAlice.transfers.update({ id: outgoing, toAccountId: usd2, amount: usd(1_000) });
-    expect(moved.transfer).toMatchObject({ amount: usd(1_000), fromAccountId: aliceAccount, toAccountId: usd2 });
-    expect([await balanceOf(aliceAccount), await balanceOf(usd2), await balanceOf(eur)]).toEqual([100_000, 1_000, 0]);
-  });
-
   it("validates input: same account, non-positive amount, malformed id", async () => {
     const { alice, aliceAccount, asAlice } = await twoUsers();
     await expectApiError(asAlice.transfers.create({ amount: usd(1), fromAccountId: aliceAccount, toAccountId: aliceAccount, date: "2026-01-01" }), "validation_failed");

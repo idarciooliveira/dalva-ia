@@ -2,13 +2,20 @@ import { eq } from "drizzle-orm";
 
 import { userProfiles } from "../db/schema";
 import type { Tx } from "../db/tx";
-import { notFound } from "./errors";
+import { conflict, notFound } from "./errors";
 
 export type UserProfile = typeof userProfiles.$inferSelect;
 
 export async function getProfile(tx: Tx, userId: string): Promise<UserProfile | null> {
   const [profile] = await tx.select().from(userProfiles).where(eq(userProfiles.userId, userId)).limit(1);
   return profile ?? null;
+}
+
+/** The user's base currency, which goals, debts and reports are in; `conflict` before onboarding created the profile. */
+export async function requireBaseCurrency(tx: Tx, userId: string): Promise<string> {
+  const profile = await getProfile(tx, userId);
+  if (!profile) throw conflict("User profile not found; complete onboarding first");
+  return profile.baseCurrency;
 }
 
 export async function createProfile(tx: Tx, userId: string, args: { baseCurrency: string }): Promise<UserProfile> {

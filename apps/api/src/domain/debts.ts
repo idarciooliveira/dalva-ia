@@ -1,10 +1,18 @@
+/**
+ * Debts and their payments, in the user's base currency. A payment is an
+ * expense on the paying account plus, for a debt linked to a liability
+ * account, an adjustment that pays it down: both accounts in the base
+ * currency.
+ */
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 
 import { debtPayments, debts } from "../db/schema";
 import type { Tx } from "../db/tx";
-import { getAccount } from "./accounts";
+import { requireBaseCurrencyAccount } from "./accounts";
 import { invalid, notFound } from "./errors";
 import * as ledger from "./ledger";
+import { appAmount, type Money, toMoney } from "./money";
+import { requireBaseCurrency } from "./userProfiles";
 
 export type Debt = typeof debts.$inferSelect;
 export type DebtType = Debt["debtType"];
@@ -46,21 +54,44 @@ function assertAmounts(originalAmount: number, currentBalance: number) {
   if (currentBalance > originalAmount) throw invalid("currentBalance", "Current balance cannot exceed original amount");
 }
 
+/** A debt with the base currency its amounts are in. */
+export interface CurrencyDebt {
+  debt: Debt;
+  currency: string;
+}
+
 export interface DebtFields {
   name: string;
   debtType: DebtType;
   lender?: string;
-  originalAmount: number;
-  currentBalance: number;
+  /** Money fields are in the base currency. */
+  originalAmount: Money;
+  /** Remaining principal, at most `originalAmount`. */
+  currentBalance: Money;
   interestRate?: number;
-  minimumPayment?: number;
+  minimumPayment?: Money;
   dueDate?: string;
+  /** Liability account whose balance payments pay down, in the base currency. */
   linkedAccountId?: string;
 }
 
-export async function createDebt(tx: Tx, userId: string, args: DebtFields): Promise<Debt> {
-  assertAmounts(args.originalAmount, args.currentBalance);
-  if (args.linkedAccountId) await getAccount(tx, userId, args.linkedAccountId);
+const MONEY_FIELDS = ["originalAmount", "currentBalance", "minimumPayment"] as const;
+
+/** Stored amounts for the Money fields given, each checked to be in the base currency. */
+function storedAmounts(fields: Partial<DebtFields>, currency: string) {
+  const out: Partial<Record<(typeof MONEY_FIELDS)[number], number>> = {};
+  for (const field of MONEY_FIELDS) {
+    const money = fields[field];
+    if (money) out[field] = appAmount(money, currency, field);
+  }
+  return out;
+}
+
+export async function createDebt(tx: Tx, userId: string, args: DebtFields): Promise<CurrencyDebt> {
+  const currency = await requireBaseCurrency(tx, userId);
+  const amounts = storedAmounts(args, currency);
+  assertAmounts(amounts.originalAmount!, amounts.currentBalance!);
+  if (args.linkedAccountId) await requireBaseCurrencyAccount(tx, userId, args.linkedAccountId, "linkedAccountId", currency);
   const [debt] = await tx
     .insert(debts)
     .values({
@@ -68,32 +99,37 @@ export async function createDebt(tx: Tx, userId: string, args: DebtFields): Prom
       name: args.name,
       debtType: args.debtType,
       lender: args.lender ?? null,
-      originalAmount: args.originalAmount,
-      currentBalance: args.currentBalance,
+      originalAmount: amounts.originalAmount!,
+      currentBalance: amounts.currentBalance!,
       interestRate: args.interestRate ?? null,
-      minimumPayment: args.minimumPayment ?? null,
+      minimumPayment: amounts.minimumPayment ?? null,
       dueDate: args.dueDate ?? null,
       linkedAccountId: args.linkedAccountId ?? null,
     })
     .returning();
-  return debt!;
+  return { debt: debt!, currency };
 }
 
-export async function updateDebt(
-  tx: Tx,
-  userId: string,
-  id: string,
-  fields: Partial<DebtFields>,
-): Promise<Debt> {
+/**
+ * Only the given fields change. The amounts are checked against the stored
+ * ones (`currentBalance` at most `originalAmount`). Payments don't change
+ * when the balance is edited by hand.
+ */
+export async function updateDebt(tx: Tx, userId: string, id: string, fields: Partial<DebtFields>): Promise<CurrencyDebt> {
   const debt = await getDebt(tx, userId, id);
-  if (fields.originalAmount !== undefined || fields.currentBalance !== undefined) {
-    assertAmounts(fields.originalAmount ?? debt.originalAmount, fields.currentBalance ?? debt.currentBalance);
+  const currency = await requireBaseCurrency(tx, userId);
+  const amounts = storedAmounts(fields, currency);
+  if (amounts.originalAmount !== undefined || amounts.currentBalance !== undefined) {
+    assertAmounts(amounts.originalAmount ?? debt.originalAmount, amounts.currentBalance ?? debt.currentBalance);
   }
-  if (fields.linkedAccountId) await getAccount(tx, userId, fields.linkedAccountId);
-  const patch = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
-  if (Object.keys(patch).length === 0) return debt;
+  // Only a new link must be in the base currency: Convex never checked, so an existing debt may be linked to another one.
+  if (fields.linkedAccountId && fields.linkedAccountId !== debt.linkedAccountId) {
+    await requireBaseCurrencyAccount(tx, userId, fields.linkedAccountId, "linkedAccountId", currency);
+  }
+  const patch = Object.fromEntries(Object.entries({ ...fields, ...amounts }).filter(([, value]) => value !== undefined));
+  if (Object.keys(patch).length === 0) return { debt, currency };
   const [updated] = await tx.update(debts).set(patch).where(ownedDebt(userId, id)).returning();
-  return updated!;
+  return { debt: updated!, currency };
 }
 
 export async function setDebtArchived(tx: Tx, userId: string, id: string, archived: boolean): Promise<Debt> {
@@ -134,25 +170,36 @@ export async function listDebtPayments(tx: Tx, userId: string, debtId: string): 
     .limit(PAYMENTS_LIMIT);
 }
 
+/** Money in the base currency. `principalAmount` defaults to `amount` and `interestAmount` to 0; they must add up to `amount`. */
 export interface DebtPaymentFields {
   debtId: string;
-  amount: number;
-  principalAmount?: number;
-  interestAmount?: number;
+  amount: Money;
+  principalAmount?: Money;
+  interestAmount?: Money;
   date: string;
   note?: string;
   fromAccountId: string;
 }
 
-export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymentFields): Promise<DebtPayment> {
-  if (!Number.isSafeInteger(args.amount) || args.amount <= 0) throw invalid("amount", "Amount must be positive");
+export async function recordDebtPayment(
+  tx: Tx,
+  userId: string,
+  args: DebtPaymentFields,
+): Promise<{ payment: DebtPayment; currency: string }> {
   const debt = await getDebt(tx, userId, args.debtId);
-  await getAccount(tx, userId, args.fromAccountId);
+  const currency = await requireBaseCurrency(tx, userId);
+  const from = await requireBaseCurrencyAccount(tx, userId, args.fromAccountId, "fromAccountId", currency, { owner: "debt" });
+  const liabilityAccount = debt.linkedAccountId
+    ? await requireBaseCurrencyAccount(tx, userId, debt.linkedAccountId, "debtId", currency, { account: "Linked account", owner: "debt" })
+    : null;
 
-  const principalAmount = args.principalAmount ?? args.amount;
-  const interestAmount = args.interestAmount ?? 0;
+  // Conversions are exact (or refused), so the stored amounts add up exactly when the Money does.
+  const amount = appAmount(args.amount, currency, "amount");
+  if (amount <= 0) throw invalid("amount.amountMinor", "Amount must be positive");
+  const principalAmount = args.principalAmount ? appAmount(args.principalAmount, currency, "principalAmount") : amount;
+  const interestAmount = args.interestAmount ? appAmount(args.interestAmount, currency, "interestAmount") : 0;
   if (principalAmount < 0 || interestAmount < 0) throw invalid("principalAmount", "Principal and interest cannot be negative");
-  if (principalAmount + interestAmount !== args.amount) {
+  if (principalAmount + interestAmount !== amount) {
     throw invalid("amount", "Principal and interest must add up to the payment amount");
   }
   if (principalAmount > debt.currentBalance) {
@@ -162,19 +209,18 @@ export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymen
   const source = await ledger.post(tx, userId, {
     type: "expense",
     amount: args.amount,
-    accountId: args.fromAccountId,
+    accountId: from,
     date: args.date,
     description: `Debt payment: ${debt.name}`,
     note: args.note,
   });
   // An adjustment's amount is signed: the principal paid lowers the linked liability account's balance by that much.
-  const liabilityAdjustment = -principalAmount;
   const liability =
-    debt.linkedAccountId && principalAmount > 0
+    liabilityAccount && principalAmount > 0
       ? await ledger.post(tx, userId, {
           type: "adjustment",
-          amount: liabilityAdjustment,
-          accountId: debt.linkedAccountId,
+          amount: toMoney(-principalAmount, currency),
+          accountId: liabilityAccount,
           date: args.date,
           description: `Debt principal payment: ${debt.name}`,
           note: args.note,
@@ -186,12 +232,12 @@ export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymen
     .values({
       userId,
       debtId: debt.id,
-      amount: args.amount,
+      amount,
       principalAmount,
       interestAmount,
       date: args.date,
       note: args.note ?? null,
-      fromAccountId: args.fromAccountId,
+      fromAccountId: from.id,
       sourceTransactionId: source.id,
       liabilityTransactionId: liability?.id ?? null,
     })
@@ -200,7 +246,7 @@ export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymen
     .update(debts)
     .set({ currentBalance: sql`${debts.currentBalance} - ${principalAmount}` })
     .where(ownedDebt(userId, debt.id));
-  return payment!;
+  return { payment: payment!, currency };
 }
 
 export async function removeDebtPayment(tx: Tx, userId: string, id: string): Promise<void> {

@@ -6,9 +6,7 @@
 import { z } from "zod";
 
 import type { Tx } from "../db/tx";
-import * as accounts from "../domain/accounts";
-import { invalid, notFound } from "../domain/errors";
-import { appAmount } from "../domain/money";
+import { notFound } from "../domain/errors";
 import * as transfers from "../domain/transfers";
 import { transferDto } from "./dto";
 import { financeWrite, router, webRead } from "./init";
@@ -92,47 +90,18 @@ export const transfersRouter = router({
   create: financeWrite
     .input(transferCreateInput)
     .output(transferResult)
-    .mutation(async ({ ctx, input }) => {
-      const from = await accounts.getAccount(ctx.tx, ctx.user.userId, input.fromAccountId);
-      const to = await accounts.getAccount(ctx.tx, ctx.user.userId, input.toAccountId);
-      const currency = transfers.transferCurrency(from, to);
-      const id = await transfers.createTransfer(ctx.tx, ctx.user.userId, {
-        amount: appAmount(input.amount, currency, "amount"),
-        fromAccountId: from.id,
-        toAccountId: to.id,
-        date: input.date,
-        description: input.description,
-        note: input.note,
-      });
-      return await transferResponse(ctx.tx, ctx.user.userId, id);
+    .mutation(async ({ ctx: { tx, user }, input }) => {
+      const id = await transfers.createTransfer(tx, user.userId, input);
+      return await transferResponse(tx, user.userId, id);
     }),
 
+  /** Moving a transfer to accounts in another currency needs a new amount (the domain checks it). */
   update: financeWrite
     .input(transferUpdateInput)
     .output(transferResult)
-    .mutation(async ({ ctx, input }) => {
-      const { tx, user } = ctx;
-      const current = await transfers.getTransfer(tx, user.userId, input.id, { editable: true });
-      const from = input.fromAccountId ? await accounts.getAccount(tx, user.userId, input.fromAccountId) : current.fromAccount;
-      const to = input.toAccountId ? await accounts.getAccount(tx, user.userId, input.toAccountId) : current.toAccount;
-      if (!from || !to) throw notFound("Account");
-      const currency = transfers.transferCurrency(from, to);
-
-      let amount: number | undefined;
-      if (input.amount) {
-        amount = appAmount(input.amount, currency, "amount");
-      } else if (current.fromAccount && current.fromAccount.currency !== currency) {
-        throw invalid("amount", "Provide amount when moving a transfer to accounts in another currency");
-      }
-
-      const outgoingId = await transfers.updateLoadedTransfer(tx, user.userId, current, {
-        amount,
-        fromAccountId: input.fromAccountId,
-        toAccountId: input.toAccountId,
-        date: input.date,
-        description: input.description,
-        note: input.note,
-      });
+    .mutation(async ({ ctx: { tx, user }, input }) => {
+      const { id, ...changes } = input;
+      const outgoingId = await transfers.updateTransfer(tx, user.userId, id, changes);
       return await transferResponse(tx, user.userId, outgoingId);
     }),
 

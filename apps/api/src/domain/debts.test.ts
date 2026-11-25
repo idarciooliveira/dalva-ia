@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { balanceOf, domainRejection, getTransactionRow, seedAccount, seedDebtPayment, seedTransaction, transactionRows } from "../../test/api";
+import { balanceOf, domainRejection, getTransactionRow, seedAccount, seedDebtPayment, seedTransaction, seedUser, transactionRows } from "../../test/api";
 import { createTestUser } from "../../test/app";
 import { testDb } from "../../test/db";
 import { debtPayments, debts as debtsTable, goalContributions, savingsGoals, transactions as transactionsTable } from "../db/schema";
@@ -12,18 +12,53 @@ import * as transactions from "./transactions";
 const tx = <T>(fn: (tx: Tx) => Promise<T>) => withTx(testDb(), fn);
 const read = <T>(fn: (tx: Tx) => Promise<T>) => readTx(testDb(), fn);
 
-const seedDebt = (userId: string, overrides: Partial<debts.DebtFields> = {}) =>
-  tx((t) => debts.createDebt(t, userId, { name: "Car loan", debtType: "loan", originalAmount: 10_000, currentBalance: 8_000, ...overrides }));
+const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
+const eur = (amountMinor: number) => ({ amountMinor, currency: "EUR" });
+
+/** Debt fields with the amounts as USD minor units. */
+type Fields = Omit<Partial<debts.DebtFields>, "originalAmount" | "currentBalance" | "minimumPayment"> &
+  Partial<Record<"originalAmount" | "currentBalance" | "minimumPayment", number>>;
+
+function inUsd({ originalAmount, currentBalance, minimumPayment, ...rest }: Fields): Partial<debts.DebtFields> {
+  const money = (n: number | undefined) => (n === undefined ? undefined : usd(n));
+  return { ...rest, originalAmount: money(originalAmount), currentBalance: money(currentBalance), minimumPayment: money(minimumPayment) };
+}
+
+const seedDebt = async (userId: string, overrides: Fields = {}) =>
+  (await tx((t) =>
+    debts.createDebt(t, userId, { name: "Car loan", debtType: "loan", ...inUsd({ originalAmount: 10_000, currentBalance: 8_000, ...overrides }) } as debts.DebtFields),
+  )).debt;
+
+const update = async (userId: string, id: string, fields: Fields) => (await tx((t) => debts.updateDebt(t, userId, id, inUsd(fields)))).debt;
 
 const debtRow = async (id: string) => (await testDb().select().from(debtsTable).where(eq(debtsTable.id, id)))[0];
 const paymentRow = async (id: string) => (await testDb().select().from(debtPayments).where(eq(debtPayments.id, id)))[0];
 
-const pay = (userId: string, args: Omit<debts.DebtPaymentFields, "date"> & { date?: string }) =>
-  tx((t) => debts.recordDebtPayment(t, userId, { date: "2026-01-01", ...args }));
+interface Payment {
+  debtId: string;
+  fromAccountId: string;
+  amount: number;
+  principalAmount?: number;
+  interestAmount?: number;
+  note?: string;
+}
+
+const pay = async (userId: string, { amount, principalAmount, interestAmount, ...args }: Payment) =>
+  (
+    await tx((t) =>
+      debts.recordDebtPayment(t, userId, {
+        date: "2026-01-01",
+        ...args,
+        amount: usd(amount),
+        principalAmount: principalAmount === undefined ? undefined : usd(principalAmount),
+        interestAmount: interestAmount === undefined ? undefined : usd(interestAmount),
+      }),
+    )
+  ).payment;
 
 describe("domain/debts", () => {
   it("creates, lists, gets, updates, archives, restores and deletes for the given user", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const { id } = await seedDebt(alice, { lender: "Bank", interestRate: 5.5, minimumPayment: 200 });
 
     expect(await read((t) => debts.getDebt(t, alice, id))).toMatchObject({
@@ -36,7 +71,7 @@ describe("domain/debts", () => {
     });
     expect(await read((t) => debts.listDebts(t, alice))).toHaveLength(1);
 
-    expect(await tx((t) => debts.updateDebt(t, alice, id, { currentBalance: 5_000 }))).toMatchObject({ currentBalance: 5_000, originalAmount: 10_000 });
+    expect(await update(alice, id, { currentBalance: 5_000 })).toMatchObject({ currentBalance: 5_000, originalAmount: 10_000 });
 
     await tx((t) => debts.setDebtArchived(t, alice, id, true));
     expect(await read((t) => debts.listDebts(t, alice))).toHaveLength(0);
@@ -49,7 +84,7 @@ describe("domain/debts", () => {
   });
 
   it("validates amounts on create and against the stored ones on update", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     expect(await domainRejection(seedDebt(alice, { originalAmount: 0, currentBalance: 0 }))).toEqual({
       code: "validation_failed",
       message: "Original amount must be positive",
@@ -59,31 +94,31 @@ describe("domain/debts", () => {
       message: "Current balance cannot exceed original amount",
     });
     const { id } = await seedDebt(alice);
-    expect(await domainRejection(tx((t) => debts.updateDebt(t, alice, id, { originalAmount: 7_999 })))).toMatchObject({
+    expect(await domainRejection(update(alice, id, { originalAmount: 7_999 }))).toMatchObject({
       message: "Current balance cannot exceed original amount",
     });
     expect(await debtRow(id)).toMatchObject({ originalAmount: 10_000, currentBalance: 8_000 });
   });
 
   it("lets a debt be renamed after a removed payment left its balance above the original amount", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const from = await seedAccount(alice, { balance: 10_000 });
     const { id } = await seedDebt(alice);
     const payment = await pay(alice, { debtId: id, amount: 1_000, fromAccountId: from });
-    await tx((t) => debts.updateDebt(t, alice, id, { currentBalance: 10_000 }));
+    await update(alice, id, { currentBalance: 10_000 });
     await tx((t) => debts.removeDebtPayment(t, alice, payment.id));
     expect(await debtRow(id)).toMatchObject({ currentBalance: 11_000, originalAmount: 10_000 });
 
-    expect(await tx((t) => debts.updateDebt(t, alice, id, { name: "Renamed" }))).toMatchObject({ name: "Renamed" });
+    expect(await update(alice, id, { name: "Renamed" })).toMatchObject({ name: "Renamed" });
     // Changing an amount still checks both.
-    expect(await domainRejection(tx((t) => debts.updateDebt(t, alice, id, { originalAmount: 10_500 })))).toMatchObject({
+    expect(await domainRejection(update(alice, id, { originalAmount: 10_500 }))).toMatchObject({
       message: "Current balance cannot exceed original amount",
     });
-    expect(await tx((t) => debts.updateDebt(t, alice, id, { currentBalance: 9_000 }))).toMatchObject({ currentBalance: 9_000 });
+    expect(await update(alice, id, { currentBalance: 9_000 })).toMatchObject({ currentBalance: 9_000 });
   });
 
   it("sorts open debts by due date, undated after dated, and paid-off debts last", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     await seedDebt(alice, { name: "Completed later", currentBalance: 0, dueDate: "2026-12-01" });
     await seedDebt(alice, { name: "No due date" });
     await seedDebt(alice, { name: "Due soon", dueDate: "2026-04-01" });
@@ -102,14 +137,14 @@ describe("domain/debts", () => {
   });
 
   it("archives a legacy debt whose amounts no longer validate", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const { id } = await seedDebt(alice);
     await testDb().update(debtsTable).set({ currentBalance: 20_000 }).where(eq(debtsTable.id, id));
     expect(await tx((t) => debts.setDebtArchived(t, alice, id, true))).toMatchObject({ archived: true });
   });
 
   it("deletes the debt with its payments, their transactions and balance effects", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const from = await seedAccount(alice, { balance: 10_000 });
     const liability = await seedAccount(alice, { type: "loan", balance: -8_000 });
     const { id } = await seedDebt(alice, { linkedAccountId: liability });
@@ -123,10 +158,60 @@ describe("domain/debts", () => {
     expect(await testDb().select().from(debtPayments)).toEqual([]);
   });
 
+  it("works in the base currency: amounts and accounts in another one are refused", async () => {
+    const alice = await seedUser({ baseCurrency: "EUR" });
+    const usdAccount = await seedAccount(alice);
+    const eurAccount = await seedAccount(alice, { currency: "EUR", balance: 10_000 });
+    const eurLoan = await seedAccount(alice, { currency: "EUR", type: "loan" });
+    const create = (fields: Partial<debts.DebtFields>) =>
+      tx((t) => debts.createDebt(t, alice, { name: "Loan", debtType: "loan", originalAmount: eur(10_000), currentBalance: eur(8_000), ...fields }));
+    expect(await domainRejection(create({ minimumPayment: usd(1) }))).toEqual({ code: "validation_failed", message: "Currency must be EUR, got USD" });
+    expect(await domainRejection(create({ linkedAccountId: usdAccount }))).toEqual({
+      code: "validation_failed",
+      message: "Account currency USD differs from the base currency EUR",
+    });
+
+    const { debt } = await create({ linkedAccountId: eurLoan });
+    const record = (fromAccountId: string, amount = eur(500)) =>
+      tx((t) => debts.recordDebtPayment(t, alice, { debtId: debt.id, amount, date: "2026-01-01", fromAccountId }));
+    expect(await domainRejection(record(usdAccount))).toEqual({
+      code: "validation_failed",
+      message: "Account currency USD differs from the debt currency EUR",
+    });
+    expect(await domainRejection(record(eurAccount, usd(500)))).toEqual({ code: "validation_failed", message: "Currency must be EUR, got USD" });
+    await record(eurAccount);
+    expect([await balanceOf(eurAccount), await balanceOf(eurLoan)]).toEqual([9_500, -500]);
+  });
+
+  it("keeps a legacy link in another currency on edits, but pays into none and links no new one", async () => {
+    const alice = await seedUser();
+    const from = await seedAccount(alice, { balance: 10_000 });
+    const eurLoan = await seedAccount(alice, { currency: "EUR", type: "loan" });
+    const { id } = await seedDebt(alice);
+    // Convex never checked the link's currency.
+    await testDb().update(debtsTable).set({ linkedAccountId: eurLoan }).where(eq(debtsTable.id, id));
+
+    expect(await update(alice, id, { name: "Renamed", linkedAccountId: eurLoan })).toMatchObject({ name: "Renamed", linkedAccountId: eurLoan });
+    expect(await domainRejection(update(alice, id, { linkedAccountId: await seedAccount(alice, { currency: "EUR" }) }))).toEqual({
+      code: "validation_failed",
+      message: "Account currency EUR differs from the base currency USD",
+    });
+    expect(await domainRejection(pay(alice, { debtId: id, amount: 100, fromAccountId: from }))).toEqual({
+      code: "validation_failed",
+      message: "Linked account currency EUR differs from the debt currency USD",
+    });
+    expect(await balanceOf(from)).toBe(10_000);
+  });
+
+  it("needs a profile for the base currency", async () => {
+    const user = await createTestUser();
+    expect(await domainRejection(seedDebt(user))).toEqual({ code: "conflict", message: "User profile not found; complete onboarding first" });
+  });
+
   describe("cross-user ownership", () => {
     it("rejects every id-based operation from another user", async () => {
-      const alice = await createTestUser();
-      const bob = await createTestUser();
+      const alice = await seedUser();
+      const bob = await seedUser();
       const { id } = await seedDebt(alice);
       const ops: Array<(t: Tx) => Promise<unknown>> = [
         (t) => debts.getDebt(t, bob, id),
@@ -142,11 +227,11 @@ describe("domain/debts", () => {
     });
 
     it("rejects linking a debt to another user's account", async () => {
-      const alice = await createTestUser();
-      const theirs = await seedAccount(await createTestUser());
+      const alice = await seedUser();
+      const theirs = await seedAccount(await seedUser());
       expect(await domainRejection(seedDebt(alice, { linkedAccountId: theirs }))).toEqual({ code: "not_found", message: "Account not found" });
       const { id } = await seedDebt(alice);
-      expect(await domainRejection(tx((t) => debts.updateDebt(t, alice, id, { linkedAccountId: theirs })))).toMatchObject({
+      expect(await domainRejection(update(alice, id, { linkedAccountId: theirs }))).toMatchObject({
         message: "Account not found",
       });
     });
@@ -155,7 +240,7 @@ describe("domain/debts", () => {
 
 describe("domain/debts payments", () => {
   it("records a payment, updating balances, and removes it again", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const from = await seedAccount(alice, { balance: 10_000 });
     const liability = await seedAccount(alice, { type: "loan", balance: -8_000 });
     const { id: debtId } = await seedDebt(alice, { linkedAccountId: liability });
@@ -188,7 +273,7 @@ describe("domain/debts payments", () => {
   });
 
   it("defaults the principal to the amount; interest-only payments leave the balance and the linked account alone", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const from = await seedAccount(alice, { balance: 10_000 });
     const liability = await seedAccount(alice, { type: "loan", balance: -8_000 });
     const { id: debtId } = await seedDebt(alice, { linkedAccountId: liability });
@@ -202,7 +287,7 @@ describe("domain/debts payments", () => {
   });
 
   it("validates payment amounts", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const from = await seedAccount(alice);
     const { id: debtId } = await seedDebt(alice);
     const base = { debtId, fromAccountId: from };
@@ -221,7 +306,7 @@ describe("domain/debts payments", () => {
   });
 
   it("refuses plain update and delete of the payment's source and liability transactions", async () => {
-    const alice = await createTestUser();
+    const alice = await seedUser();
     const from = await seedAccount(alice, { balance: 10_000 });
     const liability = await seedAccount(alice, { type: "loan", balance: -8_000 });
     const { id: debtId } = await seedDebt(alice, { linkedAccountId: liability });
@@ -236,7 +321,7 @@ describe("domain/debts payments", () => {
 
   describe("legacy rows", () => {
     it("removes a payment whose paying account is gone: its row is deleted without a balance effect", async () => {
-      const alice = await createTestUser();
+      const alice = await seedUser();
       const { id: debtId } = await seedDebt(alice, { currentBalance: 7_500 });
       const payment = await seedDebtPayment(alice, { debtId, fromAccountId: null, amount: 500 });
 
@@ -247,7 +332,7 @@ describe("domain/debts payments", () => {
     });
 
     it("removes a payment whose source transaction is gone", async () => {
-      const alice = await createTestUser();
+      const alice = await seedUser();
       const from = await seedAccount(alice, { balance: 9_500 });
       const { id: debtId } = await seedDebt(alice, { currentBalance: 7_500 });
       const payment = await seedDebtPayment(alice, { debtId, fromAccountId: from, amount: 500 });
@@ -261,7 +346,7 @@ describe("domain/debts payments", () => {
     });
 
     it("removes payments whose rows a goal contribution or transfer also claims", async () => {
-      const alice = await createTestUser();
+      const alice = await seedUser();
       const from = await seedAccount(alice, { balance: 9_000 });
       const to = await seedAccount(alice, { balance: 500 });
       const { id: debtId } = await seedDebt(alice, { currentBalance: 7_000 });
@@ -281,7 +366,7 @@ describe("domain/debts payments", () => {
     });
 
     it("deletes a debt whose payments mix live and orphaned rows", async () => {
-      const alice = await createTestUser();
+      const alice = await seedUser();
       const from = await seedAccount(alice, { balance: 9_000 });
       const { id: debtId } = await seedDebt(alice, { currentBalance: 7_000 });
       await seedDebtPayment(alice, { debtId, fromAccountId: from, amount: 500 });
@@ -298,8 +383,8 @@ describe("domain/debts payments", () => {
 
   describe("cross-user ownership", () => {
     it("rejects paying or listing another user's debt, and paying from another user's account", async () => {
-      const alice = await createTestUser();
-      const bob = await createTestUser();
+      const alice = await seedUser();
+      const bob = await seedUser();
       const { id: debtId } = await seedDebt(alice);
       const bobAccount = await seedAccount(bob, { balance: 10_000 });
 
@@ -316,8 +401,8 @@ describe("domain/debts payments", () => {
     });
 
     it("rejects removing another user's payment", async () => {
-      const alice = await createTestUser();
-      const bob = await createTestUser();
+      const alice = await seedUser();
+      const bob = await seedUser();
       const from = await seedAccount(alice, { balance: 10_000 });
       const { id: debtId } = await seedDebt(alice);
       const payment = await pay(alice, { debtId, amount: 100, fromAccountId: from });

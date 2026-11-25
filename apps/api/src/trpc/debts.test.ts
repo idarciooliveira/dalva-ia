@@ -200,20 +200,6 @@ describe("debts and payments", () => {
     expect(await debtRow(debt)).toMatchObject({ name: "Car loan", archived: false });
   });
 
-  it("edits a debt still linked to an account in another currency, but won't link a new one", async () => {
-    const { alice, asAlice } = await twoUsers();
-    const eurLoan = await seedAccount(alice, { name: "EUR loan", type: "loan", currency: "EUR" });
-    const otherEur = await seedAccount(alice, { currency: "EUR" });
-    // Convex never checked the link's currency.
-    const debt = await carLoan(alice, { linkedAccountId: eurLoan });
-    expect((await asAlice.debts.update({ id: debt, name: "Renamed", linkedAccountId: eurLoan })).debt).toMatchObject({
-      name: "Renamed",
-      linkedAccountId: eurLoan,
-    });
-    await expectApiError(asAlice.debts.update({ id: debt, linkedAccountId: otherEur }), "validation_failed", 400);
-    expect((await debtRow(debt))?.linkedAccountId).toBe(eurLoan);
-  });
-
   it("drops a deleted debt from the reports", async () => {
     const { alice, aliceAccount, asAlice } = await twoUsers();
     const debt = await carLoan(alice);

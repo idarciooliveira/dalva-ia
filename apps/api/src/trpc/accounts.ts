@@ -3,7 +3,6 @@ import { z } from "zod";
 
 import { accountType } from "../db/schema";
 import * as accounts from "../domain/accounts";
-import { appAmount } from "../domain/money";
 import { accountDto, todayUtc } from "./dto";
 import { financeRead, financeWrite, router, webWrite } from "./init";
 import {
@@ -70,13 +69,7 @@ export const accountsRouter = router({
     .input(accountAdjustInput)
     .output(accountResult)
     .mutation(async ({ ctx, input }) => {
-      const { currency } = await accounts.getAccount(ctx.tx, ctx.user.userId, input.id);
-      const account = await accounts.adjustBalance(ctx.tx, ctx.user.userId, {
-        id: input.id,
-        amount: appAmount(input.amount, currency, "amount"),
-        date: input.date ?? todayUtc(),
-        note: input.note,
-      });
+      const account = await accounts.adjustBalance(ctx.tx, ctx.user.userId, { ...input, date: input.date ?? todayUtc() });
       return { account: accountDto(account) };
     }),
 
@@ -84,17 +77,7 @@ export const accountsRouter = router({
   create: webWrite
     .input(z.strictObject({ name: accountName, type: accountTypeSchema, balance: moneyInputSchema, theme: accountStyle.optional() }))
     .output(accountResult)
-    .mutation(async ({ ctx, input }) => {
-      const currency = input.balance.currency;
-      const account = await accounts.createAccount(ctx.tx, ctx.user.userId, {
-        name: input.name,
-        type: input.type,
-        balance: appAmount(input.balance, currency, "balance"),
-        currency,
-        theme: input.theme,
-      });
-      return { account: accountDto(account) };
-    }),
+    .mutation(async ({ ctx, input }) => ({ account: accountDto(await accounts.createAccount(ctx.tx, ctx.user.userId, input)) })),
 
   /** Only the given fields change. The currency and the balance can't be edited (`adjust`). */
   update: webWrite

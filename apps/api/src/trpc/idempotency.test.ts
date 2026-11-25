@@ -7,7 +7,6 @@ import { testDb } from "../../test/db";
 import { accounts, apiIdempotencyKeys, transactions } from "../db/schema";
 import { adjustBalance } from "../domain/accounts";
 import { DomainError } from "../domain/errors";
-import { appAmount } from "../domain/money";
 import { createLogger } from "../log";
 import { accountAdjustInput } from "./accounts";
 import { accountDto, todayUtc } from "./dto";
@@ -23,12 +22,7 @@ function adjustedBy(handler: Parameters<ReturnType<typeof financeWrite.input<typ
 }
 
 const realAdjust: Parameters<typeof adjustedBy>[0] = async ({ ctx, input }) => {
-  const account = await adjustBalance(ctx.tx, ctx.user.userId, {
-    id: input.id,
-    amount: appAmount(input.amount, "USD", "amount"),
-    date: input.date ?? todayUtc(),
-    note: input.note,
-  });
+  const account = await adjustBalance(ctx.tx, ctx.user.userId, { ...input, date: input.date ?? todayUtc() });
   return { account: accountDto(account) };
 };
 

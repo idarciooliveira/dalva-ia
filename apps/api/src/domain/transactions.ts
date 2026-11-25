@@ -4,10 +4,10 @@ import { isoDateSchema } from "@mpf/shared";
 import { isUuid } from "../db/ids";
 import { transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
-import { getAccount } from "./accounts";
 import { getCategory, getSubcategory } from "./categories";
 import { invalid, notFound } from "./errors";
 import * as ledger from "./ledger";
+import type { Money } from "./money";
 
 /** What owns a row that `transactions.update` / `delete` refuse: change it there. */
 export type TransactionManagedBy = Exclude<ledger.Owner, "manual">;
@@ -33,11 +33,6 @@ export async function managedBy(tx: Tx, userId: string, rows: Transaction[]): Pr
   const managed = new Map<string, TransactionManagedBy>();
   for (const [id, owner] of await ledger.ownersOf(tx, userId, rows)) if (owner !== "manual") managed.set(id, owner);
   return managed;
-}
-
-/** The row as an entry the transaction procedures may change: `conflict` when a transfer, goal or debt manages it. */
-export async function getEditableTransaction(tx: Tx, userId: string, id: string): Promise<ledger.SingleEntry> {
-  return await ledger.open(tx, userId, id, "manual");
 }
 
 function assertWritableType(type: TransactionType | undefined) {
@@ -66,7 +61,8 @@ function assertNoCategoryOnAdjustment(categoryId: string | null | undefined, sub
 
 export interface TransactionFields {
   type: WritableTransactionType;
-  amount: number;
+  /** In the account's currency; signed for adjustments, positive otherwise. */
+  amount: Money;
   accountId: string;
   categoryId?: string;
   subcategoryId?: string;
@@ -78,12 +74,12 @@ export interface TransactionFields {
 
 export async function createTransaction(tx: Tx, userId: string, args: TransactionFields): Promise<Transaction> {
   assertWritableType(args.type);
-  await getAccount(tx, userId, args.accountId);
   if (args.type === "adjustment") assertNoCategoryOnAdjustment(args.categoryId, args.subcategoryId);
   await checkClassification(tx, userId, args, null);
   return (await ledger.post(tx, userId, args)).row;
 }
 
+/** `amount` is in the currency of the account the row ends up on: moving it to an account in another currency needs one. */
 export type TransactionChanges = Partial<Omit<TransactionFields, "subcategoryId" | "description" | "note" | "payee">> & {
   subcategoryId?: string | null;
   description?: string | null;
@@ -93,23 +89,16 @@ export type TransactionChanges = Partial<Omit<TransactionFields, "subcategoryId"
 
 const changed = <T>(change: T | undefined, stored: T): T => (change === undefined ? stored : change);
 
-export async function updateTransaction(
-  tx: Tx,
-  userId: string,
-  id: string,
-  changes: TransactionChanges,
-): Promise<Transaction> {
-  return await updateLoadedTransaction(tx, userId, await getEditableTransaction(tx, userId, id), changes);
-}
-
-/** Checks the classification, then amends the entry (amount, account and balances are the ledger's). */
-export async function updateLoadedTransaction(
-  tx: Tx,
-  userId: string,
-  entry: ledger.SingleEntry,
-  changes: TransactionChanges,
-): Promise<Transaction> {
+/**
+ * Checks the classification, then amends the entry (amount, account, currency
+ * and balances are the ledger's). `conflict` when a transfer, goal or debt
+ * manages the row.
+ */
+export async function updateTransaction(tx: Tx, userId: string, id: string, changes: TransactionChanges): Promise<Transaction> {
+  const entry = await ledger.open(tx, userId, id, "manual");
   const { row } = entry;
+  // A legacy row whose account is gone has no currency to label it with: it must move to an account first.
+  if ((changes.accountId ?? row.accountId) === null) throw notFound("Account");
   assertWritableType(changes.type);
   if ((changes.type ?? row.type) === "adjustment") {
     assertNoCategoryOnAdjustment(changes.categoryId ?? row.categoryId, changed(changes.subcategoryId, row.subcategoryId));
@@ -122,7 +111,7 @@ export async function updateLoadedTransaction(
 }
 
 export async function deleteTransaction(tx: Tx, userId: string, id: string): Promise<void> {
-  await ledger.reverse(tx, userId, [await getEditableTransaction(tx, userId, id)]);
+  await ledger.reverse(tx, userId, [await ledger.open(tx, userId, id, "manual")]);
 }
 
 /** `created_at` is a microsecond string: a JS Date holds milliseconds and would skip or repeat rows created within one. */
