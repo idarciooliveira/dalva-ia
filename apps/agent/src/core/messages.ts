@@ -61,7 +61,7 @@ export const texts = {
     ", then create a new link code.",
   ],
   privateOnly: (): RichText => "I only work in a private chat. Message me directly.",
-  comingSoon: (): RichText => ["Chat is coming soon. For now I understand these commands:\n", ...COMMANDS],
+  chatOff: (): RichText => ["Chat isn't set up on this DALVA yet. For now I understand these commands:\n", ...COMMANDS],
   photosNotSupported: (): RichText => "I can't read photos yet. Send me a text message instead.",
   messageTooLong: (max: number): RichText => `That message is too long for me. Please keep it under ${max} characters.`,
   chatRateLimited: (): RichText => "You've sent me a lot of messages in a short time. Please wait a few minutes and try again.",

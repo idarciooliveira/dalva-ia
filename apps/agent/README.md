@@ -8,49 +8,45 @@ Validated at boot; a bad or missing value exits with the variable names (never t
 
 | Var | |
 | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | From BotFather |
-| `TELEGRAM_MODE` | `webhook` (prod) or `polling` (local dev) |
-| `TELEGRAM_WEBHOOK_SECRET` | Webhook mode only. 32-256 chars `[A-Za-z0-9_-]`, also passed as `secret_token` to `setWebhook` |
-| `TELEGRAM_BOT_USERNAME` | Without `@`; commands addressed to other bots are ignored |
-| `FINANCE_API_URL` | Finance API origin (`apps/api`) |
-| `FINANCE_API_SERVICE_KEY` | Same as the backend's `FINANCE_API_SERVICE_KEY` |
+| `FINANCE_API_URL` | API origin (`apps/api`). Compose fixes it to `http://api:4000` |
+| `FINANCE_API_SERVICE_KEY` | Same as the API's `FINANCE_API_SERVICE_KEY` |
 | `PORT` | Default `8080` |
 | `LOG_LEVEL` | `debug` / `info` / `warn` / `error`, default `info` |
 | `SESSION_IDLE_MINUTES` | Idle time before a chat starts a new session, default `30` |
 | `RECOVERY_MAX_AGE_SECONDS` | Boot recovery replays only events received within this window, default `120` |
-| `AI_PROVIDER` | `gateway` (Vercel AI Gateway) or `openrouter` |
-| `AGENT_MODEL` | Provider model id, e.g. `anthropic/claude-sonnet-5-5`. Required, no default |
-| `AI_GATEWAY_API_KEY` / `OPENROUTER_API_KEY` | Key of the selected provider |
 | `AGENT_MAX_STEPS` | Model calls per chat turn, default `6` (1-10). The last one can't call tools |
 | `AGENT_MAX_OUTPUT_TOKENS` | Output cap per model call, default `1024` |
 | `AGENT_TURN_TIMEOUT_SECONDS` | Whole-turn timeout, default `45` |
 | `AGENT_RATE_LIMIT_TURNS` / `AGENT_RATE_LIMIT_WINDOW_MINUTES` | Chat turns per user per window, default `20` / `10` |
 | `DEFAULT_TIMEZONE` | IANA zone for "today" and default report months, default `Africa/Luanda` |
 
+## Runtime settings
+
+The bot token, webhook secret, bot username, delivery mode and the AI provider, model and key are not env. The instance owner sets them in the web app (Settings → Assistant setup); the API stores them encrypted and hands them to the agent through `instance.agentConfig` (service key only). `src/core/remote-config.ts`:
+
+- Loads at boot, then every 15s, and on demand when a webhook arrives with an unknown secret (a bot saved a moment ago) or before any bot is set. On-demand loads are throttled to one per 2s.
+- A change swaps the Telegram adapter (`src/channels/telegram/runtime.ts`: polling stops and restarts on the new bot) and the model. No restart, no redeploy.
+- A failed load keeps the last config. Loaded secrets join the log scrubber.
+- Delivery: `webhook` when the API's `PUBLIC_URL` is https (the API set the webhook when the bot was saved), `polling` otherwise (local dev).
+
+Without a bot the agent boots, `/health` is `ok` with `mode: "unconfigured"`, and `/webhooks/telegram` answers 503 `telegram not configured`. Boot recovery and intake start once a bot appears. Without an AI provider, commands work and plain text gets the command list.
+
 ## Local dev
 
 ```bash
-bun run setup   # apps/api/.env.local with the service key, creates .env if missing
-# fill TELEGRAM_BOT_TOKEN and an LLM key in apps/agent/.env, keep TELEGRAM_MODE=polling
+bun run setup   # apps/api/.env.local with the service key; no agent env needed
 bun run dev     # or bun run dev:agent with the API already running
 ```
 
-`dev:agent` runs the bot against the local `apps/api`: it takes `FINANCE_API_URL` (`http://localhost:$PORT`) and `FINANCE_API_SERVICE_KEY` from `apps/api/.env.local`, over the agent's own env files.
+`dev:agent` runs the bot against the local `apps/api`: it takes `FINANCE_API_URL` (`http://localhost:$PORT`) and `FINANCE_API_SERVICE_KEY` from `apps/api/.env.local`. Sign up (the first user owns the instance), then set a dev bot and an AI key in Settings → Assistant setup. The local `PUBLIC_URL` is http, so the bot polls.
 
-Polling calls `deleteWebhook` first (pending updates are kept), so don't point a dev bot at a production webhook. Use a separate bot for dev.
+Polling calls `deleteWebhook` first (pending updates are kept), so don't use a production bot for dev. Use a separate bot.
 
 ## Webhook
 
-`POST /webhooks/telegram`. Requests without the right `X-Telegram-Bot-Api-Secret-Token` get 401. An update gets 200 only once it is stored (claimed) or needs nothing; a full queue, a failed claim, boot recovery or shutdown get 503, so Telegram redelivers it later. Registering the webhook and exposing the port are deploy setup: see [`docs/deploy.md`](../../docs/deploy.md).
+`POST /webhooks/telegram`. Requests without the right `X-Telegram-Bot-Api-Secret-Token` get 401. An update gets 200 only once it is stored (claimed) or needs nothing; no bot yet, a full queue, a failed claim, boot recovery or shutdown get 503, so Telegram redelivers it later. Saving the bot in Settings sets the webhook (`<PUBLIC_URL>/webhooks/telegram`, a generated secret, `message` + `callback_query`); Settings also shows Telegram's `getWebhookInfo` and removes the bot. Routing the path to the agent is deploy setup: see [`docs/deploy.md`](../../docs/deploy.md).
 
-```bash
-# needs TELEGRAM_BOT_TOKEN, AGENT_PUBLIC_URL (https origin, no path), TELEGRAM_WEBHOOK_SECRET for set; DROP_PENDING_UPDATES=1 optional
-bun run telegram:webhook:set    # setWebhook: <AGENT_PUBLIC_URL>/webhooks/telegram, secret_token, allowed_updates message + callback_query
-bun run telegram:webhook:info   # status, never prints token or secret
-bun run telegram:webhook:delete
-```
-
-`GET /health` returns `{ ok, uptime, mode, accepting, financeApi, queued }`. `accepting` is false during boot recovery and shutdown. `financeApi` is an unauthenticated probe of the API's `/health` (up below 500), cached 15s.
+`GET /health` returns `{ ok, uptime, mode, chat, accepting, financeApi, queued }`. `mode` is `webhook`, `polling` or `unconfigured`; `chat` whether an AI provider is set. `accepting` is false until a bot is set and boot recovery ran, and during shutdown. `financeApi` is an unauthenticated probe of the API's `/health` (up below 500), cached 15s.
 
 ## How an update flows
 
@@ -117,21 +113,21 @@ Execution isn't bound to the turn timeout or the shutdown signal: once confirmed
 ### Eval
 
 ```bash
-AGENT_MODEL=anthropic/claude-sonnet-5-5 AI_GATEWAY_API_KEY=... bun run eval   # or OPENROUTER_API_KEY (AI_PROVIDER picks when both are set)
+AGENT_MODEL=vendor/model AI_GATEWAY_API_KEY=... bun run eval   # or OPENROUTER_API_KEY (AI_PROVIDER picks when both are set)
 bun run eval 3                                                                # one case
 ```
 
-About 30 Portuguese and English messages against the real model, with a fake Finance API serving `test/fixtures/finance.ts`: reads, 10 writes (expense, salary, transfer, delete after a search, edit, goal, debt payment, an ambiguous account that must be asked about, a cross-currency transfer that must be refused) and a read-only chat. Checks the tool(s) and key arguments, whether a change is left waiting for confirmation, that no turn writes, and prints pass/fail and token totals. Not in CI; skipped without a key.
+About 30 Portuguese and English messages against the real model, with a fake Finance API serving `test/fixtures/finance.ts`: reads, 10 writes (expense, salary, transfer, delete after a search, edit, goal, debt payment, an ambiguous account that must be asked about, a cross-currency transfer that must be refused) and a read-only chat. Checks the tool(s) and key arguments, whether a change is left waiting for confirmation, that no turn writes, and prints pass/fail and token totals. Not in CI; skipped without a key. The eval reads its model from env, not from the instance settings.
 
 ## Logs
 
-JSON lines on stdout. Ids, kinds, error names/codes and timings only: never message text, link codes, tokens or keys. Fields named like `text`/`token`/`key` are redacted and the configured secrets are scrubbed from every value as a backstop.
+JSON lines on stdout. Ids, kinds, error names/codes and timings only: never message text, link codes, tokens or keys. Fields named like `text`/`token`/`key` are redacted, and the service key and every secret of the loaded runtime settings are scrubbed from every value as a backstop.
 
 ## Docker
 
 ```bash
 docker build -f apps/agent/Dockerfile -t dalva-agent .
-docker run --env-file apps/agent/.env -p 8080:8080 dalva-agent
+docker run -e FINANCE_API_URL=http://host.docker.internal:4000 -e FINANCE_API_SERVICE_KEY=... -p 8080:8080 dalva-agent
 ```
 
 Production runs the GHCR image in the compose stack, `deploy/docker-compose.yml` (see `docs/deploy.md`).

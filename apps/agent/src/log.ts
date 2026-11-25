@@ -18,8 +18,12 @@ const FORBIDDEN_KEYS = /^(text|caption|content|payload|token|secret|key|authoriz
 
 export interface LoggerOptions {
   level: LogLevel;
-  /** Strings scrubbed from every logged value (bot token, service key, webhook secret). */
-  secrets?: string[];
+  /**
+   * Strings scrubbed from every logged value (service key, bot token, webhook
+   * secret, AI key), or a function returning them, read on every line: the
+   * runtime config's secrets are only known once it loaded.
+   */
+  secrets?: string[] | (() => Iterable<string>);
   write?: (line: string) => void;
   now?: () => Date;
 }
@@ -27,14 +31,15 @@ export interface LoggerOptions {
 /** Structured JSON lines on stdout. */
 export function createLogger(options: LoggerOptions, base: LogFields = {}): Logger {
   const min = LEVELS[options.level];
-  const secrets = (options.secrets ?? []).filter((secret) => secret.length >= 8);
+  const source = options.secrets ?? [];
+  const secrets = () => [...(typeof source === "function" ? source() : source)].filter((secret) => secret.length >= 8);
   const write = options.write ?? ((line: string) => process.stdout.write(`${line}\n`));
   const now = options.now ?? (() => new Date());
 
-  const scrub = (value: string) => secrets.reduce((acc, secret) => acc.split(secret).join("[redacted]"), value);
-
   const emit = (level: LogLevel, msg: string, fields: LogFields = {}) => {
     if (LEVELS[level] < min) return;
+    const current = secrets();
+    const scrub = (value: string) => current.reduce((acc, secret) => acc.split(secret).join("[redacted]"), value);
     const record: Record<string, unknown> = { ts: now().toISOString(), level, msg: scrub(msg) };
     for (const [name, value] of Object.entries({ ...base, ...fields })) {
       if (value === undefined) continue;

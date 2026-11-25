@@ -15,7 +15,7 @@ import { SessionRecorder } from "./session";
 /** Longest chat message sent to the model, in characters. */
 const DEFAULT_MESSAGE_MAX_CHARS = 2000;
 
-interface ChatOptions {
+export interface ChatOptions {
   agent: Agent;
   /** Agent turns per user (keyed by channel + platform user id). */
   limiter: RateLimiter;
@@ -27,8 +27,11 @@ export interface HandlerOptions {
   clients: FinanceClients;
   logger: Logger;
   sessionIdleMinutes: number;
-  /** Free-text chat with the agent. Without it, text gets the "coming soon" reply. */
-  chat?: ChatOptions;
+  /**
+   * Free-text chat with the agent, or a function returning it (undefined
+   * while no AI provider is configured). Without it, text gets the command list.
+   */
+  chat?: ChatOptions | (() => ChatOptions | undefined);
   /** Pause before retrying an ambiguous write after Confirm (times the attempt). Default 500ms. */
   actionRetryDelayMs?: number;
 }
@@ -76,6 +79,7 @@ export function createHandler(options: HandlerOptions): {
   accept: (event: InboundEvent) => boolean;
 } {
   const { adapter, clients } = options;
+  const currentChat = () => (typeof options.chat === "function" ? options.chat() : options.chat);
 
   const reply = async (event: InboundEvent, text: RichText) => {
     await adapter.send({ chatId: event.chatId }, { type: "text", text });
@@ -132,8 +136,9 @@ export function createHandler(options: HandlerOptions): {
   async function linkedCommand(event: InboundEvent, user: ResolvedUser, log: Logger): Promise<void> {
     const command = event.kind === "command" ? event.command : undefined;
 
-    if (event.kind === "text" && options.chat) {
-      await chatTurn(event, user, log, options.chat);
+    const chat = currentChat();
+    if (event.kind === "text" && chat) {
+      await chatTurn(event, user, log, chat);
       return;
     }
 
@@ -173,7 +178,7 @@ export function createHandler(options: HandlerOptions): {
         break;
       }
       case undefined:
-        answer = options.chat ? texts.photosNotSupported() : texts.comingSoon();
+        answer = chat ? texts.photosNotSupported() : texts.chatOff();
         break;
       default:
         answer = texts.unknownCommand();

@@ -53,7 +53,7 @@ interface SentMessage {
 }
 
 /** Records Bot API calls instead of talking to Telegram. */
-function fakeTelegramApi() {
+export function fakeTelegramApi() {
   const sent: SentMessage[] = [];
   const actions: Array<{ chatId: string; action: string }> = [];
   const answered: Array<{ id: string; text?: string }> = [];
