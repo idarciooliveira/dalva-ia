@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -153,12 +153,15 @@ describe("domain/ledger", () => {
       });
       expect([await balanceOf(from), await balanceOf(to)]).toEqual([10_000, 0]);
 
-      // A legacy pair without a destination reads as "incoming" from both sides: still one entry and one reversal
-      // (in whichever direction the leg read first gives; the rows can't tell), never two that cancel out.
+      // A legacy pair without a destination: the rows can't tell the legs apart, so the smaller id reads as outgoing
+      // from both sides. One entry, one reversal, never two that cancel out.
       const legacy = await transfer(alice, from, to, 300);
       await testDb().update(transactions).set({ destinationAccountId: null }).where(eq(transactions.id, legacy.outgoing!.id));
+      const [first, second] = [legacy.outgoing!, legacy.incoming!].sort((a, b) => (a.id < b.id ? -1 : 1));
       await tx(async (t) => ledger.reverse(t, alice, await ledger.openAll(t, alice, [legacy.outgoing!.id, legacy.incoming!.id], "transfer")));
-      expect([[10_000, 0], [9_400, 600]]).toContainEqual([await balanceOf(from), await balanceOf(to)]);
+      // Reversing credits the leg read as outgoing and debits the other.
+      expect(await balanceOf(first!.accountId!)).toBe((first!.accountId === from ? 9_700 : 300) + 300);
+      expect(await balanceOf(second!.accountId!)).toBe((second!.accountId === from ? 9_700 : 300) - 300);
       expect(await transactionRows()).toEqual([]);
     });
 
@@ -336,6 +339,24 @@ describe("domain/ledger", () => {
         await tx(async (t) => ledger.reverse(t, alice, [await ledger.open(t, alice, legs[pick], "transfer")]));
         expect(await balanceOf(from), pick).toBe(10_000);
       }
+    });
+
+    it("opens an unmarked legacy pair as the same entry from either leg", async () => {
+      const alice = await createTestUser();
+      const from = await seedAccount(alice, { balance: 10_000 });
+      const entry = await transfer(alice, from, await seedAccount(alice));
+      // Neither a destination nor an account on either leg: nothing tells the legs apart.
+      const ids = [entry.outgoing!.id, entry.incoming!.id];
+      await testDb().update(transactions).set({ destinationAccountId: null, accountId: null }).where(inArray(transactions.id, ids));
+      const smaller = [...ids].sort()[0]!;
+
+      for (const id of ids) {
+        const opened = await read((t) => ledger.open(t, alice, id, "transfer", "read"));
+        expect(opened.id, id).toBe(smaller);
+        expect(opened.outgoing?.id, id).toBe(smaller);
+      }
+      const all = await read((t) => ledger.openAll(t, alice, ids, "transfer", "read"));
+      expect(all.map((e) => e.id)).toEqual([smaller]);
     });
 
     it("opens a leg whose pair is gone on its own, and refuses to amend it", async () => {

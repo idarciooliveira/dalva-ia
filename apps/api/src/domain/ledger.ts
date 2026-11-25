@@ -151,26 +151,28 @@ export async function ownersOf(tx: Tx, userId: string, rows: Transaction[]): Pro
 }
 
 /**
- * Tells a transfer's legs apart. Imported transfers whose destination account
- * was deleted have both accounts nulled: the incoming leg is then the one
- * without an account. A leg without its pair is the outgoing one when it
- * carries `destination_account_id`, else the incoming one.
+ * Tells a transfer's legs apart, with the same answer from either leg. The
+ * outgoing leg is the one that carries `destination_account_id`. Imported
+ * transfers whose destination account was deleted have it nulled: the
+ * incoming leg is then the one without an account. When neither tells them
+ * apart, the smaller id is outgoing. A leg without its pair is the outgoing
+ * one when it carries `destination_account_id`, else the incoming one.
  */
 function transferLegs(row: Transaction, linked: Transaction | null): { outgoing: Transaction | null; incoming: Transaction | null } {
-  const rowIsOutgoing =
-    row.destinationAccountId !== null ||
-    (linked !== null && linked.destinationAccountId === null && row.accountId !== null && linked.accountId === null);
-  return rowIsOutgoing ? { outgoing: row, incoming: linked } : { outgoing: linked, incoming: row };
+  if (linked === null) return row.destinationAccountId !== null ? { outgoing: row, incoming: null } : { outgoing: null, incoming: row };
+  const [first, second] = row.id < linked.id ? [row, linked] : [linked, row];
+  const marks = (leg: Transaction) => [leg.destinationAccountId !== null, leg.accountId !== null];
+  const [a, b] = [marks(first), marks(second)];
+  // The first mark that only one leg has decides; none does: the smaller id.
+  const decided = a.findIndex((mark, i) => mark !== b[i]);
+  const firstIsOutgoing = decided === -1 || a[decided]!;
+  return firstIsOutgoing ? { outgoing: first, incoming: second } : { outgoing: second, incoming: first };
 }
 
 const legsOf = (entry: Entry): Transaction[] =>
   entry.kind === "single" ? [entry.row] : [entry.outgoing, entry.incoming].filter((leg) => leg !== null);
 
-/**
- * One entry per set of rows: both legs of a transfer open the same entry. Keyed
- * by the rows, not by `id`, which depends on which leg reads as outgoing (a
- * legacy pair without a destination reads differently from each side).
- */
+/** One entry per set of rows: both legs of a transfer open the same entry. */
 function distinct(entries: Entry[]): Entry[] {
   const byRows = new Map<string, Entry>();
   for (const entry of entries) {
