@@ -5,10 +5,8 @@
  */
 import { z } from "zod";
 
-import { invalid } from "../domain/errors";
 import * as goals from "../domain/goals";
-import { appAmount, fitsMoney } from "../domain/money";
-import { requireBaseCurrency, requireBaseCurrencyAccount } from "./currency";
+import { requireBaseCurrency } from "../domain/userProfiles";
 import { contributionDto, goalDto } from "./dto";
 import { financeRead, financeWrite, router, webWrite } from "./init";
 import {
@@ -106,18 +104,7 @@ export const goalsRouter = router({
     )
     .output(goalResult)
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      const currency = await requireBaseCurrency(tx, user.userId);
-      const targetAmount = appAmount(input.targetAmount, currency, "targetAmount");
-      if (input.linkedAccountId) await requireBaseCurrencyAccount(tx, user.userId, input.linkedAccountId, "linkedAccountId", currency);
-      const goal = await goals.createGoal(tx, user.userId, {
-        name: input.name,
-        targetAmount,
-        targetDate: input.targetDate,
-        isVirtual: input.isVirtual,
-        linkedAccountId: input.linkedAccountId,
-        icon: input.icon,
-        color: input.color,
-      });
+      const { goal, currency } = await goals.createGoal(tx, user.userId, input);
       return { goal: goalDto(goal, currency) };
     }),
 
@@ -137,15 +124,8 @@ export const goalsRouter = router({
     )
     .output(goalResult)
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      await goals.getGoal(tx, user.userId, input.id);
-      const currency = await requireBaseCurrency(tx, user.userId);
-      const goal = await goals.updateGoal(tx, user.userId, input.id, {
-        name: input.name,
-        targetAmount: input.targetAmount && appAmount(input.targetAmount, currency, "targetAmount"),
-        targetDate: input.targetDate,
-        icon: input.icon,
-        color: input.color,
-      });
+      const { id, ...fields } = input;
+      const { goal, currency } = await goals.updateGoal(tx, user.userId, id, fields);
       return { goal: goalDto(goal, currency) };
     }),
 
@@ -154,7 +134,7 @@ export const goalsRouter = router({
     .input(byId)
     .output(goalResult)
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      const goal = await goals.updateGoal(tx, user.userId, input.id, { archived: true });
+      const goal = await goals.setGoalArchived(tx, user.userId, input.id, true);
       return { goal: goalDto(goal, await requireBaseCurrency(tx, user.userId)) };
     }),
 
@@ -162,7 +142,7 @@ export const goalsRouter = router({
     .input(byId)
     .output(goalResult)
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      const goal = await goals.updateGoal(tx, user.userId, input.id, { archived: false });
+      const goal = await goals.setGoalArchived(tx, user.userId, input.id, false);
       return { goal: goalDto(goal, await requireBaseCurrency(tx, user.userId)) };
     }),
 
@@ -181,9 +161,8 @@ export const goalContributionsRouter = router({
     .input(z.strictObject({ goalId: idSchema }))
     .output(list(goalContributionSchema))
     .query(async ({ ctx: { tx, user }, input }) => {
-      await goals.getGoal(tx, user.userId, input.goalId);
-      const currency = await requireBaseCurrency(tx, user.userId);
       const rows = await goals.listContributions(tx, user.userId, input.goalId);
+      const currency = await requireBaseCurrency(tx, user.userId);
       return { items: rows.map((c) => contributionDto(c, currency)) };
     }),
 
@@ -192,22 +171,7 @@ export const goalContributionsRouter = router({
     .input(goalContributionAddInput)
     .output(z.object({ contribution: goalContributionSchema }))
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      const goal = await goals.getGoal(tx, user.userId, input.goalId);
-      const currency = await requireBaseCurrency(tx, user.userId);
-      const amount = appAmount(input.amount, currency, "amount");
-      // The goal is read in this transaction: a concurrent contribution reruns it with the new total.
-      if (!fitsMoney(goal.currentAmount + amount, currency)) throw invalid("amount.amountMinor", "Goal total out of range");
-      if (goals.isAccountLinked(goal) && input.fromAccountId) {
-        await requireBaseCurrencyAccount(tx, user.userId, input.fromAccountId, "fromAccountId", currency, { owner: "goal" });
-        await requireBaseCurrencyAccount(tx, user.userId, goal.linkedAccountId, "linkedAccountId", currency, { owner: "goal" });
-      }
-      const contribution = await goals.addContribution(tx, user.userId, {
-        goalId: goal.id,
-        amount,
-        date: input.date,
-        note: input.note,
-        fromAccountId: input.fromAccountId,
-      });
+      const { contribution, currency } = await goals.addContribution(tx, user.userId, input);
       return { contribution: contributionDto(contribution, currency) };
     }),
 

@@ -24,7 +24,7 @@ describe("domain/reports", () => {
     await seedTransaction(alice, accountId, { amount: 999, date: "2026-04-01" });
     // Transfers count in no total.
     const savings = await seedAccount(alice, { name: "Savings" });
-    await withTx(testDb(), (t) => transfers.createTransfer(t, alice, { amount: 5_000, fromAccountId: accountId, toAccountId: savings, date: "2026-03-08" }));
+    await withTx(testDb(), (t) => transfers.createTransfer(t, alice, { amount: { amountMinor: 5_000, currency: "USD" }, fromAccountId: accountId, toAccountId: savings, date: "2026-03-08" }));
 
     const summary = await read((t) => reports.transactionSummary(t, alice, "2026-03"));
     expect(summary).toMatchObject({ totalIncome: 9_000, totalExpenses: 2_500, totalAdjustments: -300 });

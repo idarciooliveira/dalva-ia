@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   balanceOf,
   domainRejection,
+  getAccountRow,
   getTransactionRow,
   seedAccount,
   seedContribution,
@@ -20,16 +21,20 @@ import { testDb } from "../../test/db";
 import { debtPayments, transactions } from "../db/schema";
 import { readTx, type Tx, withTx } from "../db/tx";
 import * as ledger from "./ledger";
+import type { Money } from "./money";
 
 const tx = <T>(fn: (tx: Tx) => Promise<T>) => withTx(testDb(), fn);
 const read = <T>(fn: (tx: Tx) => Promise<T>) => readTx(testDb(), fn);
 
 const DAY = "2026-03-10";
 
+/** Money in minor units; USD minor units are what the database stores. */
+const m = (amountMinor: number, currency = "USD"): Money => ({ amountMinor, currency });
+
 const post = (userId: string, posting: ledger.Posting) => tx((t) => ledger.post(t, userId, posting));
-const expense = (userId: string, accountId: string, amount = 1_000) => post(userId, { type: "expense", amount, accountId, date: DAY });
+const expense = (userId: string, accountId: string, amount = 1_000) => post(userId, { type: "expense", amount: m(amount), accountId, date: DAY });
 const transfer = (userId: string, fromAccountId: string, toAccountId: string, amount = 1_000) =>
-  post(userId, { type: "transfer", amount, fromAccountId, toAccountId, date: DAY, description: "Move" }) as Promise<ledger.TransferEntry>;
+  post(userId, { type: "transfer", amount: m(amount), fromAccountId, toAccountId, date: DAY, description: "Move" }) as Promise<ledger.TransferEntry>;
 
 /**
  * The invariant: every account's balance is its opening balance plus the
@@ -57,8 +62,8 @@ describe("domain/ledger", () => {
       const alice = await createTestUser();
       const accountId = await seedAccount(alice, { balance: 10_000 });
       const spent = await expense(alice, accountId, 1_500);
-      await post(alice, { type: "income", amount: 5_000, accountId, date: DAY, payee: "ACME" });
-      await post(alice, { type: "adjustment", amount: -200, accountId, date: DAY });
+      await post(alice, { type: "income", amount: m(5_000), accountId, date: DAY, payee: "ACME" });
+      await post(alice, { type: "adjustment", amount: m(-200), accountId, date: DAY });
 
       expect(spent).toMatchObject({ kind: "single", owner: "manual", row: { type: "expense", amount: 1_500, accountId } });
       expect(spent.id).toBe((spent as ledger.SingleEntry).row.id);
@@ -90,14 +95,14 @@ describe("domain/ledger", () => {
       const entry = await expense(alice, first);
 
       const moved = await tx(async (t) =>
-        ledger.amend(t, alice, await ledger.open(t, alice, entry.id, "manual"), { type: "income", amount: 400, accountId: second, note: "moved" }),
+        ledger.amend(t, alice, await ledger.open(t, alice, entry.id, "manual"), { type: "income", amount: m(400), accountId: second, note: "moved" }),
       );
       expect(moved.row).toMatchObject({ type: "income", amount: 400, accountId: second, note: "moved" });
       expect([await balanceOf(first), await balanceOf(second)]).toEqual([10_000, 2_400]);
       await expectBalancesMatchRows(opening);
 
       // Same account: only the difference lands. `null` clears a nullable field.
-      await tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, entry.id, "manual"), { type: "adjustment", amount: -50, note: null }));
+      await tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, entry.id, "manual"), { type: "adjustment", amount: m(-50), note: null }));
       expect(await balanceOf(second)).toBe(1_950);
       expect(await getTransactionRow(entry.id)).toMatchObject({ note: null });
       await expectBalancesMatchRows(opening);
@@ -114,7 +119,7 @@ describe("domain/ledger", () => {
 
       // Opened through the incoming leg: the entry is the same.
       const amended = await tx(async (t) =>
-        ledger.amend(t, alice, await ledger.open(t, alice, entry.incoming!.id, "transfer"), { amount: 400, toAccountId: other, date: "2026-03-12" }),
+        ledger.amend(t, alice, await ledger.open(t, alice, entry.incoming!.id, "transfer"), { amount: m(400), toAccountId: other, date: "2026-03-12" }),
       );
       expect(amended.outgoing).toMatchObject({ amount: 400, accountId: from, destinationAccountId: other, date: "2026-03-12", note: null });
       expect(amended.incoming).toMatchObject({ amount: 400, accountId: other, note: "incoming's own", description: "Move" });
@@ -185,18 +190,18 @@ describe("domain/ledger", () => {
         expect(await domainRejection(expense(alice, accountId, amount))).toMatchObject({ code: "validation_failed" });
         expect(await domainRejection(transfer(alice, accountId, other, amount))).toMatchObject({ code: "validation_failed" });
       }
-      expect(await domainRejection(post(alice, { type: "adjustment", amount: 1.5, accountId, date: DAY }))).toMatchObject({
-        message: "Amount must be an integer",
+      expect(await domainRejection(post(alice, { type: "adjustment", amount: m(1.5), accountId, date: DAY }))).toMatchObject({
+        message: "USD amounts can have at most 2 decimal places",
       });
       // The sign rule uses the effective type: a negative adjustment can't just become income.
       const spent = await expense(alice, accountId, 100);
       for (const amount of [0, -5]) {
         expect(
-          await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, spent.id, "manual"), { amount }))),
+          await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, spent.id, "manual"), { amount: m(amount) }))),
         ).toEqual({ code: "validation_failed", message: "Amount must be positive" });
       }
       await tx(async (t) => ledger.reverse(t, alice, [await ledger.open(t, alice, spent.id, "manual")]));
-      const adjustment = await post(alice, { type: "adjustment", amount: -500, accountId, date: DAY });
+      const adjustment = await post(alice, { type: "adjustment", amount: m(-500), accountId, date: DAY });
       expect(
         await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, adjustment.id, "manual"), { type: "income" }))),
       ).toEqual({ code: "validation_failed", message: "Amount must be positive" });
@@ -225,6 +230,34 @@ describe("domain/ledger", () => {
         ).toMatchObject({ code: "validation_failed" });
       }
       expect([await balanceOf(usd), await balanceOf(usd2), await balanceOf(eur)]).toEqual([9_000, 1_000, 0]);
+    });
+
+    it("labels amounts with the account's currency, and needs a new one to move a row to another currency", async () => {
+      const alice = await createTestUser();
+      const usd = await seedAccount(alice, { balance: 10_000 });
+      const jpy = await seedAccount(alice, { currency: "JPY" });
+      const jpy2 = await seedAccount(alice, { currency: "JPY" });
+      // 1,234 JPY has no decimals: stored ×100.
+      const spent = await post(alice, { type: "expense", amount: m(1_234, "JPY"), accountId: jpy, date: DAY });
+      expect(await balanceOf(jpy)).toBe(-123_400);
+      expect(await domainRejection(post(alice, { type: "expense", amount: m(100, "EUR"), accountId: usd, date: DAY }))).toEqual({
+        code: "validation_failed",
+        message: "Currency must be USD, got EUR",
+      });
+
+      const amend = (changes: ledger.SingleChanges) =>
+        tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, spent.id, "manual"), changes));
+      expect(await domainRejection(amend({ accountId: usd }))).toEqual({
+        code: "validation_failed",
+        message: "Provide amount when moving a transaction to an account in another currency",
+      });
+      // Staying on the JPY account, the amount must be JPY.
+      expect(await domainRejection(amend({ amount: m(500) }))).toEqual({ code: "validation_failed", message: "Currency must be JPY, got USD" });
+      // Within one currency the amount carries over; across, the new amount is in the new account's currency.
+      await amend({ accountId: jpy2 });
+      expect([await balanceOf(jpy), await balanceOf(jpy2)]).toEqual([0, -123_400]);
+      await amend({ accountId: usd, amount: m(500) });
+      expect([await balanceOf(jpy2), await balanceOf(usd)]).toEqual([0, 9_500]);
     });
 
     it("reverses legacy legs in different currencies, each on its own account", async () => {
@@ -265,7 +298,7 @@ describe("domain/ledger", () => {
       expect(await domainRejection(amend({ fromAccountId: eur2 }))).toEqual(missingAmount);
       expect([await balanceOf(usd), await balanceOf(usd2), await balanceOf(eur), await balanceOf(eur2)]).toEqual([9_000, 0, 900, 0]);
 
-      await amend({ toAccountId: usd2, amount: 1_000 });
+      await amend({ toAccountId: usd2, amount: m(1_000) });
       expect([await balanceOf(usd), await balanceOf(usd2), await balanceOf(eur)]).toEqual([9_000, 1_000, 0]);
 
       // A same-currency transfer moved to accounts in another currency needs one too; within one currency it doesn't.
@@ -280,11 +313,12 @@ describe("domain/ledger", () => {
       const kwdLimit = Math.floor(Number.MAX_SAFE_INTEGER / 10);
       const kwd = await seedAccount(alice, { currency: "KWD", balance: kwdLimit - 5 });
       const usd = await seedAccount(alice, { balance: kwdLimit - 5 });
-      expect(await domainRejection(post(alice, { type: "income", amount: 10, accountId: kwd, date: DAY }))).toEqual({
+      // 0.100 KWD is stored as 10, like 0.10 USD.
+      expect(await domainRejection(post(alice, { type: "income", amount: m(100, "KWD"), accountId: kwd, date: DAY }))).toEqual({
         code: "validation_failed",
         message: "Balance out of range",
       });
-      await post(alice, { type: "income", amount: 10, accountId: usd, date: DAY });
+      await post(alice, { type: "income", amount: m(10), accountId: usd, date: DAY });
       expect([await balanceOf(kwd), await balanceOf(usd)]).toEqual([kwdLimit - 5, kwdLimit + 5]);
     });
   });
@@ -295,7 +329,7 @@ describe("domain/ledger", () => {
       const top = Number.MAX_SAFE_INTEGER - 10;
       const full = await seedAccount(alice, { balance: top });
       const other = await seedAccount(alice, { balance: 10_000 });
-      expect(await domainRejection(post(alice, { type: "income", amount: 100, accountId: full, date: DAY }))).toMatchObject({
+      expect(await domainRejection(post(alice, { type: "income", amount: m(100), accountId: full, date: DAY }))).toMatchObject({
         code: "validation_failed",
       });
       expect(await domainRejection(transfer(alice, other, full, 100))).toMatchObject({ code: "validation_failed" });
@@ -325,9 +359,9 @@ describe("domain/ledger", () => {
     it("sums an amend's deltas exactly past 2^53", async () => {
       const alice = await createTestUser();
       const accountId = await seedAccount(alice, { balance: 0 });
-      const adjustment = await post(alice, { type: "adjustment", amount: -(2 ** 52), accountId, date: DAY });
+      const adjustment = await post(alice, { type: "adjustment", amount: m(-(2 ** 52)), accountId, date: DAY });
       // Net move: 2^53 + 1, which a number sum rounds to 2^53.
-      await tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, adjustment.id, "manual"), { amount: 2 ** 52 + 1 }));
+      await tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, adjustment.id, "manual"), { amount: m(2 ** 52 + 1) }));
       expect(await balanceOf(accountId)).toBe(2 ** 52 + 1);
     });
   });
@@ -356,7 +390,7 @@ describe("domain/ledger", () => {
 
       // Amending needs both accounts.
       expect(
-        await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, entry.id, "transfer"), { amount: 10 }))),
+        await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, entry.id, "transfer"), { amount: m(10) }))),
       ).toEqual({ code: "not_found", message: "Account not found" });
       await tx(async (t) => ledger.reverse(t, alice, [await ledger.open(t, alice, entry.id, "transfer")]));
       expect(await balanceOf(from)).toBe(10_000);
@@ -504,6 +538,17 @@ describe("domain/ledger", () => {
   });
 
   describe("per-user isolation", () => {
+    it("posts on an account the caller already loaded, only when it is the user's", async () => {
+      const { alice, bob, aliceAccount } = await twoUsers();
+      const loaded = (await getAccountRow(aliceAccount))!;
+      await post(alice, { type: "expense", amount: m(1_000), accountId: loaded, date: DAY });
+      expect(await domainRejection(post(bob, { type: "expense", amount: m(1_000), accountId: loaded, date: DAY }))).toEqual({
+        code: "not_found",
+        message: "Account not found",
+      });
+      expect(await balanceOf(aliceAccount)).toBe(99_000);
+    });
+
     it("never opens, posts on or moves another user's rows and accounts", async () => {
       const { alice, bob, aliceAccount, bobAccount } = await twoUsers();
       const aliceOther = await seedAccount(alice);

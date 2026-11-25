@@ -31,8 +31,10 @@ async function users() {
   return { alice, bob };
 }
 
-const create = (userId: string, args: Partial<transactions.TransactionFields> & { accountId: string }) =>
-  tx((t) => transactions.createTransaction(t, userId, { type: "expense", amount: 100, date: "2026-03-10", ...args }));
+const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
+
+const create = (userId: string, args: Partial<Omit<transactions.TransactionFields, "amount">> & { accountId: string; amount?: number }) =>
+  tx((t) => transactions.createTransaction(t, userId, { type: "expense", date: "2026-03-10", ...args, amount: usd(args.amount ?? 100) }));
 
 describe("domain/transactions", () => {
   it("creates income/expense transactions and updates balances", async () => {
@@ -101,7 +103,7 @@ describe("domain/transactions", () => {
     const first = await seedAccount(alice, { balance: 10_000 });
     const second = await seedAccount(alice, { balance: 2_000 });
     const row = await create(alice, { amount: 1_000, accountId: first });
-    await tx((t) => transactions.updateTransaction(t, alice, row.id, { type: "income", amount: 400, accountId: second, note: "moved" }));
+    await tx((t) => transactions.updateTransaction(t, alice, row.id, { type: "income", amount: usd(400), accountId: second, note: "moved" }));
     expect([await balanceOf(first), await balanceOf(second)]).toEqual([10_000, 2_400]);
     expect(await getTransactionRow(row.id)).toMatchObject({ type: "income", amount: 400, accountId: second, note: "moved" });
 
@@ -129,8 +131,8 @@ describe("domain/transactions", () => {
     const from = await seedAccount(alice, { balance: 10_000 });
     const to = await seedAccount(alice);
     const loan = await seedAccount(alice, { type: "loan" });
-    const outgoing = await tx((t) => transfers.createTransfer(t, alice, { amount: 2_000, fromAccountId: from, toAccountId: to, date: "2026-01-01" }));
-    const saved = await tx((t) => transfers.createTransfer(t, alice, { amount: 500, fromAccountId: from, toAccountId: to, date: "2026-01-02" }));
+    const outgoing = await tx((t) => transfers.createTransfer(t, alice, { amount: usd(2_000), fromAccountId: from, toAccountId: to, date: "2026-01-01" }));
+    const saved = await tx((t) => transfers.createTransfer(t, alice, { amount: usd(500), fromAccountId: from, toAccountId: to, date: "2026-01-02" }));
     await seedContribution(alice, saved, to);
     const payment = await seedDebtPayment(alice, { debtId: await seedDebt(alice, { linkedAccountId: loan }), fromAccountId: from, liabilityAccountId: loan });
     const plain = await seedTransaction(alice, from);
@@ -179,7 +181,7 @@ describe("domain/transactions", () => {
       const bobAccount = await seedAccount(bob, { balance: 10_000 });
       const row = await create(alice, { accountId: aliceAccount });
 
-      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, bob, row.id, { amount: 1 })))).toEqual({
+      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, bob, row.id, { amount: usd(1) })))).toEqual({
         code: "not_found",
         message: "Transaction not found",
       });
@@ -224,7 +226,7 @@ describe("domain/transactions", () => {
       const ids = await tx(async (t) => {
         const out: string[] = [];
         for (let i = 0; i < 9; i++) {
-          out.push((await transactions.createTransaction(t, alice, { type: "expense", amount: i + 1, accountId, date: i < 6 ? "2026-05-01" : "2026-04-01" })).id);
+          out.push((await transactions.createTransaction(t, alice, { type: "expense", amount: usd(i + 1), accountId, date: i < 6 ? "2026-05-01" : "2026-04-01" })).id);
         }
         return out;
       });

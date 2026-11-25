@@ -103,18 +103,6 @@ describe("transactions: writes", () => {
     expect(await balanceOf(aliceAccount)).toBe(100_000 - 300 - 50);
   });
 
-  it("requires a new amount to move a row to an account in another currency", async () => {
-    const { alice, aliceAccount, asAlice } = await twoUsers();
-    const eur = await seedAccount(alice, { currency: "EUR" });
-    const { transaction: row } = await asAlice.transactions.create({ type: "expense", amount: usd(100), accountId: aliceAccount, date: "2026-03-01" });
-    await expectApiError(asAlice.transactions.update({ id: row.id, accountId: eur }), "validation_failed");
-    await expectApiError(asAlice.transactions.update({ id: row.id, accountId: eur, amount: usd(100) }), "validation_failed");
-    const { transaction } = await asAlice.transactions.update({ id: row.id, accountId: eur, amount: { amountMinor: 90, currency: "EUR" } });
-    expect(transaction).toMatchObject({ accountId: eur, amount: { amountMinor: 90, currency: "EUR" } });
-    expect(await balanceOf(aliceAccount)).toBe(100_000);
-    expect(await balanceOf(eur)).toBe(-90);
-  });
-
   it("rejects 3-decimal amounts the storage can't hold exactly (precision), on every write", async () => {
     const { user, client } = await oneUser({ baseCurrency: "KWD" });
     const kwd = await seedAccount(user, { currency: "KWD" });

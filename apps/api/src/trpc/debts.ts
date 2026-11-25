@@ -7,9 +7,7 @@ import { z } from "zod";
 
 import { debtType } from "../db/schema";
 import * as debts from "../domain/debts";
-import { invalid } from "../domain/errors";
-import { appAmount } from "../domain/money";
-import { requireBaseCurrency, requireBaseCurrencyAccount } from "./currency";
+import { requireBaseCurrency } from "../domain/userProfiles";
 import { debtDto, debtPaymentDto } from "./dto";
 import { financeRead, financeWrite, router, webWrite } from "./init";
 import {
@@ -105,18 +103,6 @@ export const debtPaymentRecordInput = z
   });
 export const debtPaymentRemoveInput = byId;
 
-type DebtMoney = Partial<Record<"originalAmount" | "currentBalance" | "minimumPayment", { amountMinor: number; currency: string }>>;
-
-/** Request amounts (base currency) -> stored amounts, for the fields given. */
-function debtAmounts(input: DebtMoney, currency: string) {
-  const out: Partial<Record<keyof DebtMoney, number>> = {};
-  for (const field of ["originalAmount", "currentBalance", "minimumPayment"] as const) {
-    const money = input[field];
-    if (money) out[field] = appAmount(money, currency, field);
-  }
-  return out;
-}
-
 export const debtsRouter = router({
   list: financeRead
     .input(includeArchived)
@@ -146,20 +132,7 @@ export const debtsRouter = router({
     )
     .output(debtResult)
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      const currency = await requireBaseCurrency(tx, user.userId);
-      const amounts = debtAmounts(input, currency);
-      if (input.linkedAccountId) await requireBaseCurrencyAccount(tx, user.userId, input.linkedAccountId, "linkedAccountId", currency);
-      const debt = await debts.createDebt(tx, user.userId, {
-        name: input.name,
-        debtType: input.debtType,
-        lender: input.lender,
-        originalAmount: amounts.originalAmount!,
-        currentBalance: amounts.currentBalance!,
-        interestRate: input.interestRate,
-        minimumPayment: amounts.minimumPayment,
-        dueDate: input.dueDate,
-        linkedAccountId: input.linkedAccountId,
-      });
+      const { debt, currency } = await debts.createDebt(tx, user.userId, input);
       return { debt: debtDto(debt, currency) };
     }),
 
@@ -187,23 +160,8 @@ export const debtsRouter = router({
     )
     .output(debtResult)
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      const current = await debts.getDebt(tx, user.userId, input.id);
-      const currency = await requireBaseCurrency(tx, user.userId);
-      const amounts = debtAmounts(input, currency);
-      // The web resends the current link on every edit: only a new link must be in the base currency
-      // (Convex never checked, so an existing debt may be linked to another currency).
-      if (input.linkedAccountId && input.linkedAccountId !== current.linkedAccountId) {
-        await requireBaseCurrencyAccount(tx, user.userId, input.linkedAccountId, "linkedAccountId", currency);
-      }
-      const debt = await debts.updateDebt(tx, user.userId, input.id, {
-        name: input.name,
-        debtType: input.debtType,
-        lender: input.lender,
-        ...amounts,
-        interestRate: input.interestRate,
-        dueDate: input.dueDate,
-        linkedAccountId: input.linkedAccountId,
-      });
+      const { id, ...fields } = input;
+      const { debt, currency } = await debts.updateDebt(tx, user.userId, id, fields);
       return { debt: debtDto(debt, currency) };
     }),
 
@@ -239,9 +197,8 @@ export const debtPaymentsRouter = router({
     .input(z.strictObject({ debtId: idSchema }))
     .output(list(debtPaymentSchema))
     .query(async ({ ctx: { tx, user }, input }) => {
-      await debts.getDebt(tx, user.userId, input.debtId);
-      const currency = await requireBaseCurrency(tx, user.userId);
       const rows = await debts.listDebtPayments(tx, user.userId, input.debtId);
+      const currency = await requireBaseCurrency(tx, user.userId);
       return { items: rows.map((p) => debtPaymentDto(p, currency)) };
     }),
 
@@ -250,27 +207,7 @@ export const debtPaymentsRouter = router({
     .input(debtPaymentRecordInput)
     .output(z.object({ payment: debtPaymentSchema }))
     .mutation(async ({ ctx: { tx, user }, input }) => {
-      const debt = await debts.getDebt(tx, user.userId, input.debtId);
-      const currency = await requireBaseCurrency(tx, user.userId);
-      const from = await requireBaseCurrencyAccount(tx, user.userId, input.fromAccountId, "fromAccountId", currency, { owner: "debt" });
-      if (debt.linkedAccountId) {
-        await requireBaseCurrencyAccount(tx, user.userId, debt.linkedAccountId, "debtId", currency, { account: "Linked account", owner: "debt" });
-      }
-      // Convert amount and principal, derive interest, so rounding can never break principal + interest = amount.
-      const amount = appAmount(input.amount, currency, "amount");
-      const principalAmount = input.principalAmount ? appAmount(input.principalAmount, currency, "principalAmount") : amount;
-      const interestAmount = amount - principalAmount;
-      if (interestAmount < 0) throw invalid("principalAmount", "Principal cannot exceed the payment amount");
-
-      const payment = await debts.recordDebtPayment(tx, user.userId, {
-        debtId: debt.id,
-        amount,
-        principalAmount,
-        interestAmount,
-        date: input.date,
-        note: input.note,
-        fromAccountId: from.id,
-      });
+      const { payment, currency } = await debts.recordDebtPayment(tx, user.userId, input);
       return { payment: debtPaymentDto(payment, currency) };
     }),
 

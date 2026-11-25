@@ -1,10 +1,18 @@
+/**
+ * Savings goals and their contributions, in the user's base currency. A
+ * virtual goal only tracks progress; an account-linked one moves each
+ * contribution into its account as a transfer, so both accounts must be in
+ * the base currency too.
+ */
 import { and, asc, eq, sql } from "drizzle-orm";
 
 import { goalContributions, savingsGoals } from "../db/schema";
 import type { Tx } from "../db/tx";
-import { getAccount } from "./accounts";
+import { requireBaseCurrencyAccount } from "./accounts";
 import { invalid, notFound } from "./errors";
 import * as ledger from "./ledger";
+import { appAmount, fitsMoney, type Money } from "./money";
+import { requireBaseCurrency } from "./userProfiles";
 
 export type Goal = typeof savingsGoals.$inferSelect;
 export type Contribution = typeof goalContributions.$inferSelect;
@@ -29,13 +37,23 @@ export async function getGoal(tx: Tx, userId: string, id: string): Promise<Goal>
   return goal;
 }
 
-function assertTarget(amount: number) {
-  if (!Number.isSafeInteger(amount) || amount <= 0) throw invalid("targetAmount", "Target amount must be positive");
+/** The stored target, from Money in the base currency. */
+function targetOf(money: Money, currency: string): number {
+  const amount = appAmount(money, currency, "targetAmount");
+  if (amount <= 0) throw invalid("targetAmount", "Target amount must be positive");
+  return amount;
+}
+
+/** A goal with the base currency its amounts are in. */
+export interface CurrencyGoal {
+  goal: Goal;
+  currency: string;
 }
 
 export interface GoalFields {
   name: string;
-  targetAmount: number;
+  /** In the base currency. */
+  targetAmount: Money;
   targetDate?: string;
   isVirtual: boolean;
   linkedAccountId?: string;
@@ -43,15 +61,16 @@ export interface GoalFields {
   color?: string;
 }
 
-export async function createGoal(tx: Tx, userId: string, args: GoalFields): Promise<Goal> {
-  assertTarget(args.targetAmount);
-  if (args.linkedAccountId) await getAccount(tx, userId, args.linkedAccountId);
+export async function createGoal(tx: Tx, userId: string, args: GoalFields): Promise<CurrencyGoal> {
+  const currency = await requireBaseCurrency(tx, userId);
+  const targetAmount = targetOf(args.targetAmount, currency);
+  if (args.linkedAccountId) await requireBaseCurrencyAccount(tx, userId, args.linkedAccountId, "linkedAccountId", currency);
   const [goal] = await tx
     .insert(savingsGoals)
     .values({
       userId,
       name: args.name,
-      targetAmount: args.targetAmount,
+      targetAmount,
       targetDate: args.targetDate ?? null,
       isVirtual: args.isVirtual,
       linkedAccountId: args.linkedAccountId ?? null,
@@ -59,19 +78,28 @@ export async function createGoal(tx: Tx, userId: string, args: GoalFields): Prom
       color: args.color ?? null,
     })
     .returning();
-  return goal!;
+  return { goal: goal!, currency };
 }
 
+/** Only the given fields change. The linked account and `isVirtual` can't. */
 export async function updateGoal(
   tx: Tx,
   userId: string,
   id: string,
-  fields: Partial<Pick<GoalFields, "name" | "targetAmount" | "targetDate" | "icon" | "color">> & { archived?: boolean },
-): Promise<Goal> {
-  if (fields.targetAmount !== undefined) assertTarget(fields.targetAmount);
-  const patch = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
-  if (Object.keys(patch).length === 0) return await getGoal(tx, userId, id);
+  fields: Partial<Pick<GoalFields, "name" | "targetAmount" | "targetDate" | "icon" | "color">>,
+): Promise<CurrencyGoal> {
+  const current = await getGoal(tx, userId, id);
+  const currency = await requireBaseCurrency(tx, userId);
+  const patch = Object.fromEntries(
+    Object.entries({ ...fields, targetAmount: fields.targetAmount && targetOf(fields.targetAmount, currency) }).filter(([, value]) => value !== undefined),
+  );
+  if (Object.keys(patch).length === 0) return { goal: current, currency };
   const [goal] = await tx.update(savingsGoals).set(patch).where(ownedGoal(userId, id)).returning();
+  return { goal: goal!, currency };
+}
+
+export async function setGoalArchived(tx: Tx, userId: string, id: string, archived: boolean): Promise<Goal> {
+  const [goal] = await tx.update(savingsGoals).set({ archived }).where(ownedGoal(userId, id)).returning();
   if (!goal) throw notFound("Goal");
   return goal;
 }
@@ -97,28 +125,35 @@ export const isAccountLinked = (goal: Goal): goal is Goal & { linkedAccountId: s
 
 export interface ContributionFields {
   goalId: string;
-  amount: number;
+  /** Positive, in the base currency. */
+  amount: Money;
   date: string;
   note?: string;
   fromAccountId?: string;
 }
 
-export async function addContribution(tx: Tx, userId: string, args: ContributionFields): Promise<Contribution> {
-  if (!Number.isSafeInteger(args.amount) || args.amount <= 0) throw invalid("amount", "Amount must be positive");
+/** For an account-linked goal, a transfer from `fromAccountId` into the goal's account (both in the base currency). */
+export async function addContribution(tx: Tx, userId: string, args: ContributionFields): Promise<{ contribution: Contribution; currency: string }> {
   const goal = await getGoal(tx, userId, args.goalId);
+  const currency = await requireBaseCurrency(tx, userId);
+  const amount = appAmount(args.amount, currency, "amount");
+  if (amount <= 0) throw invalid("amount.amountMinor", "Amount must be positive");
+  // The goal is read in this transaction: a concurrent contribution reruns it with the new total.
+  if (!fitsMoney(goal.currentAmount + amount, currency)) throw invalid("amount.amountMinor", "Goal total out of range");
 
   let transactionId: string | null = null;
   if (isAccountLinked(goal)) {
     if (!args.fromAccountId) {
       throw invalid("fromAccountId", "Source account is required for account-linked goal contributions");
     }
-    await getAccount(tx, userId, args.fromAccountId);
-    if (args.fromAccountId === goal.linkedAccountId) throw invalid("fromAccountId", "Cannot transfer to the same account");
+    const labels = { owner: "goal" };
+    const from = await requireBaseCurrencyAccount(tx, userId, args.fromAccountId, "fromAccountId", currency, labels);
+    const to = await requireBaseCurrencyAccount(tx, userId, goal.linkedAccountId, "linkedAccountId", currency, labels);
     const entry = await ledger.post(tx, userId, {
       type: "transfer",
       amount: args.amount,
-      fromAccountId: args.fromAccountId,
-      toAccountId: goal.linkedAccountId,
+      fromAccountId: from,
+      toAccountId: to,
       date: args.date,
       description: `Savings: ${goal.name}`,
       note: args.note,
@@ -130,13 +165,13 @@ export async function addContribution(tx: Tx, userId: string, args: Contribution
 
   const [contribution] = await tx
     .insert(goalContributions)
-    .values({ userId, goalId: goal.id, amount: args.amount, date: args.date, note: args.note ?? null, transactionId })
+    .values({ userId, goalId: goal.id, amount, date: args.date, note: args.note ?? null, transactionId })
     .returning();
   await tx
     .update(savingsGoals)
-    .set({ currentAmount: sql`${savingsGoals.currentAmount} + ${args.amount}` })
+    .set({ currentAmount: sql`${savingsGoals.currentAmount} + ${amount}` })
     .where(ownedGoal(userId, goal.id));
-  return contribution!;
+  return { contribution: contribution!, currency };
 }
 
 export async function removeContribution(tx: Tx, userId: string, id: string): Promise<void> {

@@ -13,6 +13,10 @@
  * records it, else `transfer` for transfer legs, else `manual`. Only the owner
  * may change it (`open` refuses everyone else).
  *
+ * Amounts come in as Money and are checked against the account they land on:
+ * the account's currency labels them, so moving a row to an account in another
+ * currency needs a new amount.
+ *
  * Legacy rows (imported from Convex) may have no account (`account_id` null):
  * they move no balance. A transfer leg may have lost its pair; it is then an
  * entry of one leg that can be reversed but not amended.
@@ -24,7 +28,7 @@ import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { accounts, debtPayments, goalContributions, transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
 import { conflict, invalid, notFound } from "./errors";
-import { fitsMoney } from "./money";
+import { appAmount, fitsMoney, type Money } from "./money";
 
 type Transaction = typeof transactions.$inferSelect;
 type Account = typeof accounts.$inferSelect;
@@ -59,6 +63,9 @@ export interface TransferEntry {
 
 export type Entry = SingleEntry | TransferEntry;
 
+/** An account id, or the account itself when the caller already loaded it (for this user) to check rules of its own. */
+export type AccountRef = string | Account;
+
 interface Details {
   date: string;
   description?: string;
@@ -67,9 +74,9 @@ interface Details {
 
 export interface SinglePosting extends Details {
   type: "income" | "expense" | "adjustment";
-  /** Positive, except adjustments: signed, the delta on the balance. */
-  amount: number;
-  accountId: string;
+  /** In the account's currency. Positive, except adjustments: signed, the delta on the balance. */
+  amount: Money;
+  accountId: AccountRef;
   /** Written as given: `transactions.ts` checks the category against the type and the subcategory against the category. */
   categoryId?: string;
   subcategoryId?: string;
@@ -79,17 +86,21 @@ export interface SinglePosting extends Details {
 export interface TransferPosting extends Details {
   type: "transfer";
   /** Positive, in the accounts' one currency. */
-  amount: number;
-  fromAccountId: string;
-  toAccountId: string;
+  amount: Money;
+  fromAccountId: AccountRef;
+  toAccountId: AccountRef;
 }
 
 export type Posting = SinglePosting | TransferPosting;
 
-/** Omitted fields are unchanged; `null` clears a nullable one. */
+/**
+ * Omitted fields are unchanged; `null` clears a nullable one. `amount` is in
+ * the currency of the account the row ends up on; moving the row to an account
+ * in another currency needs one.
+ */
 export interface SingleChanges {
   type?: SinglePosting["type"];
-  amount?: number;
+  amount?: Money;
   accountId?: string;
   categoryId?: string;
   subcategoryId?: string | null;
@@ -99,9 +110,9 @@ export interface SingleChanges {
   payee?: string | null;
 }
 
-/** Omitted fields are unchanged; `null` clears `description`/`note` on both legs. */
+/** Omitted fields are unchanged; `null` clears `description`/`note` on both legs. `amount` as in `SingleChanges`. */
 export interface TransferChanges {
-  amount?: number;
+  amount?: Money;
   fromAccountId?: string;
   toAccountId?: string;
   date?: string;
@@ -270,31 +281,38 @@ async function move(tx: Tx, userId: string, list: Effect[]): Promise<void> {
 
 /* Validation --------------------------------------------------------------- */
 
-function assertAmount(type: Transaction["type"], amount: number) {
-  if (!Number.isSafeInteger(amount)) throw invalid("amount", "Amount must be an integer");
+function assertSign(type: Transaction["type"], amount: number) {
   if (type !== "adjustment" && amount <= 0) throw invalid("amount.amountMinor", "Amount must be positive");
 }
 
-async function account(tx: Tx, userId: string, id: string): Promise<Account> {
-  const [row] = await tx.select().from(accounts).where(and(eq(accounts.id, id), eq(accounts.userId, userId))).limit(1);
+/** The stored amount for `money` on an account in `currency`, signed as `type` allows. */
+function storedAmount(type: Transaction["type"], money: Money, currency: string): number {
+  const amount = appAmount(money, currency, "amount");
+  assertSign(type, amount);
+  return amount;
+}
+
+const idOf = (ref: AccountRef) => (typeof ref === "string" ? ref : ref.id);
+
+async function account(tx: Tx, userId: string, ref: AccountRef): Promise<Account> {
+  if (typeof ref !== "string") {
+    if (ref.userId !== userId) throw notFound("Account");
+    return ref;
+  }
+  const [row] = await tx.select().from(accounts).where(and(eq(accounts.id, ref), eq(accounts.userId, userId))).limit(1);
   if (!row) throw notFound("Account");
   return row;
 }
 
-/** The one currency a transfer between these accounts moves. */
-export function transferCurrency(from: Pick<Account, "id" | "currency">, to: Pick<Account, "id" | "currency">): string {
-  if (from.id === to.id) throw invalid("toAccountId", "Cannot transfer to the same account");
+/** Both ends of a transfer and the one currency it moves: two different accounts in the same currency. */
+async function transferAccounts(tx: Tx, userId: string, fromRef: AccountRef, toRef: AccountRef) {
+  if (idOf(fromRef) === idOf(toRef)) throw invalid("toAccountId", "Cannot transfer to the same account");
+  const from = await account(tx, userId, fromRef);
+  const to = await account(tx, userId, toRef);
   if (from.currency !== to.currency) {
     throw invalid("toAccountId", `Cross-currency transfers are not supported (${from.currency} -> ${to.currency})`);
   }
-  return from.currency;
-}
-
-async function transferAccounts(tx: Tx, userId: string, fromAccountId: string, toAccountId: string) {
-  if (fromAccountId === toAccountId) throw invalid("toAccountId", "Cannot transfer to the same account");
-  const from = await account(tx, userId, fromAccountId);
-  const to = await account(tx, userId, toAccountId);
-  return { from, to, currency: transferCurrency(from, to) };
+  return { from, to, currency: from.currency };
 }
 
 /* Writing ------------------------------------------------------------------ */
@@ -313,21 +331,20 @@ export function post(tx: Tx, userId: string, posting: SinglePosting): Promise<Si
 export function post(tx: Tx, userId: string, posting: TransferPosting): Promise<TransferEntry>;
 export function post(tx: Tx, userId: string, posting: Posting): Promise<Entry>;
 export async function post(tx: Tx, userId: string, posting: Posting): Promise<Entry> {
-  assertAmount(posting.type, posting.amount);
   const entry = posting.type === "transfer" ? await insertTransfer(tx, userId, posting) : await insertSingle(tx, userId, posting);
   await move(tx, userId, effects(entry));
   return entry;
 }
 
 async function insertSingle(tx: Tx, userId: string, posting: SinglePosting): Promise<SingleEntry> {
-  await account(tx, userId, posting.accountId);
+  const target = await account(tx, userId, posting.accountId);
   const [row] = await tx
     .insert(transactions)
     .values({
       userId,
       type: posting.type,
-      amount: posting.amount,
-      accountId: posting.accountId,
+      amount: storedAmount(posting.type, posting.amount, target.currency),
+      accountId: target.id,
       categoryId: posting.categoryId ?? null,
       subcategoryId: posting.subcategoryId ?? null,
       date: posting.date,
@@ -340,11 +357,11 @@ async function insertSingle(tx: Tx, userId: string, posting: SinglePosting): Pro
 }
 
 async function insertTransfer(tx: Tx, userId: string, posting: TransferPosting): Promise<TransferEntry> {
-  await transferAccounts(tx, userId, posting.fromAccountId, posting.toAccountId);
+  const { from, to, currency } = await transferAccounts(tx, userId, posting.fromAccountId, posting.toAccountId);
   const shared = {
     userId,
     type: "transfer" as const,
-    amount: posting.amount,
+    amount: storedAmount("transfer", posting.amount, currency),
     transferGroupId: randomUUID(),
     date: posting.date,
     description: posting.description ?? null,
@@ -352,11 +369,11 @@ async function insertTransfer(tx: Tx, userId: string, posting: TransferPosting):
   };
   const [outgoing] = await tx
     .insert(transactions)
-    .values({ ...shared, accountId: posting.fromAccountId, destinationAccountId: posting.toAccountId })
+    .values({ ...shared, accountId: from.id, destinationAccountId: to.id })
     .returning();
   const [incoming] = await tx
     .insert(transactions)
-    .values({ ...shared, accountId: posting.toAccountId, linkedTransactionId: outgoing!.id })
+    .values({ ...shared, accountId: to.id, linkedTransactionId: outgoing!.id })
     .returning();
   const [linkedOutgoing] = await tx
     .update(transactions)
@@ -388,9 +405,18 @@ const patchOf = <T extends object>(changes: T): Partial<T> =>
 
 async function amendSingle(tx: Tx, userId: string, entry: SingleEntry, changes: SingleChanges): Promise<SingleEntry> {
   const { row } = entry;
-  if (changes.accountId !== undefined && changes.accountId !== row.accountId) await account(tx, userId, changes.accountId);
-  assertAmount(changes.type ?? row.type, changes.amount ?? row.amount);
-  const patch = patchOf(changes);
+  const moved = changes.accountId !== undefined && changes.accountId !== row.accountId ? await account(tx, userId, changes.accountId) : null;
+  let amount: number | undefined;
+  if (changes.amount !== undefined) {
+    const accountId = moved?.id ?? row.accountId;
+    if (accountId === null) throw notFound("Account");
+    amount = appAmount(changes.amount, moved?.currency ?? (await account(tx, userId, accountId)).currency, "amount");
+  } else if (moved && row.accountId !== null && (await account(tx, userId, row.accountId)).currency !== moved.currency) {
+    // The stored amount is in the old account's currency: it can't carry over to another one.
+    throw invalid("amount", "Provide amount when moving a transaction to an account in another currency");
+  }
+  assertSign(changes.type ?? row.type, amount ?? row.amount);
+  const patch = patchOf({ ...changes, amount });
   if (Object.keys(patch).length === 0) return entry;
   const [updated] = await tx.update(transactions).set(patch).where(ownedRow(userId, row.id)).returning();
   return { ...entry, row: updated! };
@@ -399,13 +425,13 @@ async function amendSingle(tx: Tx, userId: string, entry: SingleEntry, changes: 
 async function amendTransfer(tx: Tx, userId: string, entry: TransferEntry, changes: TransferChanges): Promise<TransferEntry> {
   const { outgoing, incoming } = entry;
   if (!outgoing || !incoming) throw notFound("Transfer");
-  assertAmount("transfer", changes.amount ?? outgoing.amount);
   const fromAccountId = changes.fromAccountId ?? outgoing.accountId;
   const toAccountId = changes.toAccountId ?? incoming.accountId;
   if (fromAccountId === null || toAccountId === null) throw notFound("Account");
   const { from, to, currency } = await transferAccounts(tx, userId, fromAccountId, toAccountId);
+  const amount = changes.amount === undefined ? undefined : appAmount(changes.amount, currency, "amount");
   // Each leg's amount is in its old account's currency (legacy legs may differ): it can't carry over to another one.
-  if (changes.amount === undefined) {
+  if (amount === undefined) {
     const known = new Map([from, to].map((a) => [a.id, a.currency]));
     for (const leg of [outgoing, incoming]) {
       if (leg.accountId === null) continue;
@@ -413,8 +439,9 @@ async function amendTransfer(tx: Tx, userId: string, entry: TransferEntry, chang
       if (before !== currency) throw invalid("amount", "Provide amount when moving a transfer to accounts in another currency");
     }
   }
+  assertSign("transfer", amount ?? outgoing.amount);
 
-  const shared = patchOf({ amount: changes.amount, date: changes.date, description: changes.description, note: changes.note });
+  const shared = patchOf({ amount, date: changes.date, description: changes.description, note: changes.note });
   const write = async (leg: Transaction, patch: Partial<Transaction>) =>
     Object.keys(patch).length === 0
       ? leg

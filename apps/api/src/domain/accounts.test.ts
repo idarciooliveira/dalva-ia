@@ -9,11 +9,10 @@ import * as accounts from "./accounts";
 import { DomainError } from "./errors";
 
 const tx = <T>(fn: (tx: Tx) => Promise<T>) => withTx(testDb(), fn);
+const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 
 async function seedAccount(userId: string, overrides: Partial<Parameters<typeof accounts.createAccount>[2]> = {}) {
-  const account = await tx((t) =>
-    accounts.createAccount(t, userId, { name: "Checking", type: "bank", balance: 10_000, currency: "USD", ...overrides }),
-  );
+  const account = await tx((t) => accounts.createAccount(t, userId, { name: "Checking", type: "bank", balance: usd(10_000), ...overrides }));
   return account.id;
 }
 
@@ -34,7 +33,7 @@ describe("domain/accounts", () => {
     const user = await createTestUser();
     const ids = await tx(async (t) => {
       const out = [];
-      for (const name of ["a", "b", "c"]) out.push((await accounts.createAccount(t, user, { name, type: "bank", balance: 0, currency: "USD" })).id);
+      for (const name of ["a", "b", "c"]) out.push((await accounts.createAccount(t, user, { name, type: "bank", balance: usd(0) })).id);
       return out;
     });
     expect((await readTx(testDb(), (t) => accounts.listAccounts(t, user))).map((a) => a.id)).toEqual(ids);
@@ -62,7 +61,7 @@ describe("domain/accounts", () => {
   it("adjustBalance records an adjustment transaction and updates the balance", async () => {
     const user = await createTestUser();
     const id = await seedAccount(user);
-    const updated = await tx((t) => accounts.adjustBalance(t, user, { id, amount: -2_500, date: "2026-01-02", note: "fix" }));
+    const updated = await tx((t) => accounts.adjustBalance(t, user, { id, amount: usd(-2_500), date: "2026-01-02", note: "fix" }));
     expect(updated.balance).toBe(7_500);
     expect((await getAccountRow(id))?.balance).toBe(7_500);
     const txs = await testDb().select().from(transactions);
@@ -80,8 +79,8 @@ describe("domain/accounts", () => {
 
   it("adjustBalance refuses a balance past the safe integer range and rolls back", async () => {
     const user = await createTestUser();
-    const id = await seedAccount(user, { balance: Number.MAX_SAFE_INTEGER - 1 });
-    await expect(tx((t) => accounts.adjustBalance(t, user, { id, amount: 10, date: "2026-01-02" }))).rejects.toThrow(
+    const id = await seedAccount(user, { balance: usd(Number.MAX_SAFE_INTEGER - 1) });
+    await expect(tx((t) => accounts.adjustBalance(t, user, { id, amount: usd(10), date: "2026-01-02" }))).rejects.toThrow(
       "Balance out of range",
     );
     expect((await getAccountRow(id))?.balance).toBe(Number.MAX_SAFE_INTEGER - 1);
@@ -153,7 +152,7 @@ describe("domain/accounts", () => {
         (t) => accounts.updateAccount(t, bob, id, {}),
         (t) => accounts.updateAccount(t, bob, id, { archived: true }),
         (t) => accounts.deleteAccount(t, bob, id),
-        (t) => accounts.adjustBalance(t, bob, { id, amount: 1, date: "2026-01-01" }),
+        (t) => accounts.adjustBalance(t, bob, { id, amount: usd(1), date: "2026-01-01" }),
       ];
       for (const op of ops) {
         await expect(tx(op)).rejects.toThrow("Account not found");

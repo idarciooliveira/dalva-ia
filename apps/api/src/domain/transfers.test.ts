@@ -12,11 +12,12 @@ import * as transfers from "./transfers";
 // Balance math, legacy legs and owners are the ledger's (ledger.test.ts). These cover the transfer API over it.
 
 const tx = <T>(fn: (tx: Tx) => Promise<T>) => withTx(testDb(), fn);
+const usd = (amountMinor: number) => ({ amountMinor, currency: "USD" });
 const read = <T>(fn: (tx: Tx) => Promise<T>) => readTx(testDb(), fn);
 
 async function seedTransfer(userId: string, from: string, to: string, amount = 1_000) {
   const outgoing = await tx((t) =>
-    transfers.createTransfer(t, userId, { amount, fromAccountId: from, toAccountId: to, date: "2026-03-10", description: "Move" }),
+    transfers.createTransfer(t, userId, { amount: usd(amount), fromAccountId: from, toAccountId: to, date: "2026-03-10", description: "Move" }),
   );
   const incoming = (await getTransactionRow(outgoing))!.linkedTransactionId!;
   return { outgoing, incoming };
@@ -59,7 +60,7 @@ describe("domain/transfers", () => {
     const other = await seedAccount(alice);
     const { outgoing, incoming } = await seedTransfer(alice, from, to);
 
-    expect(await tx((t) => transfers.updateTransfer(t, alice, incoming, { amount: 400, toAccountId: other, note: "n" }))).toBe(outgoing);
+    expect(await tx((t) => transfers.updateTransfer(t, alice, incoming, { amount: usd(400), toAccountId: other, note: "n" }))).toBe(outgoing);
     expect([await balanceOf(from), await balanceOf(to), await balanceOf(other)]).toEqual([9_600, 0, 400]);
     expect(await getTransactionRow(incoming)).toMatchObject({ amount: 400, accountId: other, note: "n" });
 
@@ -109,7 +110,7 @@ describe("domain/transfers", () => {
       const { outgoing } = await seedTransfer(alice, from, to);
 
       expect(await domainRejection(read((t) => transfers.getTransfer(t, bob, outgoing)))).toEqual({ code: "not_found", message: "Transfer not found" });
-      expect(await domainRejection(tx((t) => transfers.updateTransfer(t, bob, outgoing, { amount: 1 })))).toMatchObject({ code: "not_found" });
+      expect(await domainRejection(tx((t) => transfers.updateTransfer(t, bob, outgoing, { amount: usd(1) })))).toMatchObject({ code: "not_found" });
       expect(await domainRejection(tx((t) => transfers.deleteTransfer(t, bob, outgoing)))).toMatchObject({ code: "not_found" });
       expect(await balanceOf(from)).toBe(9_000);
     });

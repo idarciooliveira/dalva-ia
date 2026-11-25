@@ -2,8 +2,9 @@ import { and, asc, eq, sql } from "drizzle-orm";
 
 import { accounts, debtPayments, debts, savingsGoals, transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
-import { conflict, notFound } from "./errors";
+import { conflict, invalid, notFound } from "./errors";
 import { post } from "./ledger";
+import { appAmount, type Money } from "./money";
 
 export type Account = typeof accounts.$inferSelect;
 export type AccountType = Account["type"];
@@ -33,14 +34,45 @@ export async function getAccount(tx: Tx, userId: string, id: string): Promise<Ac
   return account;
 }
 
+/**
+ * The user's account, in the base currency: goals and debts have no currency
+ * of their own, so the accounts they move money on must share it. `labels`
+ * word the message as Convex did ("Linked account currency EUR differs from
+ * the debt currency USD").
+ */
+export async function requireBaseCurrencyAccount(
+  tx: Tx,
+  userId: string,
+  accountId: string,
+  field: string,
+  baseCurrency: string,
+  labels: { account?: string; owner?: string } = {},
+): Promise<Account> {
+  const account = await getAccount(tx, userId, accountId);
+  if (account.currency !== baseCurrency) {
+    const { account: noun = "Account", owner = "base" } = labels;
+    throw invalid(field, `${noun} currency ${account.currency} differs from the ${owner} currency ${baseCurrency}`);
+  }
+  return account;
+}
+
+/** The opening balance's currency becomes the account's, which never changes. */
 export async function createAccount(
   tx: Tx,
   userId: string,
-  args: { name: string; type: AccountType; balance: number; currency: string; theme?: string },
+  args: { name: string; type: AccountType; balance: Money; theme?: string },
 ): Promise<Account> {
+  const { currency } = args.balance;
   const [account] = await tx
     .insert(accounts)
-    .values({ userId, name: args.name, type: args.type, balance: args.balance, currency: args.currency, theme: args.theme ?? null })
+    .values({
+      userId,
+      name: args.name,
+      type: args.type,
+      balance: appAmount(args.balance, currency, "balance"),
+      currency,
+      theme: args.theme ?? null,
+    })
     .returning();
   return account!;
 }
@@ -77,11 +109,11 @@ export async function deleteAccount(tx: Tx, userId: string, id: string): Promise
   await tx.delete(accounts).where(owned(userId, id));
 }
 
-/** Records a signed `adjustment` on the account; the ledger moves the balance. */
+/** Records a signed `adjustment` (in the account's currency) on the account; the ledger moves the balance. */
 export async function adjustBalance(
   tx: Tx,
   userId: string,
-  args: { id: string; amount: number; date: string; note?: string },
+  args: { id: string; amount: Money; date: string; note?: string },
 ): Promise<Account> {
   await post(tx, userId, { type: "adjustment", amount: args.amount, accountId: args.id, date: args.date, description: "Balance adjustment", note: args.note });
   return await getAccount(tx, userId, args.id);
