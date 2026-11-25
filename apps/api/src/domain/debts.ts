@@ -167,11 +167,13 @@ export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymen
     description: `Debt payment: ${debt.name}`,
     note: args.note,
   });
+  // An adjustment's amount is signed: the principal paid lowers the linked liability account's balance by that much.
+  const liabilityAdjustment = -principalAmount;
   const liability =
     debt.linkedAccountId && principalAmount > 0
       ? await ledger.post(tx, userId, {
           type: "adjustment",
-          amount: -principalAmount,
+          amount: liabilityAdjustment,
           accountId: debt.linkedAccountId,
           date: args.date,
           description: `Debt principal payment: ${debt.name}`,

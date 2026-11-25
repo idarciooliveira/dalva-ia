@@ -70,6 +70,7 @@ export interface SinglePosting extends Details {
   /** Positive, except adjustments: signed, the delta on the balance. */
   amount: number;
   accountId: string;
+  /** Written as given: `transactions.ts` checks the category against the type and the subcategory against the category. */
   categoryId?: string;
   subcategoryId?: string;
   payee?: string;
@@ -301,7 +302,12 @@ async function transferAccounts(tx: Tx, userId: string, fromAccountId: string, t
 /**
  * Writes a new entry and moves its accounts. Its `owner` is the one it has as
  * posted (`manual` or `transfer`): a goal or debt takes it over by recording
- * its own row afterwards. Categories are the caller's to check.
+ * its own row afterwards.
+ *
+ * Categories are the caller's to check (`transactions.ts`, the only caller
+ * that sets them): which ones a row may have depends on its type and on the
+ * subcategory's parent, which is classification, not money. Another user's
+ * id still can't land here: the `(id, user_id)` foreign keys refuse it.
  */
 export function post(tx: Tx, userId: string, posting: SinglePosting): Promise<SingleEntry>;
 export function post(tx: Tx, userId: string, posting: TransferPosting): Promise<TransferEntry>;
