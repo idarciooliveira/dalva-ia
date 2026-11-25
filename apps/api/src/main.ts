@@ -1,6 +1,6 @@
 import { createApp } from "./app";
 import { createAuth } from "./auth/auth";
-import { createUserTokens } from "./auth/tokens";
+import { createUserTokens, deriveTokenSecret } from "./auth/tokens";
 import { ConfigError, configSecrets, loadConfig } from "./config";
 import { createDatabase } from "./db/client";
 import { startRetentionJobs } from "./jobs/retention";
@@ -33,7 +33,7 @@ function main() {
     clientIpHeader: config.CLIENT_IP_HEADER,
   });
   if (!config.CLIENT_IP_HEADER) logger.warn("auth_rate_limit_off", { reason: "CLIENT_IP_HEADER unset" });
-  const tokens = createUserTokens(config.FINANCE_API_TOKEN_SECRET);
+  const tokens = createUserTokens(deriveTokenSecret(config.BETTER_AUTH_SECRET));
   if (!config.FINANCE_API_SERVICE_KEY) logger.warn("service_routes_off", { reason: "FINANCE_API_SERVICE_KEY unset" });
   const app = createApp({
     db: database.db,

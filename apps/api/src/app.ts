@@ -18,7 +18,7 @@ export interface AppOptions {
   db: Database;
   logger: Logger;
   auth: Auth;
-  /** Verifies the agent's bearer user tokens (config `FINANCE_API_TOKEN_SECRET`). */
+  /** Verifies the agent's bearer user tokens (signed with a key derived from `BETTER_AUTH_SECRET`). */
   tokens: UserTokens;
   /** The chat agent's key for the service routes (config `FINANCE_API_SERVICE_KEY`). Unset: they answer 401. */
   serviceKey?: string;

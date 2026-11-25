@@ -53,7 +53,6 @@ Object.assign(process.env, {
   PORT: port,
   PUBLIC_URL: process.env.PUBLIC_URL || "http://localhost:3000",
   BETTER_AUTH_SECRET: secret(),
-  FINANCE_API_TOKEN_SECRET: secret(),
   FINANCE_API_SERVICE_KEY: process.env.E2E_FINANCE_API_SERVICE_KEY || secret(),
   LOG_LEVEL: process.env.LOG_LEVEL || "warn",
 });

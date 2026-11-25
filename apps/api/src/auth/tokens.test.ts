@@ -1,9 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import { TEST_TOKEN_SECRET } from "../../test/app";
-import { createUserTokens } from "./tokens";
+import { createUserTokens, deriveTokenSecret } from "./tokens";
 
 const tokens = createUserTokens(TEST_TOKEN_SECRET);
+
+describe("deriveTokenSecret", () => {
+  it("is stable, 32 bytes of hex and not the auth secret", () => {
+    const secret = deriveTokenSecret("a".repeat(32));
+    expect(secret).toBe(deriveTokenSecret("a".repeat(32)));
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    expect(secret).not.toBe("a".repeat(32));
+    expect(deriveTokenSecret("b".repeat(32))).not.toBe(secret);
+  });
+
+  it("signs tokens that verify only under the same auth secret", async () => {
+    const minted = await createUserTokens(deriveTokenSecret("a".repeat(32))).mint("user-1", ["finance:read"], 60);
+    expect((await createUserTokens(deriveTokenSecret("a".repeat(32))).verify(minted)).ok).toBe(true);
+    expect((await createUserTokens(deriveTokenSecret("b".repeat(32))).verify(minted)).ok).toBe(false);
+  });
+});
 
 const b64url = (value: unknown) =>
   Buffer.from(typeof value === "string" ? value : JSON.stringify(value)).toString("base64url");
