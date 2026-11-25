@@ -1,5 +1,6 @@
 import { Coins, ArrowRight } from "lucide-react";
 import { CURRENCIES } from "@/lib/currencies";
+import { CurrencyFlag } from "@/components/currency-flag";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -39,7 +40,7 @@ export function CurrencyStep({
           <SelectContent>
             {CURRENCIES.map((c) => (
               <SelectItem key={c.code} value={c.code}>
-                <span className="text-base">{c.flag}</span> {c.name} ({c.code})
+                <CurrencyFlag country={c.country} /> {c.name} ({c.code})
               </SelectItem>
             ))}
           </SelectContent>
