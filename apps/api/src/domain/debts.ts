@@ -102,10 +102,15 @@ export async function setDebtArchived(tx: Tx, userId: string, id: string, archiv
   return debt;
 }
 
-/** Reverses what the payments posted. A legacy payment may have lost its source row. */
+/**
+ * Reverses what the payments posted. A legacy payment may have lost its source
+ * row, or point at a row a goal contribution or transfer also claims: the debt
+ * still removes it ("read" skips the owner check), or the debt could never be
+ * deleted.
+ */
 async function reversePayments(tx: Tx, userId: string, payments: DebtPayment[]): Promise<void> {
   const ids = payments.flatMap((p) => [p.sourceTransactionId, p.liabilityTransactionId]).filter((id): id is string => id !== null);
-  await ledger.reverse(tx, userId, await ledger.openAll(tx, userId, ids, "debt_payment"));
+  await ledger.reverse(tx, userId, await ledger.openAll(tx, userId, ids, "debt_payment", "read"));
 }
 
 export async function deleteDebt(tx: Tx, userId: string, id: string): Promise<void> {

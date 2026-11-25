@@ -163,6 +163,23 @@ function transferLegs(row: Transaction, linked: Transaction | null): { outgoing:
   return rowIsOutgoing ? { outgoing: row, incoming: linked } : { outgoing: linked, incoming: row };
 }
 
+const legsOf = (entry: Entry): Transaction[] =>
+  entry.kind === "single" ? [entry.row] : [entry.outgoing, entry.incoming].filter((leg) => leg !== null);
+
+/**
+ * One entry per set of rows: both legs of a transfer open the same entry. Keyed
+ * by the rows, not by `id`, which depends on which leg reads as outgoing (a
+ * legacy pair without a destination reads differently from each side).
+ */
+function distinct(entries: Entry[]): Entry[] {
+  const byRows = new Map<string, Entry>();
+  for (const entry of entries) {
+    const key = legsOf(entry).map((leg) => leg.id).sort().join(",");
+    if (!byRows.has(key)) byRows.set(key, entry);
+  }
+  return [...byRows.values()];
+}
+
 async function entriesOf(tx: Tx, userId: string, rows: Transaction[]): Promise<Entry[]> {
   const linkedIds = rows.flatMap((r) => (r.type === "transfer" && r.linkedTransactionId ? [r.linkedTransactionId] : []));
   const linked =
@@ -192,8 +209,7 @@ export async function openAll(tx: Tx, userId: string, ids: string[], as: Owner, 
   if (unique.length === 0) return [];
   const rows = await tx.select().from(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, unique)));
   if (rows.length !== unique.length) throw notFound(what);
-  // Both legs of one transfer open one entry.
-  const entries = [...new Map((await entriesOf(tx, userId, rows)).map((entry) => [entry.id, entry])).values()];
+  const entries = distinct(await entriesOf(tx, userId, rows));
   for (const entry of entries) {
     if (as === "transfer" && entry.kind !== "transfer") throw notFound(what);
     if (mode === "write" && entry.owner !== as) throw conflict(MANAGED_MESSAGES[entry.owner]);
@@ -276,7 +292,11 @@ async function assertTransferAccounts(tx: Tx, userId: string, fromAccountId: str
 
 /* Writing ------------------------------------------------------------------ */
 
-/** Writes a new entry and moves its accounts. The caller records any goal or debt row that owns it. */
+/**
+ * Writes a new entry and moves its accounts. Its `owner` is the one it has as
+ * posted (`manual` or `transfer`): a goal or debt takes it over by recording
+ * its own row afterwards. Categories are the caller's to check.
+ */
 export function post(tx: Tx, userId: string, posting: SinglePosting): Promise<SingleEntry>;
 export function post(tx: Tx, userId: string, posting: TransferPosting): Promise<TransferEntry>;
 export function post(tx: Tx, userId: string, posting: Posting): Promise<Entry>;
@@ -387,8 +407,8 @@ async function amendTransfer(tx: Tx, userId: string, entry: TransferEntry, chang
 
 /** Deletes the opened entries' rows and undoes what they did to their accounts. */
 export async function reverse(tx: Tx, userId: string, opened: Entry[]): Promise<void> {
-  const entries = [...new Map(opened.map((entry) => [entry.id, entry])).values()];
-  const legs = entries.flatMap((entry) => (entry.kind === "single" ? [entry.row] : [entry.outgoing, entry.incoming].filter((leg) => leg !== null)));
+  const entries = distinct(opened);
+  const legs = entries.flatMap(legsOf);
   if (legs.length === 0) return;
   await tx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, legs.map((leg) => leg.id))));
   await move(tx, userId, entries.flatMap((entry) => negate(effects(entry))));

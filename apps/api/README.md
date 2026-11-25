@@ -82,8 +82,8 @@ Search and reports (`src/domain/{transactions,reports}.ts`):
 
 Goals and debts (`src/domain/{goals,debts}.ts`), in the base currency:
 
-- A contribution to an account-linked goal is a transfer into the linked account (`ledger.post`); removing the contribution reverses it. A contribution whose transfer is gone (`transaction_id` nulled) only moves `current_amount` on removal. Deleting a goal keeps its transfers as plain transfers.
-- A debt payment is an expense on the paying account plus, for a linked debt, an adjustment of minus the principal on the linked account (`ledger.post`). Removing it, or deleting the debt, reverses those entries. Legacy payments with a null `from_account_id` or `source_transaction_id` list with the nil-UUID placeholders (`MISSING_ACCOUNT_ID`, `MISSING_TRANSACTION_ID`) and skip what is gone on removal.
+- A contribution to an account-linked goal is a transfer into the linked account (`ledger.post`); removing the contribution reverses it (a legacy contribution pointing at a non-transfer row leaves that row alone). A contribution whose transfer is gone (`transaction_id` nulled) only moves `current_amount` on removal. Deleting a goal keeps its transfers as plain transfers.
+- A debt payment is an expense on the paying account plus, for a linked debt, an adjustment of minus the principal on the linked account (`ledger.post`). Removing it, or deleting the debt, reverses those entries, even when a legacy row is also claimed by a goal contribution or transfer. Legacy payments with a null `from_account_id` or `source_transaction_id` list with the nil-UUID placeholders (`MISSING_ACCOUNT_ID`, `MISSING_TRANSACTION_ID`) and skip what is gone on removal.
 - `current_amount` and `current_balance` move with relative updates; the principal check reads the balance in the same SERIALIZABLE transaction, so racing payments can't pay down more than is left.
 - A goal's or debt's linked account, and the accounts a contribution or payment moves money on, must be in the base currency (`validation_failed`).
 

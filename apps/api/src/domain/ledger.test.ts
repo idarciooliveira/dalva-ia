@@ -141,6 +141,39 @@ describe("domain/ledger", () => {
       expect(await transactionRows()).toEqual([]);
     });
 
+    it("reverses an entry once when it is opened or passed twice", async () => {
+      const alice = await createTestUser();
+      const from = await seedAccount(alice, { balance: 10_000 });
+      const to = await seedAccount(alice, { balance: 0 });
+      const entry = await transfer(alice, from, to, 700);
+      await tx(async (t) => {
+        const opened = await ledger.openAll(t, alice, [entry.outgoing!.id, entry.incoming!.id], "transfer");
+        expect(opened).toHaveLength(1);
+        await ledger.reverse(t, alice, [...opened, ...opened]);
+      });
+      expect([await balanceOf(from), await balanceOf(to)]).toEqual([10_000, 0]);
+
+      // A legacy pair without a destination reads as "incoming" from both sides: still one entry and one reversal
+      // (in whichever direction the leg read first gives; the rows can't tell), never two that cancel out.
+      const legacy = await transfer(alice, from, to, 300);
+      await testDb().update(transactions).set({ destinationAccountId: null }).where(eq(transactions.id, legacy.outgoing!.id));
+      await tx(async (t) => ledger.reverse(t, alice, await ledger.openAll(t, alice, [legacy.outgoing!.id, legacy.incoming!.id], "transfer")));
+      expect([[10_000, 0], [9_400, 600]]).toContainEqual([await balanceOf(from), await balanceOf(to)]);
+      expect(await transactionRows()).toEqual([]);
+    });
+
+    it("amends one end of a transfer alone", async () => {
+      const alice = await createTestUser();
+      const from = await seedAccount(alice, { balance: 10_000 });
+      const to = await seedAccount(alice);
+      const other = await seedAccount(alice, { balance: 3_000 });
+      const entry = await transfer(alice, from, to);
+      const amended = await tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, entry.incoming!.id, "transfer"), { fromAccountId: other }));
+      expect(amended.outgoing).toMatchObject({ accountId: other, destinationAccountId: to, amount: 1_000 });
+      expect(amended.incoming).toMatchObject({ accountId: to, amount: 1_000 });
+      expect([await balanceOf(from), await balanceOf(to), await balanceOf(other)]).toEqual([10_000, 1_000, 2_000]);
+    });
+
     it("rejects zero, negative and non-integer amounts (signed only for adjustments), writing nothing", async () => {
       const alice = await createTestUser();
       const accountId = await seedAccount(alice, { balance: 10_000 });
@@ -153,6 +186,13 @@ describe("domain/ledger", () => {
         message: "Amount must be an integer",
       });
       // The sign rule uses the effective type: a negative adjustment can't just become income.
+      const spent = await expense(alice, accountId, 100);
+      for (const amount of [0, -5]) {
+        expect(
+          await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, spent.id, "manual"), { amount }))),
+        ).toEqual({ code: "validation_failed", message: "Amount must be positive" });
+      }
+      await tx(async (t) => ledger.reverse(t, alice, [await ledger.open(t, alice, spent.id, "manual")]));
       const adjustment = await post(alice, { type: "adjustment", amount: -500, accountId, date: DAY });
       expect(
         await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, adjustment.id, "manual"), { type: "income" }))),
@@ -195,6 +235,10 @@ describe("domain/ledger", () => {
 
       const entry = await read((t) => ledger.open(t, alice, incoming, "transfer", "read"));
       expect([entry.outgoing?.id, entry.incoming?.id]).toEqual([outgoing, incoming]);
+      // Amending would keep it across currencies: refused. Reversing undoes each leg on its own account.
+      expect(
+        await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, outgoing, "transfer"), { note: "x" }))),
+      ).toMatchObject({ code: "validation_failed", message: expect.stringContaining("Cross-currency") });
       await tx(async (t) => ledger.reverse(t, alice, [await ledger.open(t, alice, outgoing, "transfer")]));
       expect([await balanceOf(usd), await balanceOf(eur)]).toEqual([10_000, 0]);
     });
@@ -224,6 +268,11 @@ describe("domain/ledger", () => {
         code: "validation_failed",
       });
       expect(await domainRejection(transfer(alice, other, full, 100))).toMatchObject({ code: "validation_failed" });
+      const moved = await transfer(alice, other, await seedAccount(alice), 100);
+      expect(
+        await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, moved.id, "transfer"), { toAccountId: full }))),
+      ).toMatchObject({ code: "validation_failed", message: "Balance out of range" });
+      await tx(async (t) => ledger.reverse(t, alice, [await ledger.open(t, alice, moved.id, "transfer")]));
 
       const spent = await expense(alice, other, 100);
       expect(
@@ -413,10 +462,19 @@ describe("domain/ledger", () => {
       expect(
         await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, moved.id, "transfer"), { toAccountId: bobAccount }))),
       ).toEqual({ code: "not_found", message: "Account not found" });
+      expect(
+        await domainRejection(tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, moved.id, "transfer"), { fromAccountId: bobAccount }))),
+      ).toEqual({ code: "not_found", message: "Account not found" });
 
-      // Owners only count the caller's goal and debt rows.
-      const owners = await read((t) => ledger.ownersOf(t, bob, legsOf(mine).filter((r) => r !== null)));
-      expect(owners.get(mine.id)).toBe("manual");
+      // Owners only count the caller's goal and debt rows: alice's contribution and payment mean nothing to bob.
+      await seedContribution(alice, moved.id, aliceOther);
+      await testDb().insert(debtPayments).values({
+        userId: alice, debtId: await seedDebt(alice), amount: 1, principalAmount: 1, interestAmount: 0, date: DAY, sourceTransactionId: mine.id,
+      });
+      const rows = [...legsOf(mine), ...legsOf(moved)].filter((r) => r !== null);
+      const owners = (userId: string) => read(async (t) => Object.fromEntries(await ledger.ownersOf(t, userId, rows)));
+      expect(await owners(alice)).toEqual({ [mine.id]: "debt_payment", [moved.outgoing!.id]: "goal_contribution", [moved.incoming!.id]: "goal_contribution" });
+      expect(await owners(bob)).toEqual({ [mine.id]: "manual", [moved.outgoing!.id]: "transfer", [moved.incoming!.id]: "transfer" });
       expect([await balanceOf(aliceAccount), await balanceOf(aliceOther), await balanceOf(bobAccount)]).toEqual([98_000, 1_000, 50_000]);
     });
   });

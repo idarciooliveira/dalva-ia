@@ -148,7 +148,9 @@ export async function removeContribution(tx: Tx, userId: string, id: string): Pr
   if (!contribution) throw notFound("Contribution");
 
   if (contribution.transactionId) {
-    await ledger.reverse(tx, userId, [await ledger.open(tx, userId, contribution.transactionId, "goal_contribution")]);
+    const entry = await ledger.open(tx, userId, contribution.transactionId, "goal_contribution");
+    // Contributions post transfers. A legacy one pointing at any other row never moved money for the goal: keep that row.
+    if (entry.kind === "transfer") await ledger.reverse(tx, userId, [entry]);
   }
   await tx.delete(goalContributions).where(eq(goalContributions.id, contribution.id));
   await tx
