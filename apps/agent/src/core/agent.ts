@@ -9,6 +9,7 @@ import type { FinanceClient } from "./finance";
 import { decodeHistory, encodeAssistantText, encodeResponseMessages, encodeUserText, trimHistory } from "./history";
 import { SYSTEM_PROMPT } from "./prompts/system";
 import type { SessionRecorder } from "./session";
+import { startTyping } from "./typing";
 
 export interface AgentOptions {
   model: LanguageModel;
@@ -44,7 +45,7 @@ interface AgentTurnInput {
   userContext: UserContext;
   /** Client bound to the user's token. Tools use it; the model never sees the token. */
   finance: FinanceClient;
-  /** Shows the typing indicator; called repeatedly while the turn runs. */
+  /** Shows the typing indicator; called repeatedly while the turn runs (the handler runs its own). */
   typing?: () => Promise<void>;
   /**
    * Sends the answer, with the change the turn proposed (if any) for the
@@ -66,7 +67,7 @@ interface AgentTurnResult {
   steps: number;
   toolCalls: Array<{ name: string; input: unknown }>;
   usage: { inputTokens: number; outputTokens: number };
-  /** The change this turn proposed, if any. */
+  /** The change(s) this turn proposed, if any: one action, or a `batch`. */
   action?: AgentPendingAction;
 }
 
@@ -76,8 +77,6 @@ export interface Agent {
 
 const DEFAULT_HISTORY_LIMIT = 30;
 const DEFAULT_HISTORY_MAX_BYTES = 24 * 1024;
-/** Telegram shows "typing…" for about 5 seconds per call. */
-const TYPING_INTERVAL_MS = 4_500;
 const FALLBACK_REPLY = "Sorry, I couldn't put an answer together. Please try asking in another way.";
 
 /** `YYYY-MM-DD` and weekday of `date` in `timeZone`. */
@@ -118,14 +117,6 @@ function toPlainText(text: string): string {
     .replace(/\*\*|__/g, "")
     .replace(/`/g, "")
     .trim();
-}
-
-function startTyping(typing: (() => Promise<void>) | undefined): () => void {
-  if (!typing) return () => {};
-  const send = () => void typing().catch(() => {});
-  send();
-  const timer = setInterval(send, TYPING_INTERVAL_MS);
-  return () => clearInterval(timer);
 }
 
 const modelName = (model: LanguageModel) => (typeof model === "string" ? model : model.modelId);
@@ -179,16 +170,16 @@ export function createAgent(options: AgentOptions): Agent {
         messages: [...history, contextMessage, userMessage],
         tools,
         stopWhen: isStepCount(maxSteps),
-        // The last allowed step must answer, not call another tool; so must the step after a proposal.
-        prepareStep: ({ stepNumber }) =>
-          stepNumber >= maxSteps - 1 || proposals?.current ? { toolChoice: "none" as const } : {},
+        // The last allowed step must answer, not call another tool.
+        prepareStep: ({ stepNumber }) => (stepNumber >= maxSteps - 1 ? { toolChoice: "none" as const } : {}),
         ...(options.maxOutputTokens ? { maxOutputTokens: options.maxOutputTokens } : {}),
         maxRetries: 1,
         abortSignal: signal,
       });
       if (fatal) throw fatal;
 
-      const action = proposals?.current?.action;
+      // Everything the turn proposed goes behind one Confirm: one action, or a batch.
+      const action = (await proposals?.commit(signal)) ?? undefined;
       const modelText = toPlainText(result.text);
       // With a proposal the summary speaks for itself; no fallback apology.
       const text = modelText || (action ? "" : FALLBACK_REPLY);
@@ -205,6 +196,7 @@ export function createAgent(options: AgentOptions): Agent {
         finishReason: result.finishReason,
         tools: toolCalls.map((call) => call.name).join(",") || undefined,
         proposed: action ? action.operation : undefined,
+        proposedCount: proposals && proposals.queued.length > 1 ? proposals.queued.length : undefined,
         historyMessages: history.length,
         ms: Date.now() - started,
       });

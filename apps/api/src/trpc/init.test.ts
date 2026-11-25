@@ -103,6 +103,7 @@ const ACCESS: Record<string, Access> = {
   "agentMessages.list": "agent",
   "agentMessages.append": "agent",
   "agentPendingActions.create": "agent",
+  "agentPendingActions.check": "agent",
   "agentPendingActions.get": "agent",
   "agentPendingActions.confirm": "agent",
   "agentPendingActions.cancel": "agent",

@@ -57,6 +57,7 @@ export function fakeTelegramApi() {
   const sent: SentMessage[] = [];
   const actions: Array<{ chatId: string; action: string }> = [];
   const answered: Array<{ id: string; text?: string }> = [];
+  const reactions: Array<{ chatId: string; messageId: number; emoji: string }> = [];
   const edited: Array<{ chatId: string; messageId: number; html: string; replyMarkup?: unknown }> = [];
   let editFailure: string | null = null;
   const api = {
@@ -81,6 +82,10 @@ export function fakeTelegramApi() {
       answered.push({ id, text: other?.text });
       return true as const;
     },
+    setMessageReaction: async (chatId: number | string, messageId: number, reaction: Array<{ emoji: string }>) => {
+      reactions.push({ chatId: String(chatId), messageId, emoji: reaction[0]?.emoji ?? "" });
+      return true as const;
+    },
     getUpdates: async () => [],
     deleteWebhook: async () => true as const,
   } as unknown as TelegramApi;
@@ -89,6 +94,7 @@ export function fakeTelegramApi() {
     sent,
     actions,
     answered,
+    reactions,
     edited,
     /** The next `editMessageText` fails with this Bot API description. */
     failEdit: (description: string) => {
@@ -229,6 +235,7 @@ const PROCEDURES: Record<string, (input: Json) => [string, string, Json]> = {
   "agentMessages.list": ({ sessionId, ...rest }) => ["GET", `/agent/sessions/${sessionId}/messages`, rest],
   "agentMessages.append": ({ sessionId, ...rest }) => ["POST", `/agent/sessions/${sessionId}/messages`, rest],
   "agentPendingActions.create": (i) => ["POST", "/agent/pending-actions", i],
+  "agentPendingActions.check": (i) => ["POST", "/agent/pending-actions/check", i],
   "agentPendingActions.get": ({ id }) => ["GET", `/agent/pending-actions/${id}`, {}],
   "agentPendingActions.confirm": ({ id }) => ["POST", `/agent/pending-actions/${id}/confirm`, {}],
   "agentPendingActions.cancel": ({ id }) => ["POST", `/agent/pending-actions/${id}/cancel`, {}],
@@ -355,7 +362,24 @@ export function fakeFinance() {
     return action;
   }
 
+  /** The operation's own schema, as the API checks it. */
+  function parseActionInput(operation: unknown, input: unknown): Json {
+    const schema = (ACTION_INPUTS as Record<string, (typeof ACTION_INPUTS)[keyof typeof ACTION_INPUTS] | undefined>)[String(operation)];
+    if (!schema) throw new ApiFailure("validation_failed");
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
+      throw new ApiFailure("validation_failed", { issues });
+    }
+    return parsed.data as Json;
+  }
+
   function pendingActions(method: string, path: string, body: Json, identity: FakeIdentity): unknown {
+    if (method === "POST" && path === "/agent/pending-actions/check") {
+      if (!canWrite(identity)) throw new ApiFailure("forbidden");
+      parseActionInput(body.operation, body.input);
+      return { ok: true };
+    }
     if (method === "POST" && path === "/agent/pending-actions") {
       if (!canWrite(identity)) throw new ApiFailure("forbidden");
       if (!sessions.some((s) => s.id === body.sessionId)) throw new ApiFailure("not_found");
@@ -363,19 +387,13 @@ export function fakeFinance() {
         const existing = actions.find((a) => a.owner === identity.externalUserId && a.clientKey === body.clientKey);
         if (existing) return { action: actionJson(existing) };
       }
-      const schema = (ACTION_INPUTS as Record<string, (typeof ACTION_INPUTS)[keyof typeof ACTION_INPUTS] | undefined>)[String(body.operation)];
-      if (!schema) throw new ApiFailure("validation_failed");
-      const parsed = schema.safeParse(body.input);
-      if (!parsed.success) {
-        const issues = parsed.error.issues.map((issue) => ({ path: issue.path.join("."), message: issue.message }));
-        throw new ApiFailure("validation_failed", { issues });
-      }
+      const input = parseActionInput(body.operation, body.input);
       const action: FakeAction = {
         id: `action_${actions.length + 1}`,
         sessionId: body.sessionId,
         ...(body.clientKey ? { clientKey: body.clientKey } : {}),
         operation: body.operation,
-        input: parsed.data as Json,
+        input,
         summary: body.summary,
         status: "pending",
         expiresAt: new Date(Date.now() + 600_000).toISOString(),

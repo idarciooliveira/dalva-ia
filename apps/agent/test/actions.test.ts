@@ -229,6 +229,74 @@ describe("Confirm", () => {
   });
 });
 
+describe("Confirm on a batch (several changes from one message)", () => {
+  const BATCH_SUMMARY = [
+    "1. Despesa · 3 000,00 AOA · BAI Conta Ordem · hoje",
+    "2. Transferência · 20 000,00 AOA · BAI Conta Ordem → Poupança BFA · hoje",
+    "3. Receita · 300 000,00 AOA · BAI Conta Ordem · hoje",
+  ].join("\n");
+  const account = "00000001-0000-4000-8000-000000000001";
+  const items = [
+    { operation: "transactions.create", input: { type: "expense", amount: { amountMinor: 300_000, currency: "AOA" }, accountId: account, date: "2026-11-11" } },
+    { operation: "transfers.create", input: { amount: { amountMinor: 2_000_000, currency: "AOA" }, fromAccountId: account, toAccountId: "00000001-0000-4000-8000-000000000002", date: "2026-11-11" } },
+    { operation: "transactions.create", input: { type: "income", amount: { amountMinor: 30_000_000, currency: "AOA" }, accountId: account, date: "2026-11-11" } },
+  ];
+  const batch = (options: Parameters<typeof setup>[0] = {}) => {
+    const context = setup({ summary: BATCH_SUMMARY, ...options });
+    Object.assign(context.action(), { operation: "batch", input: { items } });
+    return context;
+  };
+
+  test("runs every item in order, item i keyed <action id>:<i>, and shows them all saved", async () => {
+    const { finance, telegram, press, action, lastEdit } = batch();
+    await press("c:action_1");
+    expect(finance.writes.map((w) => [w.operation, w.idempotencyKey])).toEqual([
+      ["transactions.create", "action_1:0"],
+      ["transfers.create", "action_1:1"],
+      ["transactions.create", "action_1:2"],
+    ]);
+    expect(action()).toMatchObject({ status: "executed", result: { items: [{ status: "executed" }, { status: "executed" }, { status: "executed" }] } });
+    expect(lastEdit()!.html).toBe(`<b>✅ Guardado</b>\n${BATCH_SUMMARY.split("\n").map((line) => `✅ ${line}`).join("\n")}`);
+    expect(telegram.answered).toEqual([{ id: "cb_9000", text: "✅ Guardado" }]);
+  });
+
+  test("one item failing doesn't stop the others; the message says which one wasn't saved and why", async () => {
+    const { finance, press, action, lastEdit } = batch();
+    finance.fail("POST /transfers", "validation_failed", 1);
+    await press("c:action_1");
+    expect(finance.writes.map((w) => w.idempotencyKey)).toEqual(["action_1:0", "action_1:2"]);
+    expect(action()).toMatchObject({
+      status: "failed",
+      result: { error: "partial", items: [{ status: "executed" }, { status: "failed", error: "validation_failed" }, { status: "executed" }] },
+    });
+    const html = lastEdit()!.html;
+    expect(html.startsWith("<b>⚠️ Guardado em parte</b>")).toBe(true);
+    expect(html).toContain("✅ 1. Despesa");
+    expect(html).toContain("❌ 2. Transferência · 20 000,00 AOA · BAI Conta Ordem → Poupança BFA · hoje (Os dados já não são válidos");
+    expect(html).toContain("✅ 3. Receita");
+    // A later press shows the same per-item result.
+    await press("c:action_1");
+    expect(lastEdit()!.html).toBe(html);
+  });
+
+  test("a rerun after a crash replays the items that already ran (same keys) and runs the rest", async () => {
+    const { finance, press, action } = batch({ status: "confirmed" });
+    // The crash happened after item 0 ran.
+    await finance.clients.forToken(`tok_${USER}`).transactions.create.mutate(items[0]!.input as never, { context: { idempotencyKey: "action_1:0" } });
+    await press("c:action_1");
+    expect(finance.writes.map((w) => w.idempotencyKey)).toEqual(["action_1:0", "action_1:1", "action_1:2"]);
+    expect(action().status).toBe("executed");
+  });
+
+  test("Cancel cancels the whole batch", async () => {
+    const { finance, press, action, lastEdit } = batch();
+    await press("x:action_1");
+    expect(action().status).toBe("cancelled");
+    expect(finance.writes).toHaveLength(0);
+    expect(lastEdit()!.html).toBe(`<b>Cancelado</b>\n${BATCH_SUMMARY}`);
+  });
+});
+
 describe("Cancel", () => {
   test("cancels, edits the message and removes the buttons", async () => {
     const { finance, press, action, lastEdit, notes } = setup();

@@ -338,30 +338,48 @@ describe("write turns", () => {
     expect(offered).toEqual([...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES].sort());
   });
 
-  test("a proposal ends tool use, returns the action to the reply and is stored in history", async () => {
+  test("a proposal is stored when the turn ends, returned to the reply and kept in history", async () => {
     const { model, run, replies, finance, stored } = setup([
       { tools: [{ name: "create_transaction", input: create }] },
-      { tools: [{ name: "list_accounts", input: {} }] }, // ignored: tool choice is "none" after a proposal
+      { text: "Confirma." },
     ]);
     const result = await run("gastei 5000 kz no almoço");
-    expect(model.doGenerateCalls[1]!.toolChoice).toEqual({ type: "none" });
+    // Tools stay available after a proposal: the model may propose more changes from the same message.
+    expect(model.doGenerateCalls[1]!.toolChoice).not.toEqual({ type: "none" });
     expect(result.action).toMatchObject({ id: "action_1", status: "pending", summary: "Despesa · 5 000,00 AOA · Alimentação · BAI Conta Ordem · hoje" });
-    expect(replies).toEqual([{ text: "forced answer", action: result.action }]);
-    expect(finance.actions[0]).toMatchObject({ clientKey: "1:0", sessionId: "sess_1" });
+    expect(replies).toEqual([{ text: "Confirma.", action: result.action }]);
+    expect(finance.actions[0]).toMatchObject({ clientKey: "1:0", sessionId: "sess_1", operation: "transactions.create" });
     expect(finance.writes).toHaveLength(0);
     const tool = stored().find((m) => m.role === "tool")!;
     expect(JSON.stringify(tool.content)).toContain("awaiting_confirmation");
   });
 
-  test("several proposals in one step: the first is kept, the others are told to wait", async () => {
-    const { run, finance, model } = setup([
-      { tools: [{ name: "create_transaction", input: create }, { name: "create_transaction", input: { ...create, amount: "100" } }] },
-      { text: "Confirma a primeira." },
+  test("several changes in one message become one batch behind one Confirm", async () => {
+    const { run, finance, replies } = setup([
+      {
+        tools: [
+          { name: "create_transaction", input: { ...create, amount: "3000" } },
+          { name: "create_transaction", input: { ...create, type: "income", amount: "300000", categoryId: "00000002-0000-4000-8000-000000000004" } },
+          { name: "create_transaction", input: { ...create, amount: "15000", categoryId: undefined } },
+        ],
+      },
+      { text: "Confirma as três." },
     ]);
-    await run("gastei 5000 no almoço e 100 no café");
+    const result = await run("almoço 3 mil, salário 300 mil e festa 15 mil");
     expect(finance.actions).toHaveLength(1);
-    expect(finance.actions[0]!.input.amount).toEqual({ amountMinor: 500_000, currency: "AOA" });
-    expect(JSON.stringify(model.doGenerateCalls[1]!.prompt)).toContain("one_at_a_time");
+    expect(result.action).toMatchObject({ operation: "batch", status: "pending" });
+    expect(result.action!.summary.split("\n")).toEqual([
+      "1. Despesa · 3 000,00 AOA · Alimentação · BAI Conta Ordem · hoje",
+      "2. Receita · 300 000,00 AOA · Salário · BAI Conta Ordem · hoje",
+      "3. Despesa · 15 000,00 AOA · BAI Conta Ordem · hoje",
+    ]);
+    expect((finance.actions[0]!.input as { items: Array<{ input: { amount: unknown } }> }).items.map((item) => item.input.amount)).toEqual([
+      { amountMinor: 300_000, currency: "AOA" },
+      { amountMinor: 30_000_000, currency: "AOA" },
+      { amountMinor: 1_500_000, currency: "AOA" },
+    ]);
+    expect(replies).toEqual([{ text: "Confirma as três.", action: result.action }]);
+    expect(finance.writes).toHaveLength(0);
   });
 
   test("a replayed event gets the same action back, not a second one", async () => {

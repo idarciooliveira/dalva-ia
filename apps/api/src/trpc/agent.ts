@@ -26,10 +26,10 @@ import { transactionCreateInput, transactionDeleteInput, transactionUpdateInput 
 import { transferCreateInput, transferDeleteInput, transferUpdateInput } from "./transfers";
 
 /**
- * Writes a pending action can carry: the finance writes the agent may
+ * Finance writes a pending action can carry: the writes the agent may
  * propose, by procedure path. Account management and the profile are web only.
  */
-export const ACTION_INPUTS = {
+const FINANCE_ACTION_INPUTS = {
   "accounts.adjust": accountAdjustInput,
   "transactions.create": transactionCreateInput,
   "transactions.update": transactionUpdateInput,
@@ -42,6 +42,38 @@ export const ACTION_INPUTS = {
   "debtPayments.record": debtPaymentRecordInput,
   "debtPayments.remove": debtPaymentRemoveInput,
 } satisfies Record<string, z.ZodType>;
+
+type FinanceActionOperation = keyof typeof FINANCE_ACTION_INPUTS;
+const financeActionOperationSchema = z.enum(Object.keys(FINANCE_ACTION_INPUTS) as [FinanceActionOperation, ...FinanceActionOperation[]]);
+
+/** Changes one Confirm runs together (the user reported several in one message). */
+export const AGENT_BATCH_MAX_ITEMS = 10;
+
+/**
+ * Several finance writes behind one Confirm. Each item is checked against its
+ * own operation's schema; the agent runs them in order, item `i` with
+ * `Idempotency-Key = <action id>:<i>`.
+ */
+const batchActionInput = z
+  .strictObject({
+    items: z
+      .array(z.strictObject({ operation: financeActionOperationSchema, input: z.record(z.string(), z.json()) }))
+      .min(2)
+      .max(AGENT_BATCH_MAX_ITEMS),
+  })
+  .transform((value, ctx) => ({
+    items: value.items.map((item, index) => {
+      const parsed = FINANCE_ACTION_INPUTS[item.operation].safeParse(item.input);
+      if (parsed.success) return { operation: item.operation, input: parsed.data as Record<string, unknown> };
+      for (const issue of parsed.error.issues) {
+        ctx.addIssue({ code: "custom", message: issue.message, path: ["items", index, "input", ...issue.path] });
+      }
+      return item;
+    }),
+  }));
+
+/** What a pending action can carry: one finance write, or a `batch` of them. */
+export const ACTION_INPUTS = { ...FINANCE_ACTION_INPUTS, batch: batchActionInput };
 
 export const agentActionOperationSchema = z.enum(Object.keys(ACTION_INPUTS) as [keyof typeof ACTION_INPUTS, ...Array<keyof typeof ACTION_INPUTS>]);
 export const agentActionStatusSchema = z.enum(agentActionStatus.enumValues);
@@ -84,6 +116,22 @@ export const agentPendingActionSchema = z.object({
   updatedAt: z.string(),
 });
 const actionResult = z.object({ action: agentPendingActionSchema });
+
+/** Confirm text: one line per change (a batch has one per item, so it gets more room). */
+const ACTION_SUMMARY_MAX = 4000;
+
+const actionProposal = {
+  operation: agentActionOperationSchema,
+  input: boundedJson(z.record(z.string(), z.json()), AGENT_ACTION_JSON_MAX_BYTES),
+};
+
+function parseActionInput(operation: keyof typeof ACTION_INPUTS, input: unknown) {
+  const parsed = ACTION_INPUTS[operation].safeParse(input);
+  if (!parsed.success) {
+    throw new DomainError("validation_failed", "Action input does not match the operation", validationIssues(parsed.error.issues));
+  }
+  return parsed.data;
+}
 
 /** Session and action ids: any URL-safe string; one that names nothing of the caller's is `not_found`. */
 const storeId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/, "Invalid id");
@@ -224,9 +272,8 @@ export const agentPendingActionsRouter = router({
     .input(
       z.strictObject({
         sessionId: storeId,
-        operation: agentActionOperationSchema,
-        input: boundedJson(z.record(z.string(), z.json()), AGENT_ACTION_JSON_MAX_BYTES),
-        summary: z.string().trim().min(1).max(500),
+        ...actionProposal,
+        summary: z.string().trim().min(1).max(ACTION_SUMMARY_MAX),
         ttlSeconds: z.number().int().min(30).max(3600).optional(),
         /** Caller's dedupe key, unique per user (e.g. inbound event id + proposal index). */
         clientKey: z.string().regex(/^[A-Za-z0-9:_-]{1,128}$/).optional(),
@@ -237,19 +284,30 @@ export const agentPendingActionsRouter = router({
       const identity = await callerIdentity(tx, user);
       requireWriteAccess(identity);
       const session = await agentStore.loadSession(tx, user.userId, identity.id, input.sessionId);
-      const parsed = ACTION_INPUTS[input.operation].safeParse(input.input);
-      if (!parsed.success) {
-        throw new DomainError("validation_failed", "Action input does not match the operation", validationIssues(parsed.error.issues));
-      }
+      const parsed = parseActionInput(input.operation, input.input);
       const action = await agentStore.createPendingAction(tx, session, {
         operation: input.operation,
-        input: JSON.stringify(parsed.data),
+        input: JSON.stringify(parsed),
         summary: input.summary,
         ttlMs: input.ttlSeconds === undefined ? agentStore.DEFAULT_ACTION_TTL_MS : input.ttlSeconds * 1000,
         now: new Date(),
         ...(input.clientKey === undefined ? {} : { clientKey: input.clientKey }),
       });
       return { action: actionDto(action) };
+    }),
+
+  /**
+   * Checks an input against the operation's own schema without storing
+   * anything: the agent checks each change of a message as it is proposed,
+   * then stores them together (one action, or a `batch`) when the turn ends.
+   */
+  check: agentWrite
+    .input(z.strictObject(actionProposal))
+    .output(z.object({ ok: z.literal(true) }))
+    .mutation(async ({ ctx: { tx, user }, input }) => {
+      requireWriteAccess(await callerIdentity(tx, user));
+      parseActionInput(input.operation, input.input);
+      return { ok: true as const };
     }),
 
   get: agentRead

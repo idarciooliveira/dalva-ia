@@ -3,7 +3,8 @@ import { formatMinorAmount } from "@mpf/shared";
 /**
  * Confirmation text for a proposed change, built by code from the validated
  * input (never by the model), so what the user confirms is what runs.
- * Portuguese or English, one line, parts joined by " · ".
+ * Portuguese or English, one line, parts joined by " · ". A batch (several
+ * changes behind one Confirm) numbers one such line per change.
  */
 
 export type Language = "pt" | "en";
@@ -52,7 +53,9 @@ const PT_STARTS = [LABELS.pt.expense, LABELS.pt.income, LABELS.pt.adjustment, LA
 
 /** Language a summary was written in (summaries always start with a fixed label). */
 export function summaryLanguage(summary: string): Language {
-  return PT_STARTS.some((start) => summary.startsWith(start)) ? "pt" : "en";
+  // A batch's summary numbers its lines: `1. Despesa · …`.
+  const first = summary.replace(/^\d+\.\s+/, "");
+  return PT_STARTS.some((start) => first.startsWith(start)) ? "pt" : "en";
 }
 
 /** `500000` AOA -> `5 000,00 AOA` (pt) / `5,000.00 AOA` (en). */

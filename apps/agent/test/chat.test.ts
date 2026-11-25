@@ -55,6 +55,23 @@ describe("chat", () => {
     expect(finance.events.get("5000")!.status).toBe("done");
   });
 
+  test("a text message gets a 👀 reaction and the typing indicator before the model runs; commands get neither reaction", async () => {
+    const { run, model, telegram, finance } = setup([{ text: "Olá!" }]);
+    const release = finance.hold("POST /channel-identities/resolve");
+    const pending = run("olá");
+    // Before the user is even resolved: seen, and typing.
+    await waitFor(() => telegram.reactions.length === 1 && telegram.actions.length >= 1);
+    expect(telegram.reactions).toEqual([{ chatId: USER, messageId: 5000, emoji: "👀" }]);
+    expect(telegram.actions[0]).toEqual({ chatId: USER, action: "typing" });
+    expect(model.doGenerateCalls).toHaveLength(0);
+    release();
+    await pending;
+    expect(telegram.sent.at(-1)!.html).toBe("Olá!");
+
+    await run("/help");
+    expect(telegram.reactions).toHaveLength(1);
+  });
+
   test("the reply goes out before the turn is stored; a store stalled at shutdown is aborted and the event still completes", async () => {
     const stop = new AbortController();
     const { run, lastReply, finance, lines } = setup([{ text: "Tens 845 320,50 AOA." }], { stopSignal: stop.signal });

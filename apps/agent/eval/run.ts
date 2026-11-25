@@ -86,12 +86,15 @@ async function main() {
         }
       }
       if (testCase.noTools && result.toolCalls.length) problems.push("expected no tool calls");
-      if (testCase.proposes === true && result.action?.status !== "pending") problems.push("expected a change waiting for confirmation");
+      const proposesChange = testCase.proposes === true || testCase.changes !== undefined;
+      if (proposesChange && result.action?.status !== "pending") problems.push("expected a change waiting for confirmation");
+      const changes = result.action ? (result.action.operation === "batch" ? ((result.action.input as { items?: unknown[] }).items?.length ?? 0) : 1) : 0;
+      if (testCase.changes !== undefined && changes !== testCase.changes) problems.push(`expected ${testCase.changes} changes behind one Confirm, got ${changes}`);
       if (testCase.proposes === false && result.action) problems.push("expected no proposed change");
       if (finance.writes.length) problems.push("a turn must never write");
       if (testCase.reply && !testCase.reply.test(result.text)) problems.push(`reply should match ${testCase.reply}`);
       if (testCase.replyNot?.test(result.text)) problems.push(`reply must not match ${testCase.replyNot}`);
-      const proposed = result.action ? ` · proposed: ${result.action.summary}` : "";
+      const proposed = result.action ? ` · proposed: ${result.action.summary.replace(/\n/g, " ⏎ ")}` : "";
       const calls = result.toolCalls.map((call) => `${call.name}(${JSON.stringify(call.input)})`).join(", ") || "no tools";
       const ok = problems.length === 0;
       if (ok) passed += 1;

@@ -30,7 +30,10 @@ export interface InboundEvent {
   buttonPayload?: string;
   /** Platform id of the button press, for `answerButton`. */
   buttonId?: string;
-  /** Button presses: the message that carries the button, for `editMessage`. */
+  /**
+   * Platform id of the message: for a button press, the message that carries
+   * the button (for `editMessage`); otherwise the user's message (for `react`).
+   */
   messageRef?: string;
   username?: string;
 }
@@ -89,6 +92,8 @@ export interface ChannelAdapter {
   editMessage(to: ChatAddress, messageRef: string, message: Exclude<OutboundMessage, { type: "typing" }>): Promise<void>;
   /** Acknowledge a button press (stops the client spinner). */
   answerButton(buttonId: string, text?: string): Promise<void>;
+  /** Put an emoji reaction on a user's message (shows it was seen). */
+  react(to: ChatAddress, messageRef: string, emoji: string): Promise<void>;
   /** Present in webhook mode. */
   readonly webhook?: WebhookIngress;
   /** Start pulling events (polling mode). Resolves once started. */

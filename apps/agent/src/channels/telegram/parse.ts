@@ -60,6 +60,7 @@ export function parseTelegramUpdate(raw: unknown, botUsername: string): InboundE
     chatId: String(message.chat.id),
     chatType: chatTypeOf(message.chat.type),
     username: message.from.username,
+    ...(typeof message.message_id === "number" ? { messageRef: String(message.message_id) } : {}),
   };
 
   if (message.photo) {

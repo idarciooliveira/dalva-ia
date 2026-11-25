@@ -135,6 +135,7 @@ export function createTelegramChannel(options: TelegramChannelOptions): Telegram
     send: async (to: ChatAddress, message: OutboundMessage): Promise<SentRef | void> => await active().send(to, message),
     editMessage: async (to, messageRef, message) => await active().editMessage(to, messageRef, message),
     answerButton: async (buttonId, text) => await active().answerButton(buttonId, text),
+    react: async (to, messageRef, emoji) => await active().react(to, messageRef, emoji),
 
     async start(deliverEvent) {
       deliver = deliverEvent;

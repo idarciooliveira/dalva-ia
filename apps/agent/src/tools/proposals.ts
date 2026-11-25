@@ -14,55 +14,101 @@ import { shortText, SummaryTooLongError } from "../core/summary";
 import { call, toToolError, type ToolContext, type ToolError } from "./shared";
 
 /**
- * Write tools never write. They build a validated request plus a summary and
- * store it as a pending action; the user's Confirm button runs it later (see
- * `core/actions.ts`). At most one proposal per turn.
+ * Write tools never write. Each builds a validated request plus a summary and
+ * queues it for the turn; when the turn ends, everything it queued is stored
+ * as one pending action (a `batch` when there are several), so one Confirm
+ * button runs every change the user reported in the message (see `core/actions.ts`).
  */
+
+/** Changes one message can queue (the API's batch limit). */
+export const MAX_PROPOSALS = 10;
+
+/** The backend's limit for the confirm text. */
+const BATCH_SUMMARY_MAX = 4000;
 
 export interface ProposalsOptions {
   finance: FinanceClient;
-  /** Inbound event of the turn: with the proposal index it forms the action's `clientKey`. */
+  /** Inbound event of the turn: the action's `clientKey` is `<eventId>:0`. */
   eventId: string;
   /** Session the action belongs to (the chat's current one). */
   sessionId: (signal?: AbortSignal) => Promise<string>;
 }
 
-/** The turn's single proposal slot. */
+/** `1. Despesa · …` per line: the confirm text of a batch. */
+export const batchSummary = (summaries: string[]) => summaries.map((summary, index) => `${index + 1}. ${summary}`).join("\n");
+
+/** The changes the turn queued, in the order the model asked for them. */
 export class Proposals {
-  /** The action this turn proposed (or found, on a replay). */
-  current: { action: AgentPendingAction } | null = null;
-  private busy = false;
+  /** Slots by call order: a proposal still being built is `undefined`, a failed one `null`. */
+  private slots: Array<Proposal | null | undefined> = [];
+  /** The action stored at the end of the turn (or found, on a replay). */
+  action: AgentPendingAction | null = null;
 
   constructor(private readonly options: ProposalsOptions) {}
 
-  /** Synchronous, so two tool calls running at once can't both take it. */
-  claim(): boolean {
-    if (this.busy || this.current) return false;
-    this.busy = true;
-    return true;
-  }
-
-  release(): void {
-    this.busy = false;
+  /** Queued proposals, in call order. */
+  get queued(): Proposal[] {
+    return this.slots.filter((slot): slot is Proposal => !!slot);
   }
 
   /**
-   * One proposal per turn, so the key is always `<eventId>:0`: a replay of the
-   * event (boot recovery) gets the same action back instead of a second one.
+   * A slot for a proposal, taken synchronously when the tool call starts, so
+   * parallel calls keep the order the model made them in. Null when full.
    */
-  async create(proposal: Proposal, signal?: AbortSignal): Promise<AgentPendingAction> {
-    const sessionId = await this.options.sessionId(signal);
-    const { action } = await this.options.finance.agentPendingActions.create.mutate(
-      {
-        sessionId,
-        operation: proposal.operation,
-        input: proposal.input as Record<string, never>,
-        summary: proposal.summary,
-        clientKey: `${this.options.eventId}:0`,
-      },
+  reserve(): number | null {
+    if (this.slots.filter((slot) => slot !== null).length >= MAX_PROPOSALS) return null;
+    return this.slots.push(undefined) - 1;
+  }
+
+  release(slot: number): void {
+    this.slots[slot] = null;
+  }
+
+  /** The API checks the input against the operation's own schema; nothing is stored yet. */
+  async check(proposal: Proposal, signal?: AbortSignal): Promise<void> {
+    await this.options.finance.agentPendingActions.check.mutate(
+      { operation: proposal.operation, input: proposal.input as Record<string, never> },
       { signal },
     );
-    this.current = { action };
+  }
+
+  /** Queue a checked proposal. A repeat of one already queued takes no slot (the model retried it). */
+  fill(slot: number, proposal: Proposal): "queued" | "duplicate" {
+    const same = (other: Proposal | null | undefined) =>
+      !!other && other.operation === proposal.operation && JSON.stringify(other.input) === JSON.stringify(proposal.input);
+    if (this.slots.some(same)) {
+      this.slots[slot] = null;
+      return "duplicate";
+    }
+    const summaries = [...this.queued.map((p) => p.summary), proposal.summary];
+    if (summaries.length > 1 && batchSummary(summaries).length > BATCH_SUMMARY_MAX) throw new SummaryTooLongError();
+    this.slots[slot] = proposal;
+    return "queued";
+  }
+
+  /**
+   * Store what the turn queued: one action for one change, a `batch` for
+   * several. The key is always `<eventId>:0`, so a replay of the event (boot
+   * recovery) gets the same action back, whatever its status, instead of a second one.
+   */
+  async commit(signal?: AbortSignal): Promise<AgentPendingAction | null> {
+    const queued = this.queued;
+    if (queued.length === 0) return null;
+    const sessionId = await this.options.sessionId(signal);
+    const [first] = queued;
+    const proposal =
+      queued.length === 1
+        ? { operation: first!.operation, input: first!.input as Record<string, never>, summary: first!.summary }
+        : {
+            operation: "batch" as const,
+            input: { items: queued.map(({ operation, input }) => ({ operation, input })) } as unknown as Record<string, never>,
+            summary: batchSummary(queued.map((p) => p.summary)),
+          };
+    const { action } = await this.options.finance.agentPendingActions.create.mutate(
+      { sessionId, ...proposal, clientKey: `${this.options.eventId}:0` },
+      { signal },
+    );
+    this.action = action;
     return action;
   }
 }
@@ -72,7 +118,7 @@ export interface WriteContext {
 }
 
 export interface Proposal {
-  operation: AgentActionOperation;
+  operation: Exclude<AgentActionOperation, "batch">;
   /** Flat request of the operation, as the finance client takes it. */
   input: Record<string, unknown>;
   summary: string;
@@ -88,15 +134,11 @@ export class ProposalError extends Error {
   }
 }
 
-export type ProposalResult =
-  | { status: "awaiting_confirmation"; summary: string }
-  | { status: `already_${string}`; summary: string; message: string }
-  | ToolError;
+export type ProposalResult = { status: "awaiting_confirmation"; summary: string; message?: string } | ToolError;
 
-const ONE_AT_A_TIME: ToolError = {
-  error: "one_at_a_time",
-  message:
-    "Only one change can be proposed per message. Propose the next one after the user answers the current proposal (if your other proposal in this message failed, fix it and try again).",
+const TOO_MANY: ToolError = {
+  error: "too_many",
+  message: `At most ${MAX_PROPOSALS} changes can be proposed in one message. Tell the user which ones are waiting for confirmation and that you'll do the rest after they confirm.`,
 };
 
 /** Field paths and the schema's own messages only (the API's `validation_failed` issues): no input values. */
@@ -110,24 +152,23 @@ function issuesText(details: unknown): string | null {
 }
 
 /**
- * Run a write tool: take the turn's slot, build the request, then store it as
- * a pending action; the API checks the input against the operation's own
- * schema. The slot is given back when nothing was stored, so the model can fix
- * its input.
+ * Run a write tool: take a slot, build the request, have the API check it,
+ * then queue it for the turn's Confirm message. A failed proposal gives its
+ * slot back, so the model can fix its input.
  */
 export async function propose(context: ToolContext, write: WriteContext, build: () => Promise<Proposal>): Promise<ProposalResult> {
   const { proposals } = write;
-  if (!proposals.claim()) return ONE_AT_A_TIME;
+  const slot = proposals.reserve();
+  if (slot === null) return TOO_MANY;
   try {
     const proposal = await build();
-    const action = await proposals.create(proposal, context.signal);
-    if (action.status === "pending") return { status: "awaiting_confirmation", summary: action.summary };
-    return {
-      status: `already_${action.status}`,
-      summary: action.summary,
-      message: `This request was already handled (${action.status}). Tell the user its current state; don't propose it again.`,
-    };
+    await proposals.check(proposal, context.signal);
+    if (proposals.fill(slot, proposal) === "duplicate") {
+      return { status: "awaiting_confirmation", summary: proposal.summary, message: "Already proposed in this message; don't propose it again." };
+    }
+    return { status: "awaiting_confirmation", summary: proposal.summary };
   } catch (error) {
+    proposals.release(slot);
     if (error instanceof ProposalError) return { error: error.code, message: error.message };
     const issues = isFinanceError(error, "validation_failed") ? issuesText(error.details) : null;
     if (issues) return { error: "invalid_input", message: `Invalid request: ${issues}` };
@@ -138,8 +179,6 @@ export async function propose(context: ToolContext, write: WriteContext, build: 
       };
     }
     return toToolError(error, context);
-  } finally {
-    if (!proposals.current) proposals.release();
   }
 }
 
