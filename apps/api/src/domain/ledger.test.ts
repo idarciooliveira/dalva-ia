@@ -417,11 +417,14 @@ describe("domain/ledger", () => {
           });
         }
         // Transfer endpoints address transfer legs only: anything else is not a transfer at all.
-        const asTransfer = await domainRejection(read((t) => ledger.open(t, alice, id, "transfer"))).catch(() => null);
-        if (owner === "transfer") expect(asTransfer).toBeNull();
-        else if (owner === "goal_contribution" && rowsBefore.find((r) => r.id === id)!.type === "transfer") {
-          expect(asTransfer, id).toEqual({ code: "conflict", message: ledger.MANAGED_MESSAGES.goal_contribution });
-        } else expect(asTransfer, id).toEqual({ code: "not_found", message: "Transfer not found" });
+        const asTransfer = () => read((t) => ledger.open(t, alice, id, "transfer"));
+        if (owner === "transfer") {
+          const opened = await asTransfer();
+          expect(opened, id).toMatchObject({ kind: "transfer", owner: "transfer" });
+          expect([opened.outgoing?.id, opened.incoming?.id], id).toContain(id);
+        } else if (owner === "goal_contribution" && rowsBefore.find((r) => r.id === id)!.type === "transfer") {
+          expect(await domainRejection(asTransfer()), id).toEqual({ code: "conflict", message: ledger.MANAGED_MESSAGES.goal_contribution });
+        } else expect(await domainRejection(asTransfer()), id).toEqual({ code: "not_found", message: "Transfer not found" });
       }
     });
 
