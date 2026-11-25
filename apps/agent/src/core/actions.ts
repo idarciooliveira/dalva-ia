@@ -46,6 +46,8 @@ const ACTION_TEXTS = {
     saved: "✅ Guardado",
     alreadySaved: "✅ Já guardado",
     notSaved: "❌ Não guardado",
+    partlySaved: "⚠️ Guardado em parte",
+    mayBeSaved: "pode ter sido guardado, verifica no DALVA",
     failedBefore: "❌ Esta alteração falhou",
     uncertain: "⚠️ Pode ter sido guardado. Verifica no DALVA antes de tentar de novo.",
     cancelled: "Cancelado",
@@ -65,6 +67,8 @@ const ACTION_TEXTS = {
     saved: "✅ Saved",
     alreadySaved: "✅ Already saved",
     notSaved: "❌ Not saved",
+    partlySaved: "⚠️ Partly saved",
+    mayBeSaved: "may have been saved, check DALVA",
     failedBefore: "❌ This change failed",
     uncertain: "⚠️ This may have been saved. Check DALVA before trying again.",
     cancelled: "Cancelled",
@@ -83,6 +87,25 @@ const ACTION_TEXTS = {
 } as const;
 
 type Outcome = { status: "executed"; result: unknown } | { status: "failed"; code: string; uncertain?: boolean };
+
+/** How each change of a batch ended, in order (stored in the action's result as `items`). */
+type ItemOutcome = { status: "executed" } | { status: "failed"; error: string; uncertain?: boolean };
+
+/** A batch's outcome carries one entry per item. */
+type ActionOutcome = Outcome & { items?: ItemOutcome[] };
+
+interface BatchItem {
+  operation: string;
+  input: unknown;
+}
+
+const batchItems = (action: Pick<AgentPendingAction, "input">): BatchItem[] => (action.input as { items?: BatchItem[] }).items ?? [];
+
+/** Per-item outcomes stored in a batch action's result, if any. */
+function storedItems(result: unknown): ItemOutcome[] | null {
+  const items = typeof result === "object" && result !== null ? (result as { items?: unknown }).items : undefined;
+  return Array.isArray(items) ? (items as ItemOutcome[]) : null;
+}
 
 /** The procedure an operation names (`transactions.create`), run with the action id as its `Idempotency-Key`. */
 function operationCall(finance: FinanceClient, operation: string) {
@@ -123,8 +146,36 @@ const resultMessage = (header: string, summary: string, detail?: string): RichTe
   ...(detail ? [`\n${detail}`] : []),
 ];
 
+/** Whether all, some or none of a batch's changes were saved. */
+function batchHeader(items: ItemOutcome[], language: Language): string {
+  const t = ACTION_TEXTS[language];
+  const saved = items.filter((item) => item.status === "executed").length;
+  if (saved === items.length) return t.saved;
+  const maybe = items.some((item) => item.status === "failed" && item.uncertain);
+  return saved === 0 && !maybe ? t.notSaved : t.partlySaved;
+}
+
+/** A batch's result, one line per change: `✅ 1. Despesa …`, `❌ 2. Receita … (reason)`. */
+function batchResultMessage(summary: string, items: ItemOutcome[], language: Language): RichText {
+  const t = ACTION_TEXTS[language];
+  const lines = summary.split("\n");
+  const header = batchHeader(items, language);
+  const body = lines.map((line, index) => {
+    const item = items[index];
+    if (!item) return line;
+    if (item.status === "executed") return `✅ ${line}`;
+    if (item.uncertain) return `⚠️ ${line} (${t.mayBeSaved})`;
+    return `❌ ${line} (${t.reasons[item.error as keyof typeof t.reasons] ?? t.reasons.other})`;
+  });
+  return resultMessage(header, body.join("\n"));
+}
+
 /** Text for an action that is no longer pending, as the chat shows it (also used when a turn is replayed). */
 export function actionStateMessage(action: Pick<AgentPendingAction, "status" | "summary" | "result">): RichText {
+  const items = storedItems(action.result);
+  if (items && (action.status === "executed" || action.status === "failed")) {
+    return batchResultMessage(action.summary, items, summaryLanguage(action.summary));
+  }
   return resultMessage(stateLine(action.status, summaryLanguage(action.summary), action.result), action.summary);
 }
 
@@ -202,7 +253,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
       if (!action) return gone();
       log.info("action_cancel_conflict", { status: action.status });
       const line = stateLine(action.status, summaryLanguage(action.summary), action.result);
-      return finish(resultMessage(line, action.summary), line);
+      return finish(actionStateMessage(action), line);
     }
     log.info("action_cancelled");
     const line = ACTION_TEXTS[summaryLanguage(action.summary)].cancelled;
@@ -228,7 +279,7 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
     log.info("action_confirm_conflict", { status: action.status });
     if (action.status !== "confirmed") {
       const line = stateLine(action.status, summaryLanguage(action.summary), action.result);
-      return finish(resultMessage(line, action.summary), line);
+      return finish(actionStateMessage(action), line);
     }
     // Confirmed but never completed (a crash, or a lost reply): run it again with the same key,
     // unless the API may have purged that key already: then a rerun could write twice.
@@ -244,21 +295,49 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
   await complete(finance, action.id, outcome, log);
 
   const t = ACTION_TEXTS[summaryLanguage(action.summary)];
+  if (outcome.items) {
+    const language = summaryLanguage(action.summary);
+    return finish(batchResultMessage(action.summary, outcome.items, language), batchHeader(outcome.items, language));
+  }
   if (outcome.status === "executed") return finish(resultMessage(t.saved, action.summary), t.saved);
   if (outcome.uncertain) return finish(resultMessage(t.uncertain, action.summary), t.uncertain);
   const reason = t.reasons[outcome.code as keyof typeof t.reasons] ?? t.reasons.other;
   return finish(resultMessage(t.notSaved, action.summary, reason), t.notSaved);
 }
 
-/** Run the stored operation; ambiguous failures are retried with the same key (the API replays a write it already did). */
-async function execute(finance: FinanceClient, action: AgentPendingAction, retryDelayMs: number, log: Logger): Promise<Outcome> {
-  const run = operationCall(finance, action.operation);
+/**
+ * Run the stored operation. A batch runs its items in order, item `i` with
+ * `Idempotency-Key = <action id>:<i>`; one failing doesn't stop the others.
+ * A rerun (crash after confirm) replays the items that already ran.
+ */
+async function execute(finance: FinanceClient, action: AgentPendingAction, retryDelayMs: number, log: Logger): Promise<ActionOutcome> {
+  if (action.operation !== "batch") return runWrite(finance, action.operation, action.input, action.id, retryDelayMs, log);
+  const items: ItemOutcome[] = [];
+  for (const [index, item] of batchItems(action).entries()) {
+    const outcome = await runWrite(finance, item.operation, item.input, `${action.id}:${index}`, retryDelayMs, log);
+    items.push(outcome.status === "executed" ? { status: "executed" } : { status: "failed", error: outcome.code, ...(outcome.uncertain ? { uncertain: true } : {}) });
+  }
+  const failed = items.filter((item): item is Extract<ItemOutcome, { status: "failed" }> => item.status === "failed");
+  log.info("batch_executed", { items: items.length, failed: failed.length });
+  // The stored result keeps only the per-item outcomes: a batch of full responses could pass the size limit.
+  if (failed.length === 0) return { status: "executed", result: { items }, items };
+  return {
+    status: "failed",
+    code: failed.length === items.length ? failed[0]!.error : "partial",
+    ...(failed.some((item) => item.uncertain) ? { uncertain: true } : {}),
+    items,
+  };
+}
+
+/** One write; ambiguous failures are retried with the same key (the API replays a write it already did). */
+async function runWrite(finance: FinanceClient, operation: string, input: unknown, idempotencyKey: string, retryDelayMs: number, log: Logger): Promise<Outcome> {
+  const run = operationCall(finance, operation);
   // Once an attempt may have landed, a later refusal (read-only, unlink, rate limit) proves nothing about it.
   let sawAmbiguous = false;
   for (let attempt = 0; ; attempt++) {
     try {
-      const result = await run(action.input, { idempotencyKey: action.id });
-      log.info("action_executed", { operation: action.operation, attempts: attempt + 1 });
+      const result = await run(input, { idempotencyKey });
+      log.info("action_executed", { operation, attempts: attempt + 1 });
       return { status: "executed", result };
     } catch (error) {
       const ambiguous = isAmbiguous(error);
@@ -268,15 +347,18 @@ async function execute(finance: FinanceClient, action: AgentPendingAction, retry
         continue;
       }
       const code = isFinanceError(error) ? error.code : "internal";
-      log.warn("action_failed", { ...errorFields(error), operation: action.operation, attempts: attempt + 1, uncertain: sawAmbiguous || undefined });
+      log.warn("action_failed", { ...errorFields(error), operation, attempts: attempt + 1, uncertain: sawAmbiguous || undefined });
       return { status: "failed", code, ...(sawAmbiguous ? { uncertain: true } : {}) };
     }
   }
 }
 
 /** `complete`, best effort: retried while ambiguous. `conflict` means an earlier try landed; `not_found`, that history was deleted meanwhile. */
-async function complete(finance: FinanceClient, id: string, outcome: Outcome, log: Logger) {
-  const result = outcome.status === "executed" ? (outcome.result ?? null) : { error: outcome.code, ...(outcome.uncertain ? { uncertain: true } : {}) };
+async function complete(finance: FinanceClient, id: string, outcome: ActionOutcome, log: Logger) {
+  const result =
+    outcome.status === "executed"
+      ? (outcome.result ?? null)
+      : { error: outcome.code, ...(outcome.uncertain ? { uncertain: true } : {}), ...(outcome.items ? { items: outcome.items } : {}) };
   for (let attempt = 0; attempt <= EXECUTE_RETRIES; attempt++) {
     try {
       await finance.agentPendingActions.complete.mutate({ id, status: outcome.status, result: result as never });

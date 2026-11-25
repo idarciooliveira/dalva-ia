@@ -11,6 +11,10 @@ import type { Agent } from "./agent";
 import type { EventHandler } from "./pipeline";
 import type { RateLimiter } from "./rate-limit";
 import { SessionRecorder } from "./session";
+import { startTyping } from "./typing";
+
+/** Reaction put on a user's chat message as soon as it is handled: "seen". */
+export const SEEN_REACTION = "👀";
 
 /** Longest chat message sent to the model, in characters. */
 const DEFAULT_MESSAGE_MAX_CHARS = 2000;
@@ -81,7 +85,12 @@ export function createHandler(options: HandlerOptions): {
   const { adapter, clients } = options;
   const currentChat = () => (typeof options.chat === "function" ? options.chat() : options.chat);
 
+  /** Stops the typing indicator of an event that shows one (see `handle`). */
+  const typingStops = new WeakMap<InboundEvent, () => void>();
+  const stopTyping = (event: InboundEvent) => typingStops.get(event)?.();
+
   const reply = async (event: InboundEvent, text: RichText) => {
+    stopTyping(event);
     await adapter.send({ chatId: event.chatId }, { type: "text", text });
   };
 
@@ -111,10 +120,9 @@ export function createHandler(options: HandlerOptions): {
       session: new SessionRecorder(user.finance, event, options.sessionIdleMinutes, log),
       userContext: { displayName: user.displayName, baseCurrency: user.baseCurrency },
       finance: user.finance,
-      typing: async () => {
-        await adapter.send({ chatId: event.chatId }, { type: "typing" });
-      },
+      // The typing indicator runs from the start of `handle`, not only during the turn.
       reply: async ({ text: answer, action }) => {
+        stopTyping(event);
         const to = { chatId: event.chatId };
         // The code-built summary comes first, so model text (which tool results could steer) never frames it.
         const tail: RichPart[] = answer ? ["\n\n", answer] : [];
@@ -231,9 +239,33 @@ export function createHandler(options: HandlerOptions): {
     }
   }
 
+  /**
+   * A private text message gets a 👀 reaction (seen) and the typing indicator
+   * at once, before the user is resolved or the model called; the indicator
+   * stops when the reply goes out, or when handling ends.
+   */
   async function handle(event: InboundEvent): Promise<void> {
     const log = options.logger.child({ eventId: event.eventId, chatId: event.chatId, kind: event.kind });
+    if (event.chatType !== "private" || event.kind !== "text") return await handleEvent(event, log);
 
+    const to = { chatId: event.chatId };
+    if (event.messageRef) {
+      void adapter.react(to, event.messageRef, SEEN_REACTION).catch((error) => log.info("reaction_failed", errorFields(error)));
+    }
+    typingStops.set(
+      event,
+      startTyping(async () => {
+        await adapter.send(to, { type: "typing" });
+      }),
+    );
+    try {
+      await handleEvent(event, log);
+    } finally {
+      stopTyping(event);
+    }
+  }
+
+  async function handleEvent(event: InboundEvent, log: Logger): Promise<void> {
     if (event.kind === "button") {
       await buttonPress(event, log);
       return;

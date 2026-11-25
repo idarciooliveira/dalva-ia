@@ -19,6 +19,7 @@ describe("telegram parse", () => {
       kind: "text",
       text: "spent 12 on lunch <b>secret-note</b>",
       username: "ana_s",
+      messageRef: "11",
     });
   });
 

@@ -26,7 +26,7 @@ const MAX_WEBHOOK_BODY_BYTES = 1024 * 1024;
 /** The Bot API methods the adapter uses (a grammY `Api`, or a fake in tests). */
 export type TelegramApi = Pick<
   Api,
-  "sendMessage" | "editMessageText" | "sendChatAction" | "answerCallbackQuery" | "getUpdates" | "deleteWebhook"
+  "sendMessage" | "editMessageText" | "sendChatAction" | "answerCallbackQuery" | "setMessageReaction" | "getUpdates" | "deleteWebhook"
 >;
 
 export interface TelegramAdapterOptions {
@@ -187,6 +187,11 @@ export function createTelegramAdapter(options: TelegramAdapterOptions): ChannelA
 
     async answerButton(buttonId: string, text?: string) {
       await api.answerCallbackQuery(buttonId, text ? { text } : undefined);
+    },
+
+    async react(to, messageRef, emoji) {
+      // Bots may only use Telegram's fixed reaction emoji (👀 is one).
+      await api.setMessageReaction(to.chatId, Number(messageRef), [{ type: "emoji", emoji: emoji as "👀" }]);
     },
 
     async start(deliver) {
