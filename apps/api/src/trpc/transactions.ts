@@ -155,7 +155,7 @@ export const transactionsRouter = router({
         limit: input.limit,
       });
       const items = await transactionDtos(tx, user.userId, page.items);
-      const kinds = await transactions.managedKinds(tx, user.userId, page.items);
+      const kinds = await transactions.managedBy(tx, user.userId, page.items);
       return {
         items: items.map((item) => {
           const managedBy = kinds.get(item.id);
@@ -172,10 +172,7 @@ export const transactionsRouter = router({
       const { tx, user } = ctx;
       const row = await transactions.getTransaction(tx, user.userId, input.id);
       const [transaction] = await transactionDtos(tx, user.userId, [row]);
-      // Goal contributions are transfers too: checked first, for the more specific label.
-      const managedBy = (await transactions.ownedByContribution(tx, user.userId, row))
-        ? ("goal_contribution" as const)
-        : ((await transactions.managedTransactionKind(tx, user.userId, row)) ?? undefined);
+      const managedBy = (await transactions.managedBy(tx, user.userId, [row])).get(row.id);
       return { transaction: transaction!, ...(managedBy ? { managedBy } : {}) };
     }),
 
@@ -203,7 +200,8 @@ export const transactionsRouter = router({
     .output(transactionResult)
     .mutation(async ({ ctx, input }) => {
       const { tx, user } = ctx;
-      const row = await transactions.getEditableTransaction(tx, user.userId, input.id);
+      const entry = await transactions.getEditableTransaction(tx, user.userId, input.id);
+      const { row } = entry;
       const targetId = input.accountId ?? row.accountId;
       if (targetId === null) throw notFound("Account");
       const account = await accounts.getAccount(tx, user.userId, targetId);
@@ -219,7 +217,7 @@ export const transactionsRouter = router({
         }
       }
       // The sign rule needs the effective type, which the input schema can't see: the domain checks it.
-      const updated = await transactions.updateLoadedTransaction(tx, user.userId, row, {
+      const updated = await transactions.updateLoadedTransaction(tx, user.userId, entry, {
         type: input.type,
         amount,
         accountId: input.accountId === undefined ? undefined : account.id,

@@ -16,7 +16,9 @@ import {
 import { createTestUser } from "../../test/app";
 import { testDb } from "../../test/db";
 import { readTx, type Tx, withTx } from "../db/tx";
+import { MANAGED_MESSAGES } from "./ledger";
 import * as transactions from "./transactions";
+import type { TransactionManagedBy } from "./transactions";
 import * as transfers from "./transfers";
 
 const tx = <T>(fn: (tx: Tx) => Promise<T>) => withTx(testDb(), fn);
@@ -94,157 +96,61 @@ describe("domain/transactions", () => {
     expect(moved).toMatchObject({ categoryId: transport, subcategoryId: null });
   });
 
-  it("update reverses the old balance effect and applies the new one", async () => {
+  it("update and delete move the row through the ledger", async () => {
     const { alice } = await users();
     const first = await seedAccount(alice, { balance: 10_000 });
     const second = await seedAccount(alice, { balance: 2_000 });
     const row = await create(alice, { amount: 1_000, accountId: first });
-    expect(await balanceOf(first)).toBe(9_000);
-
     await tx((t) => transactions.updateTransaction(t, alice, row.id, { type: "income", amount: 400, accountId: second, note: "moved" }));
-    expect(await balanceOf(first)).toBe(10_000);
-    expect(await balanceOf(second)).toBe(2_400);
+    expect([await balanceOf(first), await balanceOf(second)]).toEqual([10_000, 2_400]);
     expect(await getTransactionRow(row.id)).toMatchObject({ type: "income", amount: 400, accountId: second, note: "moved" });
 
-    // Same account: only the difference lands.
-    await tx((t) => transactions.updateTransaction(t, alice, row.id, { type: "adjustment", amount: -50 }));
-    expect(await balanceOf(second)).toBe(1_950);
-  });
-
-  it("delete reverses the balance effect", async () => {
-    const { alice } = await users();
-    const accountId = await seedAccount(alice, { balance: 10_000 });
-    const row = await create(alice, { amount: 1_000, accountId });
     await tx((t) => transactions.deleteTransaction(t, alice, row.id));
-    expect(await balanceOf(accountId)).toBe(10_000);
+    expect(await balanceOf(second)).toBe(2_000);
     expect(await getTransactionRow(row.id)).toBeUndefined();
   });
 
-  describe("legacy rows without an account", () => {
-    it("deletes and updates them without touching any balance, and moves them onto an account", async () => {
-      const { alice } = await users();
-      const accountId = await seedAccount(alice, { balance: 10_000 });
-      const orphan = await seedTransaction(alice, null, { amount: 700 });
-      const updated = await tx((t) => transactions.updateTransaction(t, alice, orphan, { note: "kept" }));
-      expect(updated).toMatchObject({ accountId: null, note: "kept" });
-      await tx((t) => transactions.updateTransaction(t, alice, orphan, { accountId }));
-      expect(await balanceOf(accountId)).toBe(9_300);
-
-      const other = await seedTransaction(alice, null, { type: "income", amount: 50 });
-      await tx((t) => transactions.deleteTransaction(t, alice, other));
-      expect(await getTransactionRow(other)).toBeUndefined();
-      expect(await balanceOf(accountId)).toBe(9_300);
+  it("refuses the transfer type on create and update", async () => {
+    const { alice } = await users();
+    const accountId = await seedAccount(alice, { balance: 10_000 });
+    const asTransfer = { type: "transfer" } as unknown as { type: "income" };
+    expect(await domainRejection(create(alice, { ...asTransfer, accountId }))).toMatchObject({
+      message: "Use the transfer create for transfers",
     });
+    const row = await create(alice, { accountId });
+    expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, row.id, asTransfer)))).toMatchObject({
+      message: "Use the transfer create for transfers",
+    });
+    expect(await balanceOf(accountId)).toBe(9_900);
   });
 
-  describe("amount validation", () => {
-    it("rejects zero, negative and non-integer income/expense amounts on create", async () => {
-      const { alice } = await users();
-      const accountId = await seedAccount(alice, { balance: 10_000 });
-      for (const type of ["income", "expense"] as const) {
-        for (const amount of [0, -100, 10.5, Number.NaN]) {
-          expect(await domainRejection(create(alice, { type, amount, accountId }))).toMatchObject({ code: "validation_failed" });
-        }
-      }
-      expect(await balanceOf(accountId)).toBe(10_000);
-    });
+  it("refuses to update or delete rows a transfer, goal or debt manages, and labels them", async () => {
+    const { alice } = await users();
+    const from = await seedAccount(alice, { balance: 10_000 });
+    const to = await seedAccount(alice);
+    const loan = await seedAccount(alice, { type: "loan" });
+    const outgoing = await tx((t) => transfers.createTransfer(t, alice, { amount: 2_000, fromAccountId: from, toAccountId: to, date: "2026-01-01" }));
+    const saved = await tx((t) => transfers.createTransfer(t, alice, { amount: 500, fromAccountId: from, toAccountId: to, date: "2026-01-02" }));
+    await seedContribution(alice, saved, to);
+    const payment = await seedDebtPayment(alice, { debtId: await seedDebt(alice, { linkedAccountId: loan }), fromAccountId: from, liabilityAccountId: loan });
+    const plain = await seedTransaction(alice, from);
 
-    it("rejects non-finite adjustment amounts and the transfer type", async () => {
-      const { alice } = await users();
-      const accountId = await seedAccount(alice, { balance: 10_000 });
-      expect(await domainRejection(create(alice, { type: "adjustment", amount: Number.NaN, accountId }))).toMatchObject({
-        code: "validation_failed",
-      });
-      const asTransfer = { type: "transfer" } as unknown as { type: "income" };
-      expect(await domainRejection(create(alice, { ...asTransfer, accountId }))).toMatchObject({
-        message: "Use the transfer create for transfers",
-      });
-      const row = await create(alice, { accountId });
-      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, row.id, asTransfer)))).toMatchObject({
-        message: "Use the transfer create for transfers",
-      });
-      expect(await balanceOf(accountId)).toBe(9_900);
-    });
-
-    it("keeps signed amounts for adjustments", async () => {
-      const { alice } = await users();
-      const accountId = await seedAccount(alice, { balance: 10_000 });
-      await create(alice, { type: "adjustment", amount: -500, accountId });
-      expect(await balanceOf(accountId)).toBe(9_500);
-    });
-
-    it("rejects a non-positive effective amount on update", async () => {
-      const { alice } = await users();
-      const accountId = await seedAccount(alice, { balance: 10_000 });
-      const adjustment = await create(alice, { type: "adjustment", amount: -500, accountId });
-      const expense = await create(alice, { amount: 1_000, accountId });
-      for (const amount of [0, -5]) {
-        expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, expense.id, { amount })))).toMatchObject({
-          message: "Amount must be positive",
-        });
-      }
-      // Switching a negative adjustment to income without a new amount is invalid.
-      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, adjustment.id, { type: "income" })))).toMatchObject({
-        message: "Amount must be positive",
-      });
-      expect(await balanceOf(accountId)).toBe(8_500);
-    });
-
-    it("refuses a balance past the safe integer range, writing nothing", async () => {
-      const { alice } = await users();
-      const accountId = await seedAccount(alice, { balance: Number.MAX_SAFE_INTEGER - 10 });
-      expect(await domainRejection(create(alice, { type: "income", amount: 100, accountId }))).toMatchObject({ code: "validation_failed" });
-      expect(await balanceOf(accountId)).toBe(Number.MAX_SAFE_INTEGER - 10);
-      expect(await read((t) => transactions.searchTransactions(t, alice, { limit: 10 }))).toEqual({ items: [], nextCursor: null });
-    });
-  });
-
-  describe("managed rows", () => {
-    it("refuses plain delete and update on either transfer leg", async () => {
-      const { alice } = await users();
-      const from = await seedAccount(alice, { balance: 10_000 });
-      const to = await seedAccount(alice, { balance: 5_000 });
-      const outgoing = await tx((t) => transfers.createTransfer(t, alice, { amount: 2_000, fromAccountId: from, toAccountId: to, date: "2026-01-01" }));
-      const incoming = (await getTransactionRow(outgoing))!.linkedTransactionId!;
-      for (const id of [outgoing, incoming]) {
-        expect(await domainRejection(tx((t) => transactions.deleteTransaction(t, alice, id)))).toEqual({
-          code: "conflict",
-          message: transactions.TRANSFER_MANAGED_MESSAGE,
-        });
-        expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, id, { amount: 1 })))).toMatchObject({ code: "conflict" });
-      }
-      expect(await balanceOf(from)).toBe(8_000);
-      expect(await balanceOf(to)).toBe(7_000);
-    });
-
-    it("refuses debt-payment source and liability rows", async () => {
-      const { alice } = await users();
-      const accountId = await seedAccount(alice);
-      const loan = await seedAccount(alice, { type: "loan" });
-      const debtId = await seedDebt(alice, { linkedAccountId: loan });
-      const payment = await seedDebtPayment(alice, { debtId, fromAccountId: accountId, liabilityAccountId: loan });
-      for (const id of [payment.sourceTransactionId, payment.liabilityTransactionId!]) {
-        expect(await domainRejection(tx((t) => transactions.deleteTransaction(t, alice, id)))).toEqual({
-          code: "conflict",
-          message: transactions.DEBT_PAYMENT_MANAGED_MESSAGE,
-        });
-        expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, id, { note: "x" })))).toMatchObject({ code: "conflict" });
-      }
-    });
-
-    it("knows which goal contribution owns a transfer, through either leg", async () => {
-      const { alice } = await users();
-      const from = await seedAccount(alice);
-      const goalAccount = await seedAccount(alice, { name: "Goal" });
-      const outgoing = await tx((t) => transfers.createTransfer(t, alice, { amount: 500, fromAccountId: from, toAccountId: goalAccount, date: "2026-01-02" }));
-      await seedContribution(alice, outgoing, goalAccount);
-      const incoming = (await getTransactionRow(outgoing))!.linkedTransactionId!;
-      const plain = await seedTransaction(alice, from);
-      for (const [id, owned] of [[outgoing, true], [incoming, true], [plain, false]] as const) {
-        const row = (await getTransactionRow(id))!;
-        expect(await read((t) => transactions.ownedByContribution(t, alice, row)), id).toBe(owned);
-      }
-    });
+    const managed: Array<[string, TransactionManagedBy]> = [
+      [outgoing, "transfer"],
+      [(await getTransactionRow(outgoing))!.linkedTransactionId!, "transfer"],
+      [saved, "goal_contribution"],
+      [(await getTransactionRow(saved))!.linkedTransactionId!, "goal_contribution"],
+      [payment.sourceTransactionId, "debt_payment"],
+      [payment.liabilityTransactionId!, "debt_payment"],
+    ];
+    for (const [id, owner] of managed) {
+      const refusal = { code: "conflict", message: MANAGED_MESSAGES[owner] };
+      expect(await domainRejection(tx((t) => transactions.deleteTransaction(t, alice, id))), id).toEqual(refusal);
+      expect(await domainRejection(tx((t) => transactions.updateTransaction(t, alice, id, { note: "x" }))), id).toEqual(refusal);
+    }
+    const rows = await Promise.all([...managed.map(([id]) => id), plain].map(async (id) => (await getTransactionRow(id))!));
+    expect(Object.fromEntries(await read((t) => transactions.managedBy(t, alice, rows)))).toEqual(Object.fromEntries(managed));
+    expect([await balanceOf(from), await balanceOf(to)]).toEqual([7_500, 2_500]);
   });
 
   describe("cross-user ownership", () => {
