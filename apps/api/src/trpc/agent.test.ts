@@ -635,6 +635,56 @@ describe("agentPendingActions", () => {
     expect(await testDb().select().from(agentPendingActions)).toHaveLength(0);
   });
 
+  it("check validates an input without storing it and needs write access", async () => {
+    const { app } = testApp();
+    const chat = await linkedChat(app, { withAccount: true });
+    expect(await chat.agent.agentPendingActions.check({ operation: "transactions.create", input: expenseInput(chat.accountId!) })).toEqual({ ok: true });
+    const error = await expectApiError(
+      chat.agent.agentPendingActions.check({ operation: "transactions.create", input: { type: "expense", accountId: chat.accountId! } }),
+      "validation_failed",
+      400,
+    );
+    expect(JSON.stringify(error.details)).toContain("amount");
+    expect(await testDb().select().from(agentPendingActions)).toHaveLength(0);
+
+    await chat.web.chatLinks.setReadOnly({ id: chat.identityId, readOnly: true });
+    await expectApiError(chat.agent.agentPendingActions.check({ operation: "transactions.create", input: expenseInput(chat.accountId!) }), "forbidden", 403);
+  });
+
+  it("a batch carries several changes, each checked against its own operation", async () => {
+    const { app } = testApp();
+    const chat = await linkedChat(app, { withAccount: true });
+    const s = await session(chat);
+    const items = [
+      { operation: "transactions.create" as const, input: expenseInput(chat.accountId!, 300) },
+      { operation: "transactions.create" as const, input: { ...expenseInput(chat.accountId!, 5000), type: "income" } },
+    ];
+    const { action } = await chat.agent.agentPendingActions.create({
+      sessionId: s.id,
+      operation: "batch",
+      input: { items },
+      summary: "1. Expense 3.00 USD\n2. Income 50.00 USD",
+    });
+    expect(action).toMatchObject({ operation: "batch", status: "pending", input: { items } });
+
+    const bad = await expectApiError(
+      chat.agent.agentPendingActions.check({
+        operation: "batch",
+        input: { items: [items[0]!, { operation: "transactions.create", input: { type: "expense", accountId: chat.accountId! } }] },
+      }),
+      "validation_failed",
+      400,
+    );
+    expect(JSON.stringify(bad.details)).toContain("items.1.input.amount");
+    // One item is not a batch, and a batch can't nest.
+    await expectApiError(chat.agent.agentPendingActions.check({ operation: "batch", input: { items: [items[0]!] } }), "validation_failed", 400);
+    await expectApiError(
+      chat.agent.agentPendingActions.check({ operation: "batch", input: { items: [items[0]!, { operation: "batch", input: { items } }] } }),
+      "validation_failed",
+      400,
+    );
+  });
+
   it("rejects read operations and unknown operations", async () => {
     const { app } = testApp();
     const chat = await linkedChat(app, { withAccount: true });

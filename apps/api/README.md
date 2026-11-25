@@ -47,7 +47,7 @@ Password hashes of imported users (Lucia `Scrypt`) use the same format as Better
 
 ## API (`/api/trpc`)
 
-tRPC v11, mounted with `@hono/trpc-server` (`src/trpc/mount.ts`). The router in `src/trpc/router.ts` is the whole API and its only contract: clients import `type AppRouter` from `@mpf/api/trpc`, a types-only export (a runtime import of server code doesn't resolve, so nothing of the server reaches a bundle). Procedure paths are `group.op` (`transactions.create`); pending actions store them as operation names.
+tRPC v11, mounted with `@hono/trpc-server` (`src/trpc/mount.ts`). The router in `src/trpc/router.ts` is the whole API and its only contract: clients import `type AppRouter` from `@mpf/api/trpc`, a types-only export (a runtime import of server code doesn't resolve, so nothing of the server reaches a bundle). Procedure paths are `group.op` (`transactions.create`); pending actions store them as operation names, or `batch` for several finance writes behind one Confirm (`{ items: [{ operation, input }] }`, 2-10 items, each checked against its own schema; the agent runs item `i` with `Idempotency-Key = <action id>:<i>`). `agentPendingActions.check` validates an operation's input without storing it.
 
 Every procedure is built from one of the builders in `src/trpc/init.ts`, which do the checks in this order: credential (401) → web-only / scope (403) → `Idempotency-Key` (400) → transaction [channel identity re-check → idempotency claim → input (400) → procedure].
 
