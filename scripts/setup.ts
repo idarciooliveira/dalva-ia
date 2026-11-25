@@ -9,7 +9,7 @@ const apiEnvFile = join(apiDir, ".env.local");
 const agentDir = join(root, "apps/agent");
 
 const secret = () => randomBytes(32).toString("hex");
-const GENERATED = ["BETTER_AUTH_SECRET", "FINANCE_API_TOKEN_SECRET", "FINANCE_API_SERVICE_KEY"] as const;
+const GENERATED = ["BETTER_AUTH_SECRET", "FINANCE_API_SERVICE_KEY"] as const;
 
 const created = !existsSync(apiEnvFile);
 let text = created ? readFileSync(join(apiDir, ".env.example"), "utf8") : readFileSync(apiEnvFile, "utf8");

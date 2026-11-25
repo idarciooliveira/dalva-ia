@@ -1,9 +1,9 @@
 /**
  * User tokens for the Finance API: compact JWS, HS256, Web Crypto only. Same
- * format, claims and secret (`FINANCE_API_TOKEN_SECRET`) as the Convex
- * backend, so the chat agent works with either. User and identity ids differ
- * between the two (Convex ids vs UUIDs), so a token is only useful on the
- * backend that minted it; the agent resolves a fresh one for every message.
+ * format and claims as the Convex backend had. The signing secret is derived
+ * from `BETTER_AUTH_SECRET` (`deriveTokenSecret`), so there is nothing to
+ * configure. Only the API ever reads a token: the agent resolves a fresh one
+ * for every message and treats it as opaque.
  *
  * Claims: `sub` (user id), `scope` (space-separated: finance:read,
  * finance:write, agent:state), `aud` ("finance-api"), `iat`, `exp`, and `cid`
@@ -11,6 +11,8 @@
  * against the identity on every request, so unlinking or switching to
  * read-only applies at once.
  */
+import { hkdfSync } from "node:crypto";
+
 /**
  * Scope of the agent store (sessions, messages, pending actions, history).
  * `channelIdentities.resolve` always grants it, read-only identities included,
@@ -20,6 +22,15 @@ export const AGENT_STATE_SCOPE = "agent:state" as const;
 /** Every scope a user token can carry. */
 export const TOKEN_SCOPES = ["finance:read", "finance:write", AGENT_STATE_SCOPE] as const;
 export type TokenScope = (typeof TOKEN_SCOPES)[number];
+
+/**
+ * The token signing secret, derived (HKDF-SHA256) from the auth secret with a
+ * purpose label, so it differs from it and needs no setting of its own.
+ * Rotating the auth secret also invalidates minted tokens; they live minutes.
+ */
+export function deriveTokenSecret(authSecret: string): string {
+  return Buffer.from(hkdfSync("sha256", authSecret, "", "dalva:finance-api-user-tokens", MIN_TOKEN_SECRET_BYTES)).toString("hex");
+}
 
 export const FINANCE_API_AUDIENCE = "finance-api";
 export const MIN_TOKEN_SECRET_BYTES = 32;

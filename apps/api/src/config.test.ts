@@ -6,7 +6,6 @@ const valid = {
   DATABASE_URL: "postgres://dalva:s3cret-pass@db:5432/dalva",
   PUBLIC_URL: "https://dalva.example.com",
   BETTER_AUTH_SECRET: "x".repeat(32),
-  FINANCE_API_TOKEN_SECRET: "t".repeat(32),
 };
 
 const service = { FINANCE_API_SERVICE_KEY: "s".repeat(32) };
@@ -53,17 +52,6 @@ describe("loadConfig", () => {
     expect(message).toContain("DATABASE_URL is required");
     expect(message).toContain("PUBLIC_URL is required");
     expect(message).toContain("BETTER_AUTH_SECRET is required");
-    expect(message).toContain("FINANCE_API_TOKEN_SECRET is required");
-  });
-
-  it("requires a token secret of 32 bytes or more, distinct from the auth secret", () => {
-    expect(configError({ ...valid, FINANCE_API_TOKEN_SECRET: "short" })).toContain("FINANCE_API_TOKEN_SECRET must be at least 32 bytes");
-    expect(configError({ ...valid, FINANCE_API_TOKEN_SECRET: valid.BETTER_AUTH_SECRET })).toContain(
-      "FINANCE_API_TOKEN_SECRET must differ from BETTER_AUTH_SECRET",
-    );
-    expect(configError({ ...valid, FINANCE_API_TOKEN_SECRET: "replace-with-openssl-rand-hex-32-output-000000" })).toContain(
-      "FINANCE_API_TOKEN_SECRET must not be the .env.example placeholder",
-    );
   });
 
   it("refuses the .env.example placeholder secret", () => {
@@ -88,13 +76,10 @@ describe("loadConfig", () => {
     expect(configError({ ...valid, CLIENT_IP_HEADER: "x forwarded" })).toContain("CLIENT_IP_HEADER must be a header name");
   });
 
-  it("takes an optional service key of 32 bytes or more, distinct from both secrets", () => {
+  it("takes an optional service key of 32 bytes or more, distinct from the auth secret", () => {
     expect(loadConfig(valid).FINANCE_API_SERVICE_KEY).toBeUndefined();
     expect(loadConfig({ ...valid, ...service }).FINANCE_API_SERVICE_KEY).toBe(service.FINANCE_API_SERVICE_KEY);
     expect(configError({ ...valid, FINANCE_API_SERVICE_KEY: "short" })).toContain("FINANCE_API_SERVICE_KEY must be at least 32 bytes");
-    expect(configError({ ...valid, FINANCE_API_SERVICE_KEY: valid.FINANCE_API_TOKEN_SECRET })).toContain(
-      "FINANCE_API_SERVICE_KEY must differ from FINANCE_API_TOKEN_SECRET",
-    );
     expect(configError({ ...valid, FINANCE_API_SERVICE_KEY: valid.BETTER_AUTH_SECRET })).toContain(
       "FINANCE_API_SERVICE_KEY must differ from BETTER_AUTH_SECRET",
     );
@@ -112,11 +97,10 @@ describe("loadConfig", () => {
   });
 
   it("lists the secrets to scrub from logs", () => {
-    expect(configSecrets(loadConfig(valid))).toEqual(["s3cret-pass", "x".repeat(32), "t".repeat(32)]);
+    expect(configSecrets(loadConfig(valid))).toEqual(["s3cret-pass", "x".repeat(32)]);
     expect(configSecrets(loadConfig({ ...valid, ...service }))).toEqual([
       "s3cret-pass",
       "x".repeat(32),
-      "t".repeat(32),
       service.FINANCE_API_SERVICE_KEY,
     ]);
   });

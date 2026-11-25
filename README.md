@@ -48,7 +48,7 @@ The app is currently centered around:
 | Package Manager | Bun workspaces |
 | Unit Testing | Vitest (API tests on a real Postgres) |
 | E2E Testing | Playwright |
-| Deploy | One `docker compose` stack: Caddy, API, agent, Postgres, backups, cloudflared |
+| Deploy | One `docker compose` stack: Caddy, API, agent, Postgres, backups |
 
 ---
 
@@ -112,7 +112,6 @@ bun run setup
 
 - creates `apps/api/.env.local` from `apps/api/.env.example` and generates the secrets that are missing or still placeholders:
   - `BETTER_AUTH_SECRET`: signs session cookies
-  - `FINANCE_API_TOKEN_SECRET`: signs the user tokens the chat agent sends
   - `FINANCE_API_SERVICE_KEY`: the chat agent's own key for the service routes
 - starts Postgres with `docker compose -f compose.dev.yml up -d` (skipped when a server already answers on `DATABASE_URL`)
 - applies the migrations

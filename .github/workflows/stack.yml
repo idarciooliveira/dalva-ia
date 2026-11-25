@@ -1,7 +1,7 @@
 name: Compose stack
 
-# Builds the three images, runs deploy/docker-compose.yml on an empty database (no
-# cloudflared) and runs deploy/smoke.sh: health, routing, sign-up and sign-in through the
+# Builds the three images, runs deploy/docker-compose.yml on an empty database (with a stand-in
+# for Dokploy's network) and runs deploy/smoke.sh: health, routing, sign-up and sign-in through the
 # web entry, backup and restore. Nothing is pushed.
 
 on:
@@ -89,13 +89,11 @@ jobs:
           set_env POSTGRES_PASSWORD "$(secret)"
           set_env PUBLIC_URL https://dalva-ci.example.com
           set_env BETTER_AUTH_SECRET "$(secret)"
-          set_env FINANCE_API_TOKEN_SECRET "$(secret)"
           set_env FINANCE_API_SERVICE_KEY "$(secret)"
           # Shaped like real values; webhook mode never calls Telegram at boot.
           set_env TELEGRAM_BOT_TOKEN "123456789:$(openssl rand -hex 20)"
           set_env TELEGRAM_WEBHOOK_SECRET "$(secret)"
           set_env AI_GATEWAY_API_KEY "ci-$(secret)"
-          set_env TUNNEL_TOKEN unused-in-ci
           # Fail on any placeholder left behind.
           ! grep -n 'replace-with' .env
 
@@ -103,9 +101,11 @@ jobs:
         working-directory: deploy
         run: docker compose config --quiet
 
-      - name: Start the stack (no cloudflared)
+      - name: Start the stack
         working-directory: deploy
         run: |
+          # Created by Dokploy in production; `web` joins it.
+          docker network create dokploy-network
           # Public images only; ours were just built and loaded.
           docker compose pull postgres backup
           docker compose up -d --pull never postgres migrate api web agent backup
@@ -123,4 +123,6 @@ jobs:
       - name: Stop
         if: always()
         working-directory: deploy
-        run: docker compose down -v
+        run: |
+          docker compose down -v
+          docker network rm dokploy-network || true

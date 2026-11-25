@@ -2,15 +2,19 @@
 #   cp .env.example .env   # fill it in
 #   docker compose up -d
 # Every value comes from .env (compose interpolation). Each service gets only the
-# variables it needs. No published ports: traffic arrives through cloudflared.
+# variables it needs. No published ports: Dokploy's Traefik reaches `web` over the
+# external dokploy-network (Domains -> service `web`, port 8080), behind Cloudflare.
 #
-#   cloudflared -> web:8080 (Caddy) -> /api/auth/*, /api/trpc/*   -> api:4000 -> postgres
-#                                     /webhooks/telegram       -> agent:3000 -> api:4000
-#                                     everything else          -> static SPA
+#   Traefik -> web:8080 (Caddy) -> /api/auth/*, /api/trpc/*   -> api:4000 -> postgres
+#                                  /webhooks/telegram       -> agent:3000 -> api:4000
+#                                  everything else          -> static SPA
 #
 # Networks: only `egress` reaches the internet (agent: Telegram and the model
-# provider; cloudflared: Cloudflare). Postgres, migrate, API, web and backup have
-# no route out.
+# provider). Postgres, migrate, API and backup have no route out; web sits on
+# dokploy-network for Traefik only.
+#
+# Fixed here, not in .env: database and role name (dalva), NODE_ENV, CLIENT_IP_HEADER,
+# image versions of Postgres, backup schedule. Tuning knobs keep their code defaults.
 
 name: ${COMPOSE_PROJECT_NAME:-dalva}
 
@@ -29,22 +33,22 @@ x-hardening: &hardening
 
 x-postgres-env: &postgres-env
   PGHOST: postgres
-  PGUSER: ${POSTGRES_USER:-dalva}
+  PGUSER: dalva
   PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
-  PGDATABASE: ${POSTGRES_DB:-dalva}
+  PGDATABASE: dalva
 
-x-database-url: &database-url postgres://${POSTGRES_USER:-dalva}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-dalva}
+x-database-url: &database-url postgres://dalva:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/dalva
 
 services:
   postgres:
     <<: *hardening
-    image: postgres:${POSTGRES_IMAGE_TAG:-18.7-alpine}
+    image: postgres:18.7-alpine
     # The image's postgres user (uid 70 on alpine): no chown or gosu at start, so no capabilities.
     user: "70:70"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-dalva}
+      POSTGRES_USER: dalva
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-dalva}
+      POSTGRES_DB: dalva
     volumes:
       # Postgres 18 images keep data under /var/lib/postgresql/<major>/docker.
       - postgres-data:/var/lib/postgresql
@@ -98,16 +102,13 @@ services:
     tmpfs:
       - /tmp
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
+      NODE_ENV: production
       PORT: "4000"
       DATABASE_URL: *database-url
-      DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-10}
       PUBLIC_URL: ${PUBLIC_URL:?set PUBLIC_URL (https origin)}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
-      FINANCE_API_TOKEN_SECRET: ${FINANCE_API_TOKEN_SECRET:?set FINANCE_API_TOKEN_SECRET}
       FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
-      CLIENT_IP_HEADER: ${CLIENT_IP_HEADER:-cf-connecting-ip}
-      LOG_LEVEL: ${API_LOG_LEVEL:-info}
+      CLIENT_IP_HEADER: cf-connecting-ip
       # Settings → Telegram links to the bot with it.
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:?set TELEGRAM_BOT_USERNAME}
     healthcheck:
@@ -156,7 +157,7 @@ services:
           memory: 128m
     networks:
       - app
-      - edge
+      - dokploy
 
   agent:
     <<: *hardening
@@ -180,15 +181,6 @@ services:
       AGENT_MODEL: ${AGENT_MODEL:?set AGENT_MODEL}
       AI_GATEWAY_API_KEY: ${AI_GATEWAY_API_KEY:-}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      LOG_LEVEL: ${AGENT_LOG_LEVEL:-info}
-      SESSION_IDLE_MINUTES: ${SESSION_IDLE_MINUTES:-}
-      RECOVERY_MAX_AGE_SECONDS: ${RECOVERY_MAX_AGE_SECONDS:-}
-      AGENT_MAX_STEPS: ${AGENT_MAX_STEPS:-}
-      AGENT_MAX_OUTPUT_TOKENS: ${AGENT_MAX_OUTPUT_TOKENS:-}
-      AGENT_TURN_TIMEOUT_SECONDS: ${AGENT_TURN_TIMEOUT_SECONDS:-}
-      AGENT_RATE_LIMIT_TURNS: ${AGENT_RATE_LIMIT_TURNS:-}
-      AGENT_RATE_LIMIT_WINDOW_MINUTES: ${AGENT_RATE_LIMIT_WINDOW_MINUTES:-}
-      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-}
     healthcheck:
       test:
         - CMD
@@ -211,45 +203,21 @@ services:
       - app
       - egress
 
-  cloudflared:
-    <<: *hardening
-    image: cloudflare/cloudflared:${CLOUDFLARED_IMAGE_TAG:-2026.10.7}
-    command: ["tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:20241", "run"]
-    environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN}
-    healthcheck:
-      test: ["CMD", "cloudflared", "tunnel", "--metrics", "127.0.0.1:20241", "ready"]
-      interval: 30s
-      timeout: 5s
-      start_period: 20s
-      retries: 3
-    depends_on:
-      web:
-        condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256m
-    networks:
-      - edge
-      - egress
-
-  # Daily pg_dump at BACKUP_AT (UTC) into the `backups` volume, keeping BACKUP_KEEP_DAYS days.
+  # Daily pg_dump at 03:00 UTC into the `backups` volume, keeping 14 days.
   #   docker compose run --rm backup now                      one dump now
   #   docker compose run --rm backup list                     dumps on disk
   #   docker compose run --rm backup restore <file> <db>      restore into a NEW database
   backup:
     <<: *hardening
-    image: postgres:${POSTGRES_IMAGE_TAG:-18.7-alpine}
+    image: postgres:18.7-alpine
     # Root, but with no capabilities: writes only to the root-owned volume.
     user: "0:0"
     # sh as PID 1 ignores SIGTERM; tini forwards it so stop doesn't wait for SIGKILL.
     init: true
     environment:
       <<: *postgres-env
-      BACKUP_AT: ${BACKUP_AT:-03:00}
-      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_AT: "03:00"
+      BACKUP_KEEP_DAYS: "14"
     volumes:
       - backups:/backups
     tmpfs:
@@ -323,8 +291,9 @@ networks:
   # No internet. web -> api, web -> agent, agent -> api.
   app:
     internal: true
-  # No internet. cloudflared -> web.
-  edge:
-    internal: true
-  # Internet access for the agent and cloudflared.
+  # Dokploy's Traefik network (created by Dokploy; CI creates it). Only `web` joins it.
+  dokploy:
+    name: dokploy-network
+    external: true
+  # Internet access for the agent.
   egress:

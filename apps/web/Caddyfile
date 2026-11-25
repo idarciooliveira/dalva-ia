@@ -1,5 +1,5 @@
-# Single entry of the compose stack (cloudflared -> web:8080). Plain HTTP inside the
-# Docker network: Cloudflare terminates TLS. Upstreams resolve by compose service name.
+# Single entry of the compose stack (Traefik -> web:8080). Plain HTTP inside the
+# Docker network: Cloudflare and Traefik terminate TLS. Upstreams resolve by compose service name.
 {
 	admin off
 	auto_https off

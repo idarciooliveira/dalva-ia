@@ -42,7 +42,7 @@ for target in api:4000 agent:3000; do
   ok "$service /health"
 done
 
-# ---- routing through the web entry (what cloudflared sees) ----
+# ---- routing through the web entry (what Traefik sees) ----
 web=$(container web)
 api=$(container api)
 public_url=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$api" | sed -n 's/^PUBLIC_URL=//p')
