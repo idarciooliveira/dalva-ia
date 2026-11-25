@@ -49,10 +49,22 @@ const financeActionOperationSchema = z.enum(Object.keys(FINANCE_ACTION_INPUTS) a
 /** Changes one Confirm runs together (the user reported several in one message). */
 export const AGENT_BATCH_MAX_ITEMS = 10;
 
+/** Operations that change or remove an existing row, named by `input.id`. */
+const RECORD_OPERATIONS = new Set<FinanceActionOperation>([
+  "transactions.update",
+  "transactions.delete",
+  "transfers.update",
+  "transfers.delete",
+  "goalContributions.remove",
+  "debtPayments.remove",
+]);
+
 /**
  * Several finance writes behind one Confirm. Each item is checked against its
  * own operation's schema; the agent runs them in order, item `i` with
- * `Idempotency-Key = <action id>:<i>`.
+ * `Idempotency-Key = <action id>:<i>`. At most one item per existing row: a
+ * rerun after a crash may run an item the first run refused, and two writes
+ * to one row would then land in the wrong order.
  */
 const batchActionInput = z
   .strictObject({
@@ -61,16 +73,25 @@ const batchActionInput = z
       .min(2)
       .max(AGENT_BATCH_MAX_ITEMS),
   })
-  .transform((value, ctx) => ({
-    items: value.items.map((item, index) => {
-      const parsed = FINANCE_ACTION_INPUTS[item.operation].safeParse(item.input);
-      if (parsed.success) return { operation: item.operation, input: parsed.data as Record<string, unknown> };
-      for (const issue of parsed.error.issues) {
-        ctx.addIssue({ code: "custom", message: issue.message, path: ["items", index, "input", ...issue.path] });
-      }
-      return item;
-    }),
-  }));
+  .transform((value, ctx) => {
+    const targets = new Set<unknown>();
+    return {
+      items: value.items.map((item, index) => {
+        if (RECORD_OPERATIONS.has(item.operation) && item.input.id !== undefined) {
+          if (targets.has(item.input.id)) {
+            ctx.addIssue({ code: "custom", message: "Another item of this batch already changes this record", path: ["items", index, "input", "id"] });
+          }
+          targets.add(item.input.id);
+        }
+        const parsed = FINANCE_ACTION_INPUTS[item.operation].safeParse(item.input);
+        if (parsed.success) return { operation: item.operation, input: parsed.data as Record<string, unknown> };
+        for (const issue of parsed.error.issues) {
+          ctx.addIssue({ code: "custom", message: issue.message, path: ["items", index, "input", ...issue.path] });
+        }
+        return item;
+      }),
+    };
+  });
 
 /** What a pending action can carry: one finance write, or a `batch` of them. */
 export const ACTION_INPUTS = { ...FINANCE_ACTION_INPUTS, batch: batchActionInput };

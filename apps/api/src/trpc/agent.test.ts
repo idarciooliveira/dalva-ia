@@ -676,6 +676,23 @@ describe("agentPendingActions", () => {
       400,
     );
     expect(JSON.stringify(bad.details)).toContain("items.1.input.amount");
+    // One change per existing row: a rerun could otherwise land two writes to it in the wrong order.
+    const id = "01900000-0000-7000-8000-000000000001";
+    const sameRow = await expectApiError(
+      chat.agent.agentPendingActions.check({
+        operation: "batch",
+        input: { items: [{ operation: "transactions.update", input: { id, description: "a" } }, items[0]!, { operation: "transactions.delete", input: { id } }] },
+      }),
+      "validation_failed",
+      400,
+    );
+    expect(JSON.stringify(sameRow.details)).toContain("items.2.input.id");
+    expect(
+      await chat.agent.agentPendingActions.check({
+        operation: "batch",
+        input: { items: [{ operation: "transactions.delete", input: { id } }, { operation: "transactions.delete", input: { id: "01900000-0000-7000-8000-000000000002" } }] },
+      }),
+    ).toEqual({ ok: true });
     // One item is not a batch, and a batch can't nest.
     await expectApiError(chat.agent.agentPendingActions.check({ operation: "batch", input: { items: [items[0]!] } }), "validation_failed", 400);
     await expectApiError(

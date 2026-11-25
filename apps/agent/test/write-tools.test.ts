@@ -1,7 +1,8 @@
 import { describe, expect, test } from "vitest";
 
+import { SummaryTooLongError } from "../src/core/summary";
 import { createTools, READ_TOOL_NAMES, WRITE_TOOL_NAMES } from "../src/tools";
-import { MAX_PROPOSALS, Proposals } from "../src/tools/proposals";
+import { MAX_PROPOSALS, type Proposal, Proposals } from "../src/tools/proposals";
 import { seedFinance } from "./fixtures/finance";
 import { fakeFinance } from "./helpers";
 
@@ -220,11 +221,49 @@ describe("several changes per turn and idempotent creation", () => {
     expect(finance.actions).toHaveLength(0);
   });
 
-  test("a failed proposal takes no slot; a repeat of a queued one is not queued twice", async () => {
+  test("a failed proposal takes no slot; two identical new rows are two changes", async () => {
     const { run, proposals } = setup();
     expect(await run("create_transaction", expense({ amount: "x" }))).toMatchObject({ error: "invalid_input" });
-    expect(await run("create_transaction", expense())).toMatchObject({ status: "awaiting_confirmation" });
-    expect(await run("create_transaction", expense())).toMatchObject({ status: "awaiting_confirmation", message: expect.stringMatching(/Already proposed/) });
+    expect(await run("create_transaction", expense())).toEqual({ status: "awaiting_confirmation", summary: expect.any(String) });
+    expect(await run("create_transaction", expense())).toEqual({ status: "awaiting_confirmation", summary: expect.any(String) });
+    expect(proposals.queued).toHaveLength(2);
+    expect((await proposals.commit())!.input).toMatchObject({ items: [{ operation: "transactions.create" }, { operation: "transactions.create" }] });
+  });
+
+  test("an existing row takes one change per message: a repeat is queued once, another change is refused", async () => {
+    const { run, proposals } = setup();
+    const id = "00000004-0000-4000-8000-000000000001";
+    expect(await run("update_transaction", { id, amount: "20000", language: "pt" })).toMatchObject({ status: "awaiting_confirmation" });
+    expect(await run("update_transaction", { id, amount: "20000", language: "pt" })).toMatchObject({
+      status: "awaiting_confirmation",
+      message: expect.stringMatching(/Already proposed/),
+    });
+    expect(await run("update_transaction", { id, amount: "30000", language: "pt" })).toMatchObject({ error: "invalid_input", message: expect.stringMatching(/one change per confirmation/) });
+    expect(await run("delete_transaction", { id, language: "pt" })).toMatchObject({ error: "invalid_input" });
+    expect(await run("delete_transaction", { id: "00000004-0000-4000-8000-000000000005", language: "pt" })).toMatchObject({ status: "awaiting_confirmation" });
+    expect(proposals.queued.map((p) => [p.operation, p.input.id])).toEqual([
+      ["transactions.update", id],
+      ["transactions.delete", "00000004-0000-4000-8000-000000000005"],
+    ]);
+  });
+
+  test("a repeat that is checked first still takes the first call's place", () => {
+    const proposals = new Proposals({ finance: fakeFinance().clients.forToken("t"), eventId: "1", sessionId: async () => "s" });
+    const remove: Proposal = { operation: "transactions.delete", input: { id: "00000004-0000-4000-8000-000000000001" }, summary: "Apagar" };
+    const create: Proposal = { operation: "transactions.create", input: { type: "expense" }, summary: "Despesa" };
+    const [first, second, repeat] = [proposals.reserve()!, proposals.reserve()!, proposals.reserve()!];
+    expect(proposals.fill(second, create)).toBe("queued");
+    expect(proposals.fill(repeat, { ...remove })).toBe("queued");
+    expect(proposals.fill(first, remove)).toBe("duplicate");
+    expect(proposals.queued.map((p) => p.summary)).toEqual(["Apagar", "Despesa"]);
+  });
+
+  test("the whole batch must fit the API's size limit for a stored input", () => {
+    const proposals = new Proposals({ finance: fakeFinance().clients.forToken("t"), eventId: "1", sessionId: async () => "s" });
+    // Control characters are escaped to 6 bytes each in JSON.
+    const big = (n: number): Proposal => ({ operation: "transactions.create", input: { n, description: "\u0001".repeat(1500) }, summary: `Despesa ${n}` });
+    expect(proposals.fill(proposals.reserve()!, big(1))).toBe("queued");
+    expect(() => proposals.fill(proposals.reserve()!, big(2))).toThrow(SummaryTooLongError);
     expect(proposals.queued).toHaveLength(1);
   });
 
@@ -317,7 +356,8 @@ describe("update_transaction and delete_transaction", () => {
     }
     expect(proposals.queued[0]!.input).toMatchObject({ description: newDescription, accountId: "00000001-0000-4000-8000-000000000003", subcategoryId: "00000003-0000-4000-8000-000000000002" });
 
-    const tooMuch = await run("update_transaction", {
+    // A second change to the same row would be refused in this message: a later one.
+    const tooMuch = await setup({ finance, eventId: "5003" }).run("update_transaction", {
       id: "00000004-0000-4000-8000-000000000003",
       type: "income",
       amount: "20000",
@@ -328,7 +368,7 @@ describe("update_transaction and delete_transaction", () => {
       payee: "q".repeat(100),
       language: "pt",
     });
-    expect(tooMuch).toMatchObject({ status: "awaiting_confirmation" }); // a second change in the same message is queued too
+    expect(tooMuch).toMatchObject({ status: "awaiting_confirmation" });
     // Long category names plus long new texts: even without the old values it can't all fit.
     const categories = (finance.reads.get("/categories") as { items: any[] }).items;
     const subcategories = (finance.reads.get("/subcategories") as { items: any[] }).items;
