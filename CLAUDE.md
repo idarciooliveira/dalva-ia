@@ -195,6 +195,7 @@ bunx playwright test --project=chromium
 
 - The API is tRPC at `/api/trpc` (`src/trpc/`). `src/trpc/router.ts` is the only contract: zod input/output schemas live next to the procedures, `type AppRouter` is exported as `@mpf/api/trpc`
 - Every procedure uses a builder from `src/trpc/init.ts` (`financeRead`/`financeWrite`, `webRead`/`webWrite`, `webWriteNoKey`, `agentRead`/`agentWrite`, `serviceRead`/`serviceWrite`): credentials, scopes, `Idempotency-Key`, the transaction (`ctx.tx`) and error mapping. List new procedures in `ACCESS` (`src/trpc/init.test.ts`)
+- Rules live in the domain: operations take Money and ids, do their own lookups and checks (currency, base currency, same account). A procedure is schema + one domain call + DTO
 - Throw `DomainError`; clients get its code on `error.data.apiCode`
 - The agent calls the API through a vanilla tRPC client (`apps/agent/src/core/finance.ts`): failures surface as `FinanceError` with the API code; pending actions run `finance[group][op].mutate(input, { context: { idempotencyKey } })`
 - Callers are resolved by `src/http/principal.ts`: session cookie (web), bearer user token (agent, per linked chat) or service key (agent service procedures)
