@@ -308,7 +308,9 @@ export async function handleButton(event: InboundEvent, user: ResolvedUser | nul
 /**
  * Run the stored operation. A batch runs its items in order, item `i` with
  * `Idempotency-Key = <action id>:<i>`; one failing doesn't stop the others.
- * A rerun (crash after confirm) replays the items that already ran.
+ * A rerun (crash after confirm) replays the items that already ran, and runs
+ * again the ones that failed (a refused write stores nothing on its key). That
+ * can't reorder writes to one row: a batch changes each existing row at most once.
  */
 async function execute(finance: FinanceClient, action: AgentPendingAction, retryDelayMs: number, log: Logger): Promise<ActionOutcome> {
   if (action.operation !== "batch") return runWrite(finance, action.operation, action.input, action.id, retryDelayMs, log);

@@ -1,4 +1,4 @@
-import { currencyExponent, MoneyError, parseDecimalAmount } from "@mpf/shared";
+import { AGENT_ACTION_JSON_MAX_BYTES, currencyExponent, MoneyError, parseDecimalAmount } from "@mpf/shared";
 import { z } from "zod";
 
 import {
@@ -37,6 +37,27 @@ export interface ProposalsOptions {
 /** `1. Despesa · …` per line: the confirm text of a batch. */
 export const batchSummary = (summaries: string[]) => summaries.map((summary, index) => `${index + 1}. ${summary}`).join("\n");
 
+/** The stored input of a batch. */
+const batchInput = (proposals: Proposal[]) => ({ items: proposals.map(({ operation, input }) => ({ operation, input })) });
+
+const utf8Bytes = (text: string) => new TextEncoder().encode(text).length;
+
+/** Operations that change or remove an existing row (the API's list for batches). */
+const RECORD_OPERATIONS = new Set<Proposal["operation"]>([
+  "transactions.update",
+  "transactions.delete",
+  "transfers.update",
+  "transfers.delete",
+  "goalContributions.remove",
+  "debtPayments.remove",
+]);
+
+/** The existing row a proposal changes, if it changes one. */
+const recordTarget = (proposal: Proposal): unknown => (RECORD_OPERATIONS.has(proposal.operation) ? proposal.input.id : undefined);
+
+const SAME_RECORD =
+  "This message already proposes a change to that record, and one record takes one change per confirmation. Put every change to it in one call, or tell the user you'll do this one after they confirm.";
+
 /** The changes the turn queued, in the order the model asked for them. */
 export class Proposals {
   /** Slots by call order: a proposal still being built is `undefined`, a failed one `null`. */
@@ -72,16 +93,37 @@ export class Proposals {
     );
   }
 
-  /** Queue a checked proposal. A repeat of one already queued takes no slot (the model retried it). */
+  /**
+   * Queue a checked proposal. New rows (create, add, record) are always
+   * separate changes: two identical expenses are two expenses. A change to an
+   * existing row is keyed by that row: a repeat of the same change takes no
+   * slot (the model retried it), and a second, different change to it is
+   * refused (the API runs one change per row in a batch, see `core/actions.ts`).
+   */
   fill(slot: number, proposal: Proposal): "queued" | "duplicate" {
-    const same = (other: Proposal | null | undefined) =>
-      !!other && other.operation === proposal.operation && JSON.stringify(other.input) === JSON.stringify(proposal.input);
-    if (this.slots.some(same)) {
-      this.slots[slot] = null;
-      return "duplicate";
+    const target = recordTarget(proposal);
+    if (target !== undefined) {
+      const existing = this.slots.findIndex((other) => !!other && recordTarget(other) === target);
+      const queued = existing === -1 ? undefined : this.slots[existing]!;
+      if (queued && queued.operation === proposal.operation && JSON.stringify(queued.input) === JSON.stringify(proposal.input)) {
+        // Keep the earlier call's place in the batch: the order can decide which change succeeds.
+        if (existing > slot) {
+          this.slots[slot] = queued;
+          this.slots[existing] = null;
+        } else {
+          this.slots[slot] = null;
+        }
+        return "duplicate";
+      }
+      if (queued) throw new ProposalError("invalid_input", SAME_RECORD);
     }
-    const summaries = [...this.queued.map((p) => p.summary), proposal.summary];
-    if (summaries.length > 1 && batchSummary(summaries).length > BATCH_SUMMARY_MAX) throw new SummaryTooLongError();
+    // Refused here, where the model can still tell the user, not at commit: the confirm text and
+    // the stored input are bounded as a whole (each proposal was only checked alone).
+    const next = [...this.queued, proposal];
+    if (next.length > 1) {
+      if (batchSummary(next.map((p) => p.summary)).length > BATCH_SUMMARY_MAX) throw new SummaryTooLongError();
+      if (utf8Bytes(JSON.stringify(batchInput(next))) > AGENT_ACTION_JSON_MAX_BYTES) throw new SummaryTooLongError();
+    }
     this.slots[slot] = proposal;
     return "queued";
   }
@@ -101,7 +143,7 @@ export class Proposals {
         ? { operation: first!.operation, input: first!.input as Record<string, never>, summary: first!.summary }
         : {
             operation: "batch" as const,
-            input: { items: queued.map(({ operation, input }) => ({ operation, input })) } as unknown as Record<string, never>,
+            input: batchInput(queued) as unknown as Record<string, never>,
             summary: batchSummary(queued.map((p) => p.summary)),
           };
     const { action } = await this.options.finance.agentPendingActions.create.mutate(
