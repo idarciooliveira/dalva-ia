@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { balanceOf, domainRejection, getTransactionRow, seedAccount, seedDebtPayment, seedTransaction, transactionRows } from "../../test/api";
 import { createTestUser } from "../../test/app";
 import { testDb } from "../../test/db";
-import { debtPayments, debts as debtsTable, transactions as transactionsTable } from "../db/schema";
+import { debtPayments, debts as debtsTable, goalContributions, savingsGoals, transactions as transactionsTable } from "../db/schema";
 import { readTx, type Tx, withTx } from "../db/tx";
 import * as debts from "./debts";
 import * as transactions from "./transactions";
@@ -258,6 +258,26 @@ describe("domain/debts payments", () => {
       expect(await balanceOf(from)).toBe(9_500);
       expect(await debtRow(debtId)).toMatchObject({ currentBalance: 8_000 });
       expect(await paymentRow(payment.id)).toBeUndefined();
+    });
+
+    it("removes payments whose rows a goal contribution or transfer also claims", async () => {
+      const alice = await createTestUser();
+      const from = await seedAccount(alice, { balance: 9_000 });
+      const to = await seedAccount(alice, { balance: 500 });
+      const { id: debtId } = await seedDebt(alice, { currentBalance: 7_000 });
+      const claimed = await seedDebtPayment(alice, { debtId, fromAccountId: from, amount: 500 });
+      const [goal] = await testDb().insert(savingsGoals).values({ userId: alice, name: "Trip", targetAmount: 1_000, isVirtual: true }).returning();
+      await testDb().insert(goalContributions).values({ userId: alice, goalId: goal!.id, amount: 500, date: "2026-01-02", transactionId: claimed.sourceTransactionId });
+      await tx((t) => debts.removeDebtPayment(t, alice, claimed.id));
+      expect(await balanceOf(from)).toBe(9_500);
+
+      // A payment whose source is a transfer leg: the whole transfer is reversed with the debt.
+      const leg = await seedTransaction(alice, from, { type: "transfer", amount: 500, destinationAccountId: to });
+      await testDb().insert(debtPayments).values({ userId: alice, debtId, amount: 500, principalAmount: 500, interestAmount: 0, date: "2026-01-02", sourceTransactionId: leg });
+      await tx((t) => debts.deleteDebt(t, alice, debtId));
+      expect(await balanceOf(from)).toBe(10_000);
+      expect(await debtRow(debtId)).toBeUndefined();
+      expect(await transactionRows()).toEqual([]);
     });
 
     it("deletes a debt whose payments mix live and orphaned rows", async () => {

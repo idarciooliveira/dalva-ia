@@ -1,10 +1,10 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 
-import { debtPayments, debts, transactions } from "../db/schema";
+import { debtPayments, debts } from "../db/schema";
 import type { Tx } from "../db/tx";
 import { getAccount } from "./accounts";
 import { invalid, notFound } from "./errors";
-import { createTransaction, deleteTransactionRows, type Transaction } from "./transactions";
+import * as ledger from "./ledger";
 
 export type Debt = typeof debts.$inferSelect;
 export type DebtType = Debt["debtType"];
@@ -102,13 +102,15 @@ export async function setDebtArchived(tx: Tx, userId: string, id: string, archiv
   return debt;
 }
 
-async function paymentRows(tx: Tx, userId: string, payments: DebtPayment[]): Promise<Transaction[]> {
+/**
+ * Reverses what the payments posted. A legacy payment may have lost its source
+ * row, or point at a row a goal contribution or transfer also claims: the debt
+ * still removes it ("read" skips the owner check), or the debt could never be
+ * deleted.
+ */
+async function reversePayments(tx: Tx, userId: string, payments: DebtPayment[]): Promise<void> {
   const ids = payments.flatMap((p) => [p.sourceTransactionId, p.liabilityTransactionId]).filter((id): id is string => id !== null);
-  if (ids.length === 0) return [];
-  return await tx
-    .select()
-    .from(transactions)
-    .where(and(eq(transactions.userId, userId), inArray(transactions.id, ids)));
+  await ledger.reverse(tx, userId, await ledger.openAll(tx, userId, ids, "debt_payment", "read"));
 }
 
 export async function deleteDebt(tx: Tx, userId: string, id: string): Promise<void> {
@@ -117,7 +119,7 @@ export async function deleteDebt(tx: Tx, userId: string, id: string): Promise<vo
     .select()
     .from(debtPayments)
     .where(and(eq(debtPayments.userId, userId), eq(debtPayments.debtId, id)));
-  await deleteTransactionRows(tx, userId, await paymentRows(tx, userId, payments));
+  await reversePayments(tx, userId, payments);
   await tx.delete(debtPayments).where(and(eq(debtPayments.userId, userId), eq(debtPayments.debtId, id)));
   await tx.delete(debts).where(ownedDebt(userId, id));
 }
@@ -157,7 +159,7 @@ export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymen
     throw invalid("principalAmount", "Principal amount cannot exceed the remaining balance");
   }
 
-  const source = await createTransaction(tx, userId, {
+  const source = await ledger.post(tx, userId, {
     type: "expense",
     amount: args.amount,
     accountId: args.fromAccountId,
@@ -165,11 +167,13 @@ export async function recordDebtPayment(tx: Tx, userId: string, args: DebtPaymen
     description: `Debt payment: ${debt.name}`,
     note: args.note,
   });
+  // An adjustment's amount is signed: the principal paid lowers the linked liability account's balance by that much.
+  const liabilityAdjustment = -principalAmount;
   const liability =
     debt.linkedAccountId && principalAmount > 0
-      ? await createTransaction(tx, userId, {
+      ? await ledger.post(tx, userId, {
           type: "adjustment",
-          amount: -principalAmount,
+          amount: liabilityAdjustment,
           accountId: debt.linkedAccountId,
           date: args.date,
           description: `Debt principal payment: ${debt.name}`,
@@ -207,7 +211,7 @@ export async function removeDebtPayment(tx: Tx, userId: string, id: string): Pro
     .limit(1);
   if (!payment) throw notFound("Debt payment");
 
-  await deleteTransactionRows(tx, userId, await paymentRows(tx, userId, [payment]));
+  await reversePayments(tx, userId, [payment]);
   await tx.delete(debtPayments).where(eq(debtPayments.id, payment.id));
   await tx
     .update(debts)

@@ -1,11 +1,10 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 
-import { goalContributions, savingsGoals, transactions } from "../db/schema";
+import { goalContributions, savingsGoals } from "../db/schema";
 import type { Tx } from "../db/tx";
 import { getAccount } from "./accounts";
 import { invalid, notFound } from "./errors";
-import { ownedTransaction } from "./transactions";
-import { createTransfer, deleteTransferLegs } from "./transfers";
+import * as ledger from "./ledger";
 
 export type Goal = typeof savingsGoals.$inferSelect;
 export type Contribution = typeof goalContributions.$inferSelect;
@@ -115,7 +114,8 @@ export async function addContribution(tx: Tx, userId: string, args: Contribution
     }
     await getAccount(tx, userId, args.fromAccountId);
     if (args.fromAccountId === goal.linkedAccountId) throw invalid("fromAccountId", "Cannot transfer to the same account");
-    transactionId = await createTransfer(tx, userId, {
+    const entry = await ledger.post(tx, userId, {
+      type: "transfer",
       amount: args.amount,
       fromAccountId: args.fromAccountId,
       toAccountId: goal.linkedAccountId,
@@ -123,6 +123,7 @@ export async function addContribution(tx: Tx, userId: string, args: Contribution
       description: `Savings: ${goal.name}`,
       note: args.note,
     });
+    transactionId = entry.id;
   } else if (args.fromAccountId) {
     throw invalid("fromAccountId", "fromAccountId only applies to account-linked goals");
   }
@@ -147,8 +148,9 @@ export async function removeContribution(tx: Tx, userId: string, id: string): Pr
   if (!contribution) throw notFound("Contribution");
 
   if (contribution.transactionId) {
-    const [leg] = await tx.select().from(transactions).where(ownedTransaction(userId, contribution.transactionId)).limit(1);
-    if (leg?.type === "transfer") await deleteTransferLegs(tx, userId, leg);
+    const entry = await ledger.open(tx, userId, contribution.transactionId, "goal_contribution");
+    // Contributions post transfers. A legacy one pointing at any other row never moved money for the goal: keep that row.
+    if (entry.kind === "transfer") await ledger.reverse(tx, userId, [entry]);
   }
   await tx.delete(goalContributions).where(eq(goalContributions.id, contribution.id));
   await tx

@@ -207,7 +207,8 @@ bunx playwright test --project=chromium
 
 ### Domain Patterns
 
-- `accounts` store balances directly and are updated by transaction, transfer, goal and debt writes
+- `accounts` store balances directly. Only the ledger (`src/domain/ledger.ts`) moves them: transactions, transfers, adjustments, goals and debts post, amend and reverse entries through it and never compute a signed delta
+- Who may change a row (manual, transfer, goal contribution, debt payment) is resolved once, in the ledger
 - `transactions` hold income, expense, adjustment and transfer rows
 - Transfers are two linked `transactions` rows with a shared `transfer_group_id`
 - Categories are seeded during onboarding and then customized by the user
@@ -225,6 +226,7 @@ bunx playwright test --project=chromium
 | `apps/api/src/trpc/router.ts` | The API: every router, `type AppRouter` |
 | `apps/api/src/http/principal.ts` | Credential resolution |
 | `apps/api/src/domain/*.ts` | Domain logic per module |
+| `apps/api/src/domain/ledger.ts` | Entries, owners and every balance move |
 | `apps/api/src/trpc/*.ts` | Routers per module, schemas next to the procedures |
 | `apps/api/src/jobs/retention.ts` | Retention jobs (croner) |
 | `apps/api/test/api.ts` | Seed and client helpers for tests |

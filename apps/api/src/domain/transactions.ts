@@ -1,116 +1,43 @@
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, or, sql, type SQL } from "drizzle-orm";
 import { isoDateSchema } from "@mpf/shared";
 
 import { isUuid } from "../db/ids";
-import { debtPayments, goalContributions, transactions } from "../db/schema";
+import { transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
-import { addToBalances, getAccount } from "./accounts";
+import { getAccount } from "./accounts";
 import { getCategory, getSubcategory } from "./categories";
-import { conflict, invalid, notFound } from "./errors";
+import { invalid, notFound } from "./errors";
+import * as ledger from "./ledger";
 
 /** What owns a row that `transactions.update` / `delete` refuse: change it there. */
-export type TransactionManagedBy = "transfer" | "goal_contribution" | "debt_payment";
+export type TransactionManagedBy = Exclude<ledger.Owner, "manual">;
 
 export type Transaction = typeof transactions.$inferSelect;
 export type TransactionType = Transaction["type"];
 type WritableTransactionType = Exclude<TransactionType, "transfer">;
 
-export const ownedTransaction = (userId: string, id: string) => and(eq(transactions.id, id), eq(transactions.userId, userId));
-
 export const NEWEST_FIRST = [desc(transactions.date), desc(transactions.createdAt), desc(transactions.id)] as const;
 
-export const TRANSFER_MANAGED_MESSAGE = "Transfer legs must be changed through the transfer endpoints";
-export const DEBT_PAYMENT_MANAGED_MESSAGE = "Debt payment transactions must be changed through the debt payment endpoints";
-
-export async function getTransaction(tx: Tx, userId: string, id: string, what = "Transaction"): Promise<Transaction> {
-  const [row] = await tx.select().from(transactions).where(ownedTransaction(userId, id)).limit(1);
-  if (!row) throw notFound(what);
+export async function getTransaction(tx: Tx, userId: string, id: string): Promise<Transaction> {
+  const [row] = await tx
+    .select()
+    .from(transactions)
+    .where(and(eq(transactions.id, id), eq(transactions.userId, userId)))
+    .limit(1);
+  if (!row) throw notFound("Transaction");
   return row;
 }
 
-const isTransferLeg = (row: Transaction) =>
-  row.type === "transfer" || row.transferGroupId !== null || row.linkedTransactionId !== null;
-
-export async function managedTransactionKind(tx: Tx, userId: string, row: Transaction): Promise<"transfer" | "debt_payment" | null> {
-  if (isTransferLeg(row)) return "transfer";
-  const [payment] = await tx
-    .select({ id: debtPayments.id })
-    .from(debtPayments)
-    .where(
-      and(
-        eq(debtPayments.userId, userId),
-        or(eq(debtPayments.sourceTransactionId, row.id), eq(debtPayments.liabilityTransactionId, row.id)),
-      ),
-    )
-    .limit(1);
-  return payment ? "debt_payment" : null;
+/** Who manages each row that the transaction procedures may not change; plain rows are absent. */
+export async function managedBy(tx: Tx, userId: string, rows: Transaction[]): Promise<Map<string, TransactionManagedBy>> {
+  const managed = new Map<string, TransactionManagedBy>();
+  for (const [id, owner] of await ledger.ownersOf(tx, userId, rows)) if (owner !== "manual") managed.set(id, owner);
+  return managed;
 }
 
-export async function ownedByContribution(tx: Tx, userId: string, row: Transaction): Promise<boolean> {
-  const legs = row.linkedTransactionId ? [row.id, row.linkedTransactionId] : [row.id];
-  const [contribution] = await tx
-    .select({ id: goalContributions.id })
-    .from(goalContributions)
-    .where(and(eq(goalContributions.userId, userId), inArray(goalContributions.transactionId, legs)))
-    .limit(1);
-  return contribution !== undefined;
-}
-
-export async function managedKinds(
-  tx: Tx,
-  userId: string,
-  rows: Transaction[],
-): Promise<Map<string, TransactionManagedBy>> {
-  const kinds = new Map<string, TransactionManagedBy>();
-  if (rows.length === 0) return kinds;
-  const legs = rows.filter(isTransferLeg);
-  const legIds = [...new Set(legs.flatMap((r) => (r.linkedTransactionId ? [r.id, r.linkedTransactionId] : [r.id])))];
-  const others = rows.filter((r) => !isTransferLeg(r)).map((r) => r.id);
-
-  const contributions =
-    legIds.length === 0
-      ? []
-      : await tx
-          .select({ transactionId: goalContributions.transactionId })
-          .from(goalContributions)
-          .where(and(eq(goalContributions.userId, userId), inArray(goalContributions.transactionId, legIds)));
-  const payments =
-    others.length === 0
-      ? []
-      : await tx
-          .select({ source: debtPayments.sourceTransactionId, liability: debtPayments.liabilityTransactionId })
-          .from(debtPayments)
-          .where(
-            and(
-              eq(debtPayments.userId, userId),
-              or(inArray(debtPayments.sourceTransactionId, others), inArray(debtPayments.liabilityTransactionId, others)),
-            ),
-          );
-  const contributed = new Set(contributions.map((c) => c.transactionId));
-  for (const leg of legs) {
-    const owned = contributed.has(leg.id) || (leg.linkedTransactionId !== null && contributed.has(leg.linkedTransactionId));
-    kinds.set(leg.id, owned ? "goal_contribution" : "transfer");
-  }
-  const paid = new Set(payments.flatMap((p) => [p.source, p.liability]));
-  for (const id of others) if (paid.has(id)) kinds.set(id, "debt_payment");
-  return kinds;
-}
-
-export async function getEditableTransaction(tx: Tx, userId: string, id: string): Promise<Transaction> {
-  const row = await getTransaction(tx, userId, id);
-  const kind = await managedTransactionKind(tx, userId, row);
-  if (kind === "transfer") throw conflict(TRANSFER_MANAGED_MESSAGE);
-  if (kind === "debt_payment") throw conflict(DEBT_PAYMENT_MANAGED_MESSAGE);
-  return row;
-}
-
-function balanceDelta(type: TransactionType, amount: number): number {
-  return type === "expense" ? -amount : amount;
-}
-
-function assertAmount(type: TransactionType, amount: number) {
-  if (!Number.isSafeInteger(amount)) throw invalid("amount", "Amount must be an integer");
-  if (type !== "adjustment" && amount <= 0) throw invalid("amount.amountMinor", "Amount must be positive");
+/** The row as an entry the transaction procedures may change: `conflict` when a transfer, goal or debt manages it. */
+export async function getEditableTransaction(tx: Tx, userId: string, id: string): Promise<ledger.SingleEntry> {
+  return await ledger.open(tx, userId, id, "manual");
 }
 
 function assertWritableType(type: TransactionType | undefined) {
@@ -151,28 +78,10 @@ export interface TransactionFields {
 
 export async function createTransaction(tx: Tx, userId: string, args: TransactionFields): Promise<Transaction> {
   assertWritableType(args.type);
-  assertAmount(args.type, args.amount);
   await getAccount(tx, userId, args.accountId);
   if (args.type === "adjustment") assertNoCategoryOnAdjustment(args.categoryId, args.subcategoryId);
   await checkClassification(tx, userId, args, null);
-
-  const [row] = await tx
-    .insert(transactions)
-    .values({
-      userId,
-      type: args.type,
-      amount: args.amount,
-      accountId: args.accountId,
-      categoryId: args.categoryId ?? null,
-      subcategoryId: args.subcategoryId ?? null,
-      date: args.date,
-      description: args.description ?? null,
-      note: args.note ?? null,
-      payee: args.payee ?? null,
-    })
-    .returning();
-  await addToBalances(tx, userId, [[args.accountId, balanceDelta(args.type, args.amount)]]);
-  return row!;
+  return (await ledger.post(tx, userId, args)).row;
 }
 
 export type TransactionChanges = Partial<Omit<TransactionFields, "subcategoryId" | "description" | "note" | "payee">> & {
@@ -193,57 +102,27 @@ export async function updateTransaction(
   return await updateLoadedTransaction(tx, userId, await getEditableTransaction(tx, userId, id), changes);
 }
 
+/** Checks the classification, then amends the entry (amount, account and balances are the ledger's). */
 export async function updateLoadedTransaction(
   tx: Tx,
   userId: string,
-  row: Transaction,
+  entry: ledger.SingleEntry,
   changes: TransactionChanges,
 ): Promise<Transaction> {
-  const id = row.id;
+  const { row } = entry;
   assertWritableType(changes.type);
-
-  const type = changes.type ?? row.type;
-  const amount = changes.amount ?? row.amount;
-  if (type === "adjustment") {
+  if ((changes.type ?? row.type) === "adjustment") {
     assertNoCategoryOnAdjustment(changes.categoryId ?? row.categoryId, changed(changes.subcategoryId, row.subcategoryId));
   }
   await checkClassification(tx, userId, { categoryId: changes.categoryId, subcategoryId: changes.subcategoryId ?? undefined }, row.categoryId);
-  const accountId = changes.accountId ?? row.accountId;
-  if (changes.accountId && changes.accountId !== row.accountId) await getAccount(tx, userId, changes.accountId);
-  assertAmount(type, amount);
-
+  // A new category without a subcategory drops the old subcategory.
   const categoryChanged = changes.categoryId !== undefined && changes.categoryId !== row.categoryId;
-  const subcategoryId = changed(changes.subcategoryId, categoryChanged ? null : row.subcategoryId);
-  const [updated] = await tx
-    .update(transactions)
-    .set({
-      type,
-      amount,
-      accountId,
-      categoryId: changes.categoryId ?? row.categoryId,
-      subcategoryId,
-      date: changes.date ?? row.date,
-      description: changed(changes.description, row.description),
-      note: changed(changes.note, row.note),
-      payee: changed(changes.payee, row.payee),
-    })
-    .where(ownedTransaction(userId, id))
-    .returning();
-  await addToBalances(tx, userId, [
-    [row.accountId, -balanceDelta(row.type, row.amount)],
-    [accountId, balanceDelta(type, amount)],
-  ]);
-  return updated!;
+  const subcategoryId = changes.subcategoryId === undefined && categoryChanged ? null : changes.subcategoryId;
+  return (await ledger.amend(tx, userId, entry, { ...changes, subcategoryId })).row;
 }
 
 export async function deleteTransaction(tx: Tx, userId: string, id: string): Promise<void> {
-  await deleteTransactionRows(tx, userId, [await getEditableTransaction(tx, userId, id)]);
-}
-
-export async function deleteTransactionRows(tx: Tx, userId: string, rows: Transaction[]): Promise<void> {
-  if (rows.length === 0) return;
-  await tx.delete(transactions).where(and(eq(transactions.userId, userId), inArray(transactions.id, rows.map((r) => r.id))));
-  await addToBalances(tx, userId, rows.map((r): [string | null, number] => [r.accountId, -balanceDelta(r.type, r.amount)]));
+  await ledger.reverse(tx, userId, [await getEditableTransaction(tx, userId, id)]);
 }
 
 /** `created_at` is a microsecond string: a JS Date holds milliseconds and would skip or repeat rows created within one. */

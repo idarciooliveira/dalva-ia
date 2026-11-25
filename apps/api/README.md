@@ -67,19 +67,23 @@ src/trpc/router.ts            Add the module's router here
 - Ids are lowercase UUIDs (`idSchema`): anything else is `validation_failed`; missing and other users' rows are both `not_found`. Agent-store ids are any URL-safe string (an unknown one is `not_found`).
 - Money: the database stores value × 100 for every currency; `src/domain/money.ts` converts to and from ISO minor units. Request amounts that don't fit exactly are `validation_failed` (`reason: "precision"`), never rounded.
 
-Transactions, transfers and reports (`src/domain/{transactions,transfers,reports}.ts`):
+The ledger (`src/domain/ledger.ts`) is the only code that writes a row's money fields or moves `accounts.balance`. Transactions, transfers, account adjustments, goal contributions and debt payments all go through it:
 
-- Every transaction write moves the account balance in the same transaction (`addToBalances`: `balance = balance + delta`, accounts in id order). Concurrent writes to one account collide under SERIALIZABLE and `withTx` reruns the loser, so no delta is lost.
-- A transfer is two `transfer` rows sharing `transfer_group_id`, linked to each other; either leg's id addresses it. Transfer legs and debt-payment rows answer `conflict` on `transactions.update`/`delete`; goal-contribution transfers answer `conflict` on `transfers.update`/`delete`.
-- Legacy rows with a null `account_id` (account deleted before the migration) skip their balance effect, list in the base currency with `accountId: MISSING_ACCOUNT_ID` (a nil UUID no lookup finds), and make a report that would sum them `conflict` (`unknown_currency`).
+- An entry is one income/expense/adjustment row or a transfer's two legs. `post` writes one, `open` loads one for its owner, `amend` rewrites it, `reverse` deletes it; `ownersOf` labels rows. Balance moves are derived from the rows (post applies their effect, amend the difference, reverse undoes it) as `balance = balance + delta`, accounts in id order, each checked against its currency's range. Concurrent writes to one account collide under SERIALIZABLE and `withTx` reruns the loser, so no delta is lost.
+- A transfer is two `transfer` rows sharing `transfer_group_id`, linked to each other, in one currency; either leg's id addresses it.
+- Every entry has one owner, with one precedence: the goal contribution that points at either leg, else `transfer` for transfer legs, else the debt payment that points at the row, else `manual`. Only the owner may change it: anyone else gets `conflict` (`transactions.update`/`delete` on a transfer leg, goal or debt row; `transfers.update`/`delete` on a contribution's transfer). Transfer procedures address transfer legs only (`not_found` otherwise).
+- Legacy rows with a null `account_id` (account deleted before the migration) skip their balance effect (a transfer leg whose pair is gone can be deleted but not changed), list in the base currency with `accountId: MISSING_ACCOUNT_ID` (a nil UUID no lookup finds), and make a report that would sum them `conflict` (`unknown_currency`).
+
+Search and reports (`src/domain/{transactions,reports}.ts`):
+
 - `transactions.search`: keyset cursor over `(date, created_at, id)`, `created_at` in microseconds (a JS Date would lose them). All filters, `q` included, run in SQL, so only the last page is short.
 - Reports: a month is `[first day, first day of next month)`, never a `-31` bound. Totals use SQL aggregates over every row of the range.
 - A date the schema accepts but Postgres can't hold (year 0000) is `validation_failed` (SQLSTATE 22008, `src/trpc/errors.ts`); a stored amount or total ISO minor units can't express is `conflict` (`MoneyRangeError`).
 
 Goals and debts (`src/domain/{goals,debts}.ts`), in the base currency:
 
-- A contribution to an account-linked goal is a transfer into the linked account (`createTransfer`); removing the contribution deletes it (`deleteTransferLegs`). A contribution whose transfer is gone (`transaction_id` nulled) only moves `current_amount` on removal. Deleting a goal keeps its transfers as plain transfers.
-- A debt payment is an expense on the paying account plus, for a linked debt, an adjustment of minus the principal on the linked account (`createTransaction`). Removing it, or deleting the debt, deletes those rows and reverses their balances (`deleteTransactionRows`). Legacy payments with a null `from_account_id` or `source_transaction_id` list with the nil-UUID placeholders (`MISSING_ACCOUNT_ID`, `MISSING_TRANSACTION_ID`) and skip what is gone on removal.
+- A contribution to an account-linked goal is a transfer into the linked account (`ledger.post`); removing the contribution reverses it (a legacy contribution pointing at a non-transfer row leaves that row alone). A contribution whose transfer is gone (`transaction_id` nulled) only moves `current_amount` on removal. Deleting a goal keeps its transfers as plain transfers.
+- A debt payment is an expense on the paying account plus, for a linked debt, an adjustment of minus the principal on the linked account (`ledger.post`). Removing it, or deleting the debt, reverses those entries, even when a legacy row is also claimed by a goal contribution or transfer. Legacy payments with a null `from_account_id` or `source_transaction_id` list with the nil-UUID placeholders (`MISSING_ACCOUNT_ID`, `MISSING_TRANSACTION_ID`) and skip what is gone on removal.
 - `current_amount` and `current_balance` move with relative updates; the principal check reads the balance in the same SERIALIZABLE transaction, so racing payments can't pay down more than is left.
 - A goal's or debt's linked account, and the accounts a contribution or payment moves money on, must be in the base currency (`validation_failed`).
 

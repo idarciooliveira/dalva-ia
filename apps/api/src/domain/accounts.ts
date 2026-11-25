@@ -2,8 +2,8 @@ import { and, asc, eq, sql } from "drizzle-orm";
 
 import { accounts, debtPayments, debts, savingsGoals, transactions } from "../db/schema";
 import type { Tx } from "../db/tx";
-import { conflict, invalid, notFound } from "./errors";
-import { fitsMoney } from "./money";
+import { conflict, notFound } from "./errors";
+import { post } from "./ledger";
 
 export type Account = typeof accounts.$inferSelect;
 export type AccountType = Account["type"];
@@ -77,39 +77,12 @@ export async function deleteAccount(tx: Tx, userId: string, id: string): Promise
   await tx.delete(accounts).where(owned(userId, id));
 }
 
+/** Records a signed `adjustment` on the account; the ledger moves the balance. */
 export async function adjustBalance(
   tx: Tx,
   userId: string,
   args: { id: string; amount: number; date: string; note?: string },
 ): Promise<Account> {
-  await addToBalances(tx, userId, [[args.id, args.amount]]);
-  await tx.insert(transactions).values({
-    userId,
-    type: "adjustment",
-    amount: args.amount,
-    accountId: args.id,
-    date: args.date,
-    description: "Balance adjustment",
-    note: args.note ?? null,
-  });
+  await post(tx, userId, { type: "adjustment", amount: args.amount, accountId: args.id, date: args.date, description: "Balance adjustment", note: args.note });
   return await getAccount(tx, userId, args.id);
-}
-
-export async function addToBalances(tx: Tx, userId: string, deltas: Array<[accountId: string | null, delta: number]>): Promise<void> {
-  const sums = new Map<string, number>();
-  for (const [accountId, delta] of deltas) {
-    if (accountId !== null) sums.set(accountId, (sums.get(accountId) ?? 0) + delta);
-  }
-  for (const [accountId, delta] of [...sums].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    if (delta === 0) continue;
-    const [account] = await tx
-      .update(accounts)
-      .set({ balance: sql`${accounts.balance} + ${delta}` })
-      .where(owned(userId, accountId))
-      .returning({ balance: accounts.balance, currency: accounts.currency });
-    if (!account) throw notFound("Account");
-    if (!Number.isSafeInteger(account.balance) || !fitsMoney(account.balance, account.currency)) {
-      throw invalid("amount.amountMinor", "Balance out of range");
-    }
-  }
 }

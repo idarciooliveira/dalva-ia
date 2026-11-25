@@ -204,6 +204,23 @@ describe("domain/goals contributions", () => {
       expect(await transactionRows()).toHaveLength(2);
     });
 
+    it("removes a contribution pointing at a non-transfer row, keeping that row and its balance", async () => {
+      const alice = await createTestUser();
+      const accountId = await seedAccount(alice, { balance: 10_000 });
+      const goal = await seedGoal(alice);
+      const spent = await seedTransaction(alice, accountId, { type: "expense", amount: 700 });
+      const [contribution] = await testDb()
+        .insert(goalContributions)
+        .values({ userId: alice, goalId: goal.id, amount: 700, date: "2026-03-01", transactionId: spent })
+        .returning();
+      await testDb().update(savingsGoals).set({ currentAmount: 700 }).where(eq(savingsGoals.id, goal.id));
+
+      await tx((t) => goals.removeContribution(t, alice, contribution!.id));
+      expect(await getTransactionRow(spent)).toMatchObject({ amount: 700 });
+      expect(await balanceOf(accountId)).toBe(10_000);
+      expect(await goalRow(goal.id)).toMatchObject({ currentAmount: 0 });
+    });
+
     it("removes the remaining leg of a contribution transfer whose pair is gone", async () => {
       const alice = await createTestUser();
       const from = await seedAccount(alice, { balance: 7_000 });
