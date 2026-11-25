@@ -30,6 +30,7 @@ import { apiErrorMessage } from "@/lib/api/errors";
 import { fractionDigits, maskPlaceholder } from "@/lib/money";
 import { ACCOUNT_TYPES, ACCOUNT_THEMES, type AccountType } from "@/lib/accounts";
 import { CURRENCIES, getCurrencySymbol } from "@/lib/currencies";
+import { CurrencyFlag } from "@/components/currency-flag";
 import { cn } from "@/lib/utils";
 
 interface AccountFormDialogProps {
@@ -216,7 +217,7 @@ export function AccountFormDialog({
           {!isEdit && (
             <div className="flex items-center gap-3 border-b border-border py-3">
               <span className="text-base text-muted-foreground shrink-0 w-5 text-center font-medium">
-                {currencyInfo?.flag ?? "$"}
+                {currencyInfo ? <CurrencyFlag country={currencyInfo.country} className="mx-auto" /> : "$"}
               </span>
               <Select
                 value={currency}
@@ -236,7 +237,7 @@ export function AccountFormDialog({
                 <SelectContent>
                   {CURRENCIES.map((c) => (
                     <SelectItem key={c.code} value={c.code}>
-                      {c.flag} {c.code} — {c.name}
+                      <CurrencyFlag country={c.country} /> {c.code} — {c.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
