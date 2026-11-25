@@ -289,9 +289,11 @@ export function transferCurrency(from: Pick<Account, "id" | "currency">, to: Pic
   return from.currency;
 }
 
-async function assertTransferAccounts(tx: Tx, userId: string, fromAccountId: string, toAccountId: string) {
+async function transferAccounts(tx: Tx, userId: string, fromAccountId: string, toAccountId: string) {
   if (fromAccountId === toAccountId) throw invalid("toAccountId", "Cannot transfer to the same account");
-  transferCurrency(await account(tx, userId, fromAccountId), await account(tx, userId, toAccountId));
+  const from = await account(tx, userId, fromAccountId);
+  const to = await account(tx, userId, toAccountId);
+  return { from, to, currency: transferCurrency(from, to) };
 }
 
 /* Writing ------------------------------------------------------------------ */
@@ -332,7 +334,7 @@ async function insertSingle(tx: Tx, userId: string, posting: SinglePosting): Pro
 }
 
 async function insertTransfer(tx: Tx, userId: string, posting: TransferPosting): Promise<TransferEntry> {
-  await assertTransferAccounts(tx, userId, posting.fromAccountId, posting.toAccountId);
+  await transferAccounts(tx, userId, posting.fromAccountId, posting.toAccountId);
   const shared = {
     userId,
     type: "transfer" as const,
@@ -395,7 +397,16 @@ async function amendTransfer(tx: Tx, userId: string, entry: TransferEntry, chang
   const fromAccountId = changes.fromAccountId ?? outgoing.accountId;
   const toAccountId = changes.toAccountId ?? incoming.accountId;
   if (fromAccountId === null || toAccountId === null) throw notFound("Account");
-  await assertTransferAccounts(tx, userId, fromAccountId, toAccountId);
+  const { from, to, currency } = await transferAccounts(tx, userId, fromAccountId, toAccountId);
+  // Each leg's amount is in its old account's currency (legacy legs may differ): it can't carry over to another one.
+  if (changes.amount === undefined) {
+    const known = new Map([from, to].map((a) => [a.id, a.currency]));
+    for (const leg of [outgoing, incoming]) {
+      if (leg.accountId === null) continue;
+      const before = known.get(leg.accountId) ?? (await account(tx, userId, leg.accountId)).currency;
+      if (before !== currency) throw invalid("amount", "Provide amount when moving a transfer to accounts in another currency");
+    }
+  }
 
   const shared = patchOf({ amount: changes.amount, date: changes.date, description: changes.description, note: changes.note });
   const write = async (leg: Transaction, patch: Partial<Transaction>) =>

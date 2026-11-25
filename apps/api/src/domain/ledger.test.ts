@@ -246,6 +246,34 @@ describe("domain/ledger", () => {
       expect([await balanceOf(usd), await balanceOf(eur)]).toEqual([10_000, 0]);
     });
 
+    it("requires an amount when an amend changes either leg's currency", async () => {
+      const alice = await createTestUser();
+      const usd = await seedAccount(alice, { balance: 9_000 });
+      const usd2 = await seedAccount(alice);
+      const eur = await seedAccount(alice, { currency: "EUR", balance: 900 });
+      const eur2 = await seedAccount(alice, { currency: "EUR" });
+      // Legacy: 1,000 USD out, 900 EUR in.
+      const group = randomUUID();
+      const outgoing = await seedTransaction(alice, usd, { type: "transfer", amount: 1_000, destinationAccountId: eur, transferGroupId: group });
+      const incoming = await seedTransaction(alice, eur, { type: "transfer", amount: 900, transferGroupId: group, linkedTransactionId: outgoing });
+      await testDb().update(transactions).set({ linkedTransactionId: incoming }).where(eq(transactions.id, outgoing));
+      const amend = (changes: ledger.TransferChanges) =>
+        tx(async (t) => ledger.amend(t, alice, await ledger.open(t, alice, outgoing, "transfer"), changes));
+      const missingAmount = { code: "validation_failed", message: "Provide amount when moving a transfer to accounts in another currency" };
+
+      expect(await domainRejection(amend({ toAccountId: usd2 }))).toEqual(missingAmount);
+      expect(await domainRejection(amend({ fromAccountId: eur2 }))).toEqual(missingAmount);
+      expect([await balanceOf(usd), await balanceOf(usd2), await balanceOf(eur), await balanceOf(eur2)]).toEqual([9_000, 0, 900, 0]);
+
+      await amend({ toAccountId: usd2, amount: 1_000 });
+      expect([await balanceOf(usd), await balanceOf(usd2), await balanceOf(eur)]).toEqual([9_000, 1_000, 0]);
+
+      // A same-currency transfer moved to accounts in another currency needs one too; within one currency it doesn't.
+      expect(await domainRejection(amend({ fromAccountId: eur, toAccountId: eur2 }))).toEqual(missingAmount);
+      await amend({ toAccountId: (await seedAccount(alice)) });
+      expect(await balanceOf(usd2)).toBe(0);
+    });
+
     it("checks the balance range in each account's own currency", async () => {
       const alice = await createTestUser();
       // KWD has 3 decimals: the stored ×100 amount × 10 must stay a safe integer.
