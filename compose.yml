@@ -1,25 +1,3 @@
-# DALVA in production: web, API, agent and Postgres in one stack. See docs/deploy.md.
-# Local dev uses compose.dev.yml (Postgres only).
-#   cp .env.example .env   # fill in the shared and production sections
-#   docker compose up -d
-# Every value comes from the root .env (compose interpolation). Each service gets only the
-# variables it needs. No published ports: Dokploy's Traefik reaches `web` over the
-# external dokploy-network (Domains -> service `web`, port 8080), behind Cloudflare.
-#
-#   Traefik -> web:8080 (Caddy) -> /api/auth/*, /api/trpc/*   -> api:4000 -> postgres
-#                                  /webhooks/telegram       -> agent:3000 -> api:4000
-#                                  everything else          -> static SPA
-#
-# Networks: only `egress` reaches the internet: the agent (Telegram, the model provider)
-# and the API (Telegram, when the owner saves the bot). Postgres, migrate and backup have
-# no route out; web sits on dokploy-network for Traefik only.
-#
-# Fixed here, not in .env: database and role name (dalva), NODE_ENV, CLIENT_IP_HEADER,
-# image versions of Postgres, backup schedule. Tuning knobs keep their code defaults.
-# The Telegram bot and the AI provider are not env: the instance owner (first user to
-# sign up) sets them in the web app, Settings → Assistant setup. They live in Postgres,
-# secrets encrypted with a key derived from BETTER_AUTH_SECRET.
-
 name: ${COMPOSE_PROJECT_NAME:-dalva}
 
 x-hardening: &hardening
@@ -77,7 +55,6 @@ services:
     networks:
       - backend
 
-  # One-shot: applies pending migrations, then exits. The API starts only after it succeeds.
   migrate:
     <<: *hardening
     image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-api:${API_IMAGE_TAG:-latest}
@@ -102,7 +79,6 @@ services:
     <<: *hardening
     image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-api:${API_IMAGE_TAG:-latest}
     stop_grace_period: 15s
-    # Bun writes under $HOME (/tmp in the image) at runtime; the root stays read-only.
     tmpfs:
       - /tmp
     environment:
@@ -114,7 +90,6 @@ services:
       FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
       CLIENT_IP_HEADER: cf-connecting-ip
     healthcheck:
-      # Distroless image: no curl or shell, so use bun. 503 while Postgres doesn't answer.
       test:
         - CMD
         - bun
@@ -137,7 +112,6 @@ services:
     networks:
       - backend
       - app
-      # Telegram's Bot API: saving the bot checks the token and sets the webhook.
       - egress
 
   web:
@@ -166,19 +140,14 @@ services:
   agent:
     <<: *hardening
     image: ghcr.io/${GHCR_OWNER:?set GHCR_OWNER}/dalva-agent:${AGENT_IMAGE_TAG:-latest}
-    # The agent drains for 8s on SIGTERM; keep this above that.
     stop_grace_period: 15s
     tmpfs:
       - /tmp
     environment:
       HOME: /tmp # Bun writes under $HOME; the root is read-only
       PORT: "3000"
-      # Origin only: the client appends /api/trpc.
       FINANCE_API_URL: http://api:4000
       FINANCE_API_SERVICE_KEY: ${FINANCE_API_SERVICE_KEY:?set FINANCE_API_SERVICE_KEY}
-      # Bot and model settings come from the API (instance.agentConfig), re-read every 15s.
-      # Webhook delivery follows from the https PUBLIC_URL; until a bot is saved the agent
-      # stays healthy and the webhook route answers 503.
     healthcheck:
       test:
         - CMD
@@ -201,14 +170,9 @@ services:
       - app
       - egress
 
-  # Daily pg_dump at 03:00 UTC into the `backups` volume, keeping 14 days.
-  #   docker compose run --rm backup now                      one dump now
-  #   docker compose run --rm backup list                     dumps on disk
-  #   docker compose run --rm backup restore <file> <db>      restore into a NEW database
   backup:
     <<: *hardening
     image: postgres:18.7-alpine
-    # Root, but with no capabilities: writes only to the root-owned volume.
     user: "0:0"
     # sh as PID 1 ignores SIGTERM; tini forwards it so stop doesn't wait for SIGKILL.
     init: true
@@ -283,15 +247,11 @@ volumes:
   backups:
 
 networks:
-  # No internet. Postgres and its clients.
   backend:
     internal: true
-  # No internet. web -> api, web -> agent, agent -> api.
   app:
     internal: true
-  # Dokploy's Traefik network (created by Dokploy; CI creates it). Only `web` joins it.
   dokploy:
     name: dokploy-network
     external: true
-  # Internet access for the agent and the API.
   egress:

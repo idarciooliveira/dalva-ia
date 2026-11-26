@@ -5,7 +5,6 @@ import { readEnvFile } from "./env";
 
 export const root = join(import.meta.dir, "../..");
 export const apiDir = join(root, "apps/api");
-/** The repo's only env file. Every app loads it (`bun --env-file=../../.env`, Vite's envDir). */
 export const envFile = join(root, ".env");
 
 export function rootEnv(): Record<string, string> {
@@ -27,10 +26,6 @@ function reachable(host: string, port: number): Promise<boolean> {
   });
 }
 
-/**
- * Postgres for DATABASE_URL: already listening (compose or any other server), or
- * started from compose.dev.yml. Exits with a hint when neither works.
- */
 export async function ensurePostgres(databaseUrl: string, label: string): Promise<void> {
   const url = new URL(databaseUrl);
   const host = url.hostname;

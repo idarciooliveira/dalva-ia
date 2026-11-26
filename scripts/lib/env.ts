@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 
-/** `KEY=value` lines, `export` allowed. Quoted values keep `#`; unquoted ones end at ` #`. */
 export function parseEnv(text: string): Record<string, string> {
   const env: Record<string, string> = {};
   for (const line of text.split("\n")) {

@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-// `bun run setup`: the root .env (from .env.example, with generated secrets), Postgres, migrations.
-// Safe to re-run.
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";

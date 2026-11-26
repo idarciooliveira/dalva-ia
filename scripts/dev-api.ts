@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-// `bun run dev:api`: Postgres up (compose.dev.yml unless something already listens),
-// migrations applied, then apps/api in watch mode on PORT (4000). Env: the root .env.
 import { existsSync } from "node:fs";
 
 import { apiDir, envFile, ensurePostgres, migrate, rootEnv } from "./lib/api-env";

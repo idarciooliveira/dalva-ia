@@ -9,16 +9,11 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// The repo's only env file is the root .env.
 const envDir = fileURLToPath(new URL('../..', import.meta.url))
 
 const config = defineConfig(({ mode }) => {
-  // apps/api (Better Auth at /api/auth, the API at /api/trpc). Web and API share one
-  // origin, as behind the production proxy, so the session cookie is first-party.
-  // DALVA_API_URL (shell or .env) wins; otherwise the API's PORT from .env, default 4000.
   const env = loadEnv(mode, envDir, ['DALVA_', 'PORT'])
   const apiProxy: Record<string, ProxyOptions> = {
-    // Host and Origin stay the web origin: the API checks Origin against its PUBLIC_URL.
     '/api/': {
       target: env.DALVA_API_URL || `http://localhost:${env.PORT || '4000'}`,
       changeOrigin: false,
