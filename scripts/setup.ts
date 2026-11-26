@@ -11,8 +11,15 @@ const GENERATED = ["BETTER_AUTH_SECRET", "FINANCE_API_SERVICE_KEY"] as const;
 
 function setVar(text: string, name: string, value: string): string {
   const line = `${name}=${/[\s#"']/.test(value) ? JSON.stringify(value) : value}`;
-  const pattern = new RegExp(`^#?[ \\t]*${name}=.*$`, "m");
-  return pattern.test(text) ? text.replace(pattern, () => line) : `${text.trimEnd()}\n${line}\n`;
+  const lines = text.split("\n");
+  // parseEnv keeps the last active assignment, so that is the one to replace.
+  const active = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${name}[ \\t]*=`);
+  const commented = new RegExp(`^#[ \\t]*${name}=`);
+  let at = lines.findLastIndex((l) => active.test(l));
+  if (at < 0) at = lines.findIndex((l) => commented.test(l));
+  if (at < 0) return `${text.trimEnd()}\n${line}\n`;
+  lines[at] = line;
+  return lines.join("\n");
 }
 
 const created = !existsSync(envFile);
