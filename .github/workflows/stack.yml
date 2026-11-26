@@ -19,7 +19,6 @@ on:
       - bun.lock
       - tsconfig.json
       - .dockerignore
-      - .github/workflows/images.yml
       - .github/workflows/stack.yml
   workflow_dispatch:
 
@@ -40,50 +39,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build api
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/api/Dockerfile
-          load: true
-          provenance: false
-          tags: ghcr.io/ci/dalva-api:latest
-          cache-from: type=gha,scope=dalva-api
-      - name: Build web
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/web/Dockerfile
-          load: true
-          provenance: false
-          tags: ghcr.io/ci/dalva-web:latest
-          cache-from: type=gha,scope=dalva-web
-      - name: Build agent
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: apps/agent/Dockerfile
-          load: true
-          provenance: false
-          tags: ghcr.io/ci/dalva-agent:latest
-          cache-from: type=gha,scope=dalva-agent
-
       - name: Write .env
         run: |
           secret() { openssl rand -hex 32; }
           {
-            echo "GHCR_OWNER=ci"
             echo "POSTGRES_PASSWORD=$(secret)"
             echo "PUBLIC_URL=https://dalva-ci.example.com"
             echo "BETTER_AUTH_SECRET=$(secret)"
             echo "FINANCE_API_SERVICE_KEY=$(secret)"
           } > .env
-          [ "$(grep -c . .env)" = 5 ]
+          [ "$(grep -c . .env)" = 4 ]
 
       - name: Validate compose file
         run: docker compose config --quiet
+
+      - name: Build images
+        run: docker compose build
 
       - name: Start the stack
         run: |
