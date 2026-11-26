@@ -9,15 +9,15 @@
     }
   },
   "scripts": {
-    "dev": "bun --watch src/main.ts",
-    "start": "bun src/main.ts",
+    "dev": "bun --env-file=../../.env --watch src/main.ts",
+    "start": "bun --env-file=../../.env src/main.ts",
     "build": "bun build src/main.ts --target bun --outdir dist",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
-    "test": "vitest",
-    "test:once": "vitest run",
+    "test": "bun --env-file=../../.env run vitest",
+    "test:once": "bun --env-file=../../.env run vitest run",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "bun src/db/migrate-cli.ts"
+    "db:migrate": "bun --env-file=../../.env src/db/migrate-cli.ts"
   },
   "dependencies": {
     "@hono/trpc-server": "^0.4.2",

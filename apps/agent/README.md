@@ -4,7 +4,7 @@ Telegram bot for DALVA. Bun + Hono, one long-running process. Stateless: events,
 
 ## Env
 
-Validated at boot; a bad or missing value exits with the variable names (never the values). See `.env.example`.
+Validated at boot; a bad or missing value exits with the variable names (never the values). Locally it comes from the root `.env` (see the root `.env.example`); in production, from `compose.yml`.
 
 | Var | |
 | --- | --- |
@@ -34,11 +34,11 @@ Without a bot the agent boots, `/health` is `ok` with `mode: "unconfigured"`, an
 ## Local dev
 
 ```bash
-bun run setup   # apps/api/.env.local with the service key; no agent env needed
+bun run setup   # root .env with the service key
 bun run dev     # or bun run dev:agent with the API already running
 ```
 
-`dev:agent` runs the bot against the local `apps/api`: it takes `FINANCE_API_URL` (`http://localhost:$PORT`) and `FINANCE_API_SERVICE_KEY` from `apps/api/.env.local`. Sign up (the first user owns the instance), then set a dev bot and an AI key in Settings → Assistant setup. The local `PUBLIC_URL` is http, so the bot polls.
+`dev:agent` runs the bot against the local `apps/api`: it reads the root `.env`, points `FINANCE_API_URL` at `http://localhost:$PORT` (the API's port) and keeps the agent on 8080. Sign up (the first user owns the instance), then set a dev bot and an AI key in Settings → Assistant setup. The local `PUBLIC_URL` is http, so the bot polls.
 
 Polling calls `deleteWebhook` first (pending updates are kept), so don't use a production bot for dev. Use a separate bot.
 
@@ -133,6 +133,6 @@ docker build -f apps/agent/Dockerfile -t dalva-agent .
 docker run -e FINANCE_API_URL=http://host.docker.internal:4000 -e FINANCE_API_SERVICE_KEY=... -p 8080:8080 dalva-agent
 ```
 
-Production runs the GHCR image in the compose stack, `deploy/docker-compose.yml` (see `docs/deploy.md`).
+Production runs the GHCR image in the compose stack, `compose.yml` (see `docs/deploy.md`).
 
 Build from the repo root: the image bundles the service with `@mpf/shared` into one file (only types come from `@mpf/api`) and runs it on distroless Bun as a non-root user.

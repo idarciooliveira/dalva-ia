@@ -14,7 +14,10 @@ dalva-personal-finance-app/
 |- apps/api/                  @mpf/api              Backend (Bun + Hono + Drizzle + Postgres + Better Auth)
 |- apps/agent/                @mpf/agent            Telegram agent (Bun + Hono)
 |- packages/shared/          @mpf/shared           Money, date and agent-limit helpers shared by web, API and agent
-|- deploy/                                          Production compose stack
+|- deploy/                                          Stack smoke test
+|- compose.yml                                      Production compose stack
+|- compose.dev.yml                                  Local Postgres
+|- .env.example                                     The only env file (copy to .env)
 |- scripts/                                         Local setup and dev helpers
 `- docs/                                            Product, design and deploy docs
 ```
@@ -24,7 +27,7 @@ dalva-personal-finance-app/
 ### Commands
 
 ```bash
-bun run setup        # One-time local setup: apps/api/.env.local secrets, Postgres (compose.dev.yml), migrations
+bun run setup        # One-time local setup: root .env with secrets, Postgres (compose.dev.yml), migrations
 bun run dev          # Start API (Postgres + migrations), web and agent together
 bun run dev:api      # Start the API only (Postgres + migrations first)
 bun run dev:web      # Start the web app only (proxies /api to localhost:4000)
@@ -115,7 +118,7 @@ bun run db:migrate   # Apply migrations
 | `apps/web/e2e/*.spec.ts` | Playwright E2E coverage |
 | `apps/web/src/lib/api/` | Contract client, query keys, query options, `useApiMutation`, error messages |
 | `apps/web/src/lib/auth-client.ts` | Better Auth client and session query |
-| `apps/api/.env.local` | API env written by `bun run setup` (see `apps/api/.env.example`) |
+| `.env` | The only env file, at the repo root: local dev and `compose.yml`. Written by `bun run setup` from `.env.example` |
 
 ### Routing
 
@@ -303,7 +306,7 @@ Wise-inspired. Full spec in `docs/design-system.md`.
 - Accounts, transactions, transfers, categories, savings goals and debts
 - Settings with Telegram linking; Telegram agent for reads and writes
 - Instance settings in the web app (owner only): Telegram bot (webhook set by the API) and AI provider. The agent reads them from the API (`instance.agentConfig`) and applies changes without a restart
-- Production on one compose stack (`deploy/`)
+- Production on one compose stack (`compose.yml`, env from the root `.env`)
 
 **Partial or not yet wired:**
 

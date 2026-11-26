@@ -10,7 +10,7 @@ Cloudflare -> Dokploy Traefik -> web:8080 (Caddy, single entry)
 migrate (one-shot, before api) -> postgres     backup (daily pg_dump) -> postgres
 ```
 
-Files: `deploy/docker-compose.yml`, `deploy/.env.example`, `deploy/smoke.sh`. Images: `ghcr.io/<owner>/dalva-api`, `dalva-web`, `dalva-agent`.
+Files, from the repo root: `compose.yml`, `.env.example`, `deploy/smoke.sh`. Images: `ghcr.io/<owner>/dalva-api`, `dalva-web`, `dalva-agent`.
 
 Only the agent and the API reach the internet (Telegram, the model provider; the API only calls Telegram when the owner saves the bot). Postgres and backup sit on internal networks; `web` joins Dokploy's `dokploy-network` so Traefik can reach it. Every service runs read-only, with no capabilities, `no-new-privileges`, CPU and memory limits and rotated logs; the long-running ones have healthchecks. `postgres` runs as its own user, API, web and agent as 65532, `backup` as root without capabilities.
 
@@ -22,11 +22,11 @@ Only the agent and the API reach the internet (Telegram, the model provider; the
 - `dalva-web`: the SPA built with Bun, served by Caddy (`apps/web/Caddyfile`). No build-time settings: the bot username comes from the instance settings, through the API.
 - `dalva-agent`: unchanged name, tags and triggers.
 
-`.github/workflows/stack.yml` runs on pull requests that touch `deploy/**`, a Dockerfile, the Caddyfile or migrations: it builds the three images, starts the stack on an empty database and runs `deploy/smoke.sh`.
+`.github/workflows/stack.yml` runs on pull requests that touch `compose.yml`, `deploy/**`, a Dockerfile, the Caddyfile or migrations: it builds the three images, starts the stack on an empty database and runs `deploy/smoke.sh`.
 
 ## Secrets and settings
 
-Five values in the stack's environment (Dokploy: Environment tab; by hand: `deploy/.env`, a copy of `deploy/.env.example`). Compose uses them for interpolation; each service gets only its own variables, so the agent never sees `BETTER_AUTH_SECRET`.
+Five values in the stack's environment (Dokploy: Environment tab; by hand: `.env` in the repo root, a copy of `.env.example`, the same file local dev uses). Compose uses them for interpolation; each service gets only its own variables, so the agent never sees `BETTER_AUTH_SECRET`.
 
 Generate secrets with `openssl rand -hex 32`. Hex matters: the Postgres password goes into a URL. Every secret must differ from the others.
 
@@ -40,7 +40,7 @@ Generate secrets with `openssl rand -hex 32`. Hex matters: the Postgres password
 
 Optional: `API_IMAGE_TAG`, `WEB_IMAGE_TAG`, `AGENT_IMAGE_TAG` (`latest` by default, or a short SHA; each image is tagged with the commit that built it, so the three SHAs usually differ, see Updates) and `COMPOSE_PROJECT_NAME` (a second stack on the same host, e.g. `dalva-staging`).
 
-Fixed in `docker-compose.yml`, not settings: database and role name (`dalva`), `NODE_ENV=production`, `CLIENT_IP_HEADER=cf-connecting-ip`, the Postgres image version, and the backup (daily 03:00 UTC, 14 days). The agent's tuning (session idle, rate limit, step and timeout limits, time zone) and the log levels keep their defaults in code. The API and the agent validate their env at boot and exit naming the bad variable, never the value. `FINANCE_API_URL` is fixed to `http://api:4000` by compose.
+Fixed in `compose.yml`, not settings: database and role name (`dalva`), `NODE_ENV=production`, `CLIENT_IP_HEADER=cf-connecting-ip`, the Postgres image version, and the backup (daily 03:00 UTC, 14 days). The agent's tuning (session idle, rate limit, step and timeout limits, time zone) and the log levels keep their defaults in code. The API and the agent validate their env at boot and exit naming the bad variable, never the value. `FINANCE_API_URL` is fixed to `http://api:4000` by compose.
 
 ### In the app: bot and AI provider
 
@@ -58,13 +58,13 @@ Secrets are write-only: stored encrypted (key derived from `BETTER_AUTH_SECRET`)
 Steps for a staging stack next to production on the same VPS. Production uses the same steps with the production hostname and the production bot.
 
 1. **Bot.** Create a second bot in BotFather for staging. A bot has one webhook: saving the production bot on staging takes it from production.
-2. **Domain.** In Dokploy, create the compose service from this repo (`deploy/docker-compose.yml`) and add a domain: `staging.dalva.example.com`, service `web`, port `8080`, no path. Point it at Cloudflare as usual. Caddy decides what is reachable; the agent's and API's `/health` are not routed.
+2. **Domain.** In Dokploy, create the compose service from this repo (compose path `./compose.yml`) and add a domain: `staging.dalva.example.com`, service `web`, port `8080`, no path. Point it at Cloudflare as usual. Caddy decides what is reachable; the agent's and API's `/health` are not routed.
 3. **WAF.** Telegram must reach `/webhooks/telegram` on that hostname: no Cloudflare Access on it, and skip Bot Fight / Super Bot Fight Mode for that path (details in [Let Telegram through](#let-telegram-through)).
 4. **Images.** Make the three GHCR packages public, or `docker login ghcr.io` on the VPS with a PAT that has `read:packages`.
 5. **Stack.** On the VPS:
    ```bash
-   git clone <repo> dalva-staging && cd dalva-staging/deploy   # or copy deploy/ only
-   cp .env.example .env        # COMPOSE_PROJECT_NAME=dalva-staging, PUBLIC_URL=https://staging.dalva.example.com, secrets
+   git clone <repo> dalva-staging && cd dalva-staging   # or copy compose.yml, .env.example and deploy/ only
+   cp .env.example .env        # production section: COMPOSE_PROJECT_NAME=dalva-staging, PUBLIC_URL=https://staging.dalva.example.com, secrets
    docker compose pull
    docker compose up -d
    docker compose ps           # migrate: Exited (0); the rest healthy
@@ -72,7 +72,7 @@ Steps for a staging stack next to production on the same VPS. Production uses th
    In Dokploy the stack is the compose service: set the environment, then Deploy. `dokploy-network` already exists there; on a plain host create it with `docker network create dokploy-network`.
 6. **Owner.** Sign up in the browser before anyone else: the first user owns the instance. Finish onboarding.
 7. **Bot and AI.** Settings → Assistant setup: paste the staging bot's token (the webhook is set for you; the delivery status should show this hostname and no error), then the AI provider, model and key.
-8. **Smoke test.** `./smoke.sh` from `deploy/`: health, routing, the agent's settings, sign-up and sign-in through Caddy, a backup and a restore into a scratch database (dropped after). It leaves one `smoke-*@example.com` user and refuses to run on an empty database, where that user would become the owner.
+8. **Smoke test.** `deploy/smoke.sh` from the repo root: health, routing, the agent's settings, sign-up and sign-in through Caddy, a backup and a restore into a scratch database (dropped after). It leaves one `smoke-*@example.com` user and refuses to run on an empty database, where that user would become the owner.
 9. **Check from outside.**
    ```bash
    curl -s -o /dev/null -w '%{http_code}\n' https://staging.dalva.example.com/                        # 200
@@ -84,10 +84,12 @@ Steps for a staging stack next to production on the same VPS. Production uses th
 ## Updates
 
 ```bash
-cd deploy
+cd dalva                     # the repo root, where compose.yml and .env are
 docker compose pull
 docker compose up -d
 ```
+
+Stacks set up from `deploy/docker-compose.yml`: that file is now `compose.yml` in the repo root. In Dokploy, change the compose path to `./compose.yml` before the next deploy; the Environment tab stays as it is. By hand: move `deploy/.env` to the repo root and run compose from there.
 
 `migrate` runs on every `up` and the API waits for it, so a new API never starts on an old schema. Migrations are forward-only: rolling an image back does not roll the schema back. Before an update that carries a migration, take a backup (`docker compose run --rm backup now`).
 

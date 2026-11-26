@@ -60,7 +60,10 @@ my-personal-finance/
 |- apps/api/                  @mpf/api              Backend (Hono + Drizzle + Postgres)
 |- apps/agent/                @mpf/agent            Telegram chat agent
 |- packages/shared/          @mpf/shared           Money, date and limit helpers shared by web, API and agent
-|- deploy/                                          Production compose stack
+|- deploy/                                          Stack smoke test
+|- compose.yml                                      Production compose stack
+|- compose.dev.yml                                  Local Postgres
+|- .env.example                                     The only env file (copy to .env)
 |- scripts/                                         Local setup and dev helpers
 `- docs/                                            Product, design and deploy docs
 ```
@@ -110,13 +113,13 @@ bun run setup
 
 `setup` is safe to re-run. It:
 
-- creates `apps/api/.env.local` from `apps/api/.env.example` and generates the secrets that are missing or still placeholders:
+- creates `.env` at the repo root from `.env.example` and generates the secrets that are missing or still placeholders:
   - `BETTER_AUTH_SECRET`: signs session cookies
   - `FINANCE_API_SERVICE_KEY`: the chat agent's own key for the service routes
 - starts Postgres with `docker compose -f compose.dev.yml up -d` (skipped when a server already answers on `DATABASE_URL`)
 - applies the migrations
 
-Other API variables (`DATABASE_URL`, `PORT`, `PUBLIC_URL`, `CLIENT_IP_HEADER`, `LOG_LEVEL`) are documented in `apps/api/.env.example`. The agent needs no env file: `dev:agent` takes the API's URL and service key.
+The root `.env` is the only env file. The API, the agent, the web dev server, the scripts, `compose.dev.yml` and the production `compose.yml` all read it; every variable is documented in `.env.example`.
 
 The Telegram bot and the AI provider are not env. The first user to sign up owns the instance and sets them in Settings → Assistant setup; they are stored encrypted in Postgres and the agent reads them from the API. Locally `PUBLIC_URL` is http, so the bot polls (no webhook). Use a dev bot, not the production one.
 

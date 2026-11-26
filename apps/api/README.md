@@ -7,11 +7,11 @@ DALVA's backend: Bun + Hono + Postgres + Drizzle + Better Auth. Deployed with th
 From the repo root:
 
 ```bash
-bun run setup     # apps/api/.env.local with generated secrets, Postgres (compose.dev.yml), migrations
+bun run setup     # root .env with generated secrets, Postgres (compose.dev.yml), migrations
 bun run dev:api   # Postgres up, migrations, then http://localhost:4000/health in watch mode
 ```
 
-`bun run dev` starts the API with the web app (which proxies `/api` here) and the agent. Every variable is described in `.env.example`.
+`bun run dev` starts the API with the web app (which proxies `/api` here) and the agent. Env comes from the root `.env` (every script runs `bun --env-file=../../.env`); every variable is described in the root `.env.example`.
 
 Config is validated at boot (`src/config.ts`); a bad variable is named in the error, its value never is.
 

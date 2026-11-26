@@ -1,20 +1,15 @@
 name: Compose stack
 
-# Builds the three images, runs deploy/docker-compose.yml on an empty database (with a stand-in
-# for Dokploy's network) and a .env of only the operator's five values, and runs deploy/smoke.sh:
-# health, routing, the agent waiting for a bot, sign-up and sign-in through the web entry, backup
-# and restore. Nothing is pushed.
-
 on:
   pull_request:
     branches: [main]
     paths:
+      - compose.yml
       - deploy/**
       - apps/*/Dockerfile
       - apps/*/Dockerfile.dockerignore
       - apps/web/Caddyfile
       - apps/api/drizzle/**
-      # Code the images bundle: a broken bundle, migration path or route fails here.
       - apps/api/src/**
       - apps/agent/src/**
       - apps/web/**
@@ -47,7 +42,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Same cache scopes as images.yml. Loaded into the local daemon under the names compose expects.
       - name: Build api
         uses: docker/build-push-action@v6
         with:
@@ -76,11 +70,7 @@ jobs:
           tags: ghcr.io/ci/dalva-agent:latest
           cache-from: type=gha,scope=dalva-agent
 
-      # Only what an operator sets. The bot and the AI provider are not env (Settings in the web
-      # app), so the agent must boot and stay healthy without them. Image names come from
-      # GHCR_OWNER=ci and the default :latest tag; the project name from the job env.
-      - name: Write deploy/.env
-        working-directory: deploy
+      - name: Write .env
         run: |
           secret() { openssl rand -hex 32; }
           {
@@ -93,19 +83,14 @@ jobs:
           [ "$(grep -c . .env)" = 5 ]
 
       - name: Validate compose file
-        working-directory: deploy
         run: docker compose config --quiet
 
       - name: Start the stack
-        working-directory: deploy
         run: |
-          # Created by Dokploy in production; `web` joins it.
           docker network create dokploy-network
-          # Public images only; ours were just built and loaded.
           docker compose pull postgres backup
           docker compose up -d --pull never postgres migrate api web agent backup
 
-      # An empty database: the smoke user is the first user, so it owns the instance.
       - name: Smoke test
         run: deploy/smoke.sh
         env:
@@ -113,14 +98,12 @@ jobs:
 
       - name: Logs
         if: always()
-        working-directory: deploy
         run: |
           docker compose ps -a
           docker compose logs --no-color --timestamps
 
       - name: Stop
         if: always()
-        working-directory: deploy
         run: |
           docker compose down -v
           docker network rm dokploy-network || true

@@ -3,39 +3,49 @@ import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { apiDir, apiEnv, ensurePostgres, migrate } from "./lib/api-env";
-
-const apiEnvFile = join(apiDir, ".env.local");
+import { envFile, ensurePostgres, migrate, root, rootEnv } from "./lib/api-env";
+import { parseEnv } from "./lib/env";
 
 const secret = () => randomBytes(32).toString("hex");
 const GENERATED = ["BETTER_AUTH_SECRET", "FINANCE_API_SERVICE_KEY"] as const;
 
-const created = !existsSync(apiEnvFile);
-let text = created ? readFileSync(join(apiDir, ".env.example"), "utf8") : readFileSync(apiEnvFile, "utf8");
-const current = created ? {} : apiEnv();
+function setVar(text: string, name: string, value: string): string {
+  const line = `${name}=${/[\s#"']/.test(value) ? JSON.stringify(value) : value}`;
+  const lines = text.split("\n");
+  // parseEnv keeps the last active assignment, so that is the one to replace.
+  const active = new RegExp(`^[ \\t]*(?:export[ \\t]+)?${name}[ \\t]*=`);
+  const commented = new RegExp(`^#[ \\t]*${name}=`);
+  let at = lines.findLastIndex((l) => active.test(l));
+  if (at < 0) at = lines.findIndex((l) => commented.test(l));
+  if (at < 0) return `${text.trimEnd()}\n${line}\n`;
+  lines[at] = line;
+  return lines.join("\n");
+}
+
+const created = !existsSync(envFile);
+let text = readFileSync(created ? join(root, ".env.example") : envFile, "utf8");
+
+const current = parseEnv(text);
 const generated: string[] = [];
 for (const name of GENERATED) {
-  const value = current[name as keyof typeof current];
+  const value = current[name];
   if (value && !value.includes("replace-with")) continue;
-  const line = `${name}=${secret()}`;
-  const pattern = new RegExp(`^#?\\s*${name}=.*$`, "m");
-  text = pattern.test(text) ? text.replace(pattern, line) : `${text.trimEnd()}\n${line}\n`;
+  text = setVar(text, name, secret());
   generated.push(name);
 }
-if (created || generated.length > 0) {
-  writeFileSync(apiEnvFile, text, { mode: 0o600 });
-}
+if (created || generated.length > 0) writeFileSync(envFile, text, { mode: 0o600 });
+
 console.log(
   created
-    ? `setup: created apps/api/.env.local (${generated.join(", ")} generated)`
+    ? `setup: created .env${generated.length > 0 ? ` (${generated.join(", ")} generated)` : ""}`
     : generated.length > 0
-      ? `setup: generated ${generated.join(", ")} in apps/api/.env.local`
-      : "setup: apps/api/.env.local already complete",
+      ? `setup: generated ${generated.join(", ")} in .env`
+      : "setup: .env already complete",
 );
 
-const databaseUrl = apiEnv().DATABASE_URL;
+const databaseUrl = rootEnv().DATABASE_URL;
 if (!databaseUrl) {
-  console.error("setup: DATABASE_URL is missing from apps/api/.env.local");
+  console.error("setup: DATABASE_URL is missing from .env");
   process.exit(1);
 }
 await ensurePostgres(databaseUrl, "setup");
