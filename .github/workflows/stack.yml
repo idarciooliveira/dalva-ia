@@ -1,7 +1,7 @@
 name: Compose stack
 
-# Builds the three images, runs deploy/docker-compose.yml on an empty database (with a stand-in
-# for Dokploy's network) and a .env of only the operator's five values, and runs deploy/smoke.sh:
+# Builds the three images, runs compose.yml on an empty database (with a stand-in for Dokploy's
+# network) and a .env of only the operator's five values, and runs deploy/smoke.sh:
 # health, routing, the agent waiting for a bot, sign-up and sign-in through the web entry, backup
 # and restore. Nothing is pushed.
 
@@ -9,6 +9,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - compose.yml
       - deploy/**
       - apps/*/Dockerfile
       - apps/*/Dockerfile.dockerignore
@@ -79,8 +80,7 @@ jobs:
       # Only what an operator sets. The bot and the AI provider are not env (Settings in the web
       # app), so the agent must boot and stay healthy without them. Image names come from
       # GHCR_OWNER=ci and the default :latest tag; the project name from the job env.
-      - name: Write deploy/.env
-        working-directory: deploy
+      - name: Write .env
         run: |
           secret() { openssl rand -hex 32; }
           {
@@ -93,11 +93,9 @@ jobs:
           [ "$(grep -c . .env)" = 5 ]
 
       - name: Validate compose file
-        working-directory: deploy
         run: docker compose config --quiet
 
       - name: Start the stack
-        working-directory: deploy
         run: |
           # Created by Dokploy in production; `web` joins it.
           docker network create dokploy-network
@@ -113,14 +111,12 @@ jobs:
 
       - name: Logs
         if: always()
-        working-directory: deploy
         run: |
           docker compose ps -a
           docker compose logs --no-color --timestamps
 
       - name: Stop
         if: always()
-        working-directory: deploy
         run: |
           docker compose down -v
           docker network rm dokploy-network || true

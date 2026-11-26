@@ -1,7 +1,8 @@
-# DALVA: web, API, agent and Postgres in one stack. See docs/deploy.md.
-#   cp .env.example .env   # fill it in
+# DALVA in production: web, API, agent and Postgres in one stack. See docs/deploy.md.
+# Local dev uses compose.dev.yml (Postgres only).
+#   cp .env.example .env   # fill in the shared and production sections
 #   docker compose up -d
-# Every value comes from .env (compose interpolation). Each service gets only the
+# Every value comes from the root .env (compose interpolation). Each service gets only the
 # variables it needs. No published ports: Dokploy's Traefik reaches `web` over the
 # external dokploy-network (Domains -> service `web`, port 8080), behind Cloudflare.
 #

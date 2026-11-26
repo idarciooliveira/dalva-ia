@@ -2,12 +2,12 @@
 # Smoke test for a running stack (CI, or staging after a deploy): health, routing through
 # the web entry, sign-up and sign-in, the agent's settings contract, then a backup restored
 # into a scratch database.
-#   deploy/smoke.sh            uses deploy/docker-compose.yml and deploy/.env
+#   deploy/smoke.sh            uses compose.yml and .env in the repo root
 # Leaves one smoke-*@example.com user behind. Never touches the live database otherwise.
 # The first user to sign up owns the instance: on an empty database the smoke user would.
 # It refuses that unless SMOKE_FIRST_USER=1 (CI); sign up yourself first.
 set -eu
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 
 CURL_IMAGE=curlimages/curl:8.22.0
 WAIT_SECONDS=${WAIT_SECONDS:-180}
