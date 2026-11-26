@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --watch src/main.ts",
-    "start": "bun src/main.ts",
+    "dev": "bun --env-file=../../.env --watch src/main.ts",
+    "start": "bun --env-file=../../.env src/main.ts",
     "build": "bun build src/main.ts --target bun --outdir dist",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit --noUnusedLocals --noUnusedParameters",
     "test": "vitest",
     "test:once": "vitest run",
-    "eval": "bun eval/run.ts"
+    "eval": "bun --env-file=../../.env eval/run.ts"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^4.0.142",

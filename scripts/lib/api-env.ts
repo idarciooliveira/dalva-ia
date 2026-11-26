@@ -5,10 +5,11 @@ import { readEnvFile } from "./env";
 
 export const root = join(import.meta.dir, "../..");
 export const apiDir = join(root, "apps/api");
+/** The repo's only env file. Every app loads it (`bun --env-file=../../.env`, Vite's envDir). */
+export const envFile = join(root, ".env");
 
-/** apps/api's env as Bun loads it there: .env.local over .env. */
-export function apiEnv(): Record<string, string> {
-  return { ...readEnvFile(join(apiDir, ".env")), ...readEnvFile(join(apiDir, ".env.local")) };
+export function rootEnv(): Record<string, string> {
+  return readEnvFile(envFile);
 }
 
 function reachable(host: string, port: number): Promise<boolean> {
@@ -51,7 +52,7 @@ export async function ensurePostgres(databaseUrl: string, label: string): Promis
   if (started && (await reachable(host, port))) return;
   console.error(
     `${label}: no Postgres on ${host}:${port}. Start Docker and run \`docker compose -f compose.dev.yml up -d\`, ` +
-      "or point DATABASE_URL in apps/api/.env.local at a running server.",
+      "or point DATABASE_URL in .env at a running server.",
   );
   process.exit(1);
 }

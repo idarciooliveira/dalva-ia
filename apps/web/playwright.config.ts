@@ -68,7 +68,7 @@ export default defineConfig({
   /* Start the API (fresh database) and the web dev server before the tests */
   webServer: [
     {
-      command: "bun scripts/e2e-server.ts",
+      command: "bun --env-file=../../.env scripts/e2e-server.ts",
       cwd: "../api",
       url: `http://127.0.0.1:${apiPort}/health`,
       env: {

@@ -4,8 +4,8 @@
  *
  * PORT, PUBLIC_URL   where the API listens and the web origin in front of it
  * E2E_DATABASE_URL   database to recreate (name must start with dalva_e2e). Default: the
- *                    server of DATABASE_URL (apps/api/.env.local, which Bun loads here, or
- *                    the compose server) with the database dalva_e2e_<PORT>, so runs on
+ *                    server of DATABASE_URL (the root .env, which the Playwright command
+ *                    loads, or the compose server) with the database dalva_e2e_<PORT>, so runs on
  *                    different ports never drop each other's database.
  *
  * E2E_FINANCE_API_SERVICE_KEY  the service key the tests call the bot's routes with
@@ -17,7 +17,7 @@
  *
  * Telegram is a local stub (scripts/telegram-stub.ts, `TELEGRAM_API_URL`): no test reaches it.
  *
- * The other secrets are random per run; of apps/api/.env.local only the server
+ * The other secrets are random per run; of the root .env only the server
  * address, DATABASE_POOL_MAX and LOG_LEVEL are used.
  */
 import { randomBytes } from "node:crypto";

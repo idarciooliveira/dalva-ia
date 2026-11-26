@@ -1,6 +1,6 @@
 # Local development Postgres for apps/api. Not used in production.
 #   docker compose -f compose.dev.yml up -d
-# The API reads DATABASE_URL (apps/api/.env.example has the URL for this server);
+# The API reads DATABASE_URL from the root .env (.env.example has the URL for this server);
 # the apps/api test suite uses TEST_DATABASE_URL, which defaults to this server.
 name: dalva-dev
 
@@ -13,7 +13,7 @@ services:
       POSTGRES_PASSWORD: dalva
       POSTGRES_DB: dalva
     ports:
-      # Loopback only. Set DALVA_POSTGRES_PORT if 5432 is taken.
+      # Loopback only. Set DALVA_POSTGRES_PORT in .env if 5432 is taken (and DATABASE_URL to match).
       - "127.0.0.1:${DALVA_POSTGRES_PORT:-5432}:5432"
     volumes:
       # Postgres 18 images keep data under /var/lib/postgresql/<major>/docker.
