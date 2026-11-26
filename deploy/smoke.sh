@@ -1,11 +1,4 @@
 #!/bin/sh
-# Smoke test for a running stack (CI, or staging after a deploy): health, routing through
-# the web entry, sign-up and sign-in, the agent's settings contract, then a backup restored
-# into a scratch database.
-#   deploy/smoke.sh            uses compose.yml and .env in the repo root
-# Leaves one smoke-*@example.com user behind. Never touches the live database otherwise.
-# The first user to sign up owns the instance: on an empty database the smoke user would.
-# It refuses that unless SMOKE_FIRST_USER=1 (CI); sign up yourself first.
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -16,7 +9,6 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 ok() { echo "ok: $*"; }
 container() { id=$(docker compose ps -q "$1"); [ -n "$id" ] || fail "$1 is not running"; echo "$id"; }
 
-# ---- health ----
 wait_healthy() {
   for service in "$@"; do
     id=$(container "$service")
@@ -45,7 +37,6 @@ for target in api:4000 agent:3000; do
   ok "$service /health"
 done
 
-# ---- routing through the web entry (what Traefik sees) ----
 web=$(container web)
 api=$(container api)
 public_url=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$api" | sed -n 's/^PUBLIC_URL=//p')
@@ -54,6 +45,14 @@ client_ip_header=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}'
 web_curl() { docker run --rm --network "container:$web" "$CURL_IMAGE" -sS "$@"; }
 status() { web_curl -o /dev/null -w '%{http_code}' "$@"; }
 expect() { got=$1; want=$2; what=$3; [ "$got" = "$want" ] || fail "$what: got $got, want $want"; ok "$what -> $got"; }
+webhook_status_after_recovery() {
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    code=$(status -X POST http://127.0.0.1:8080/webhooks/telegram)
+    [ "$code" = 503 ] || break
+    sleep 3
+  done
+  echo "$code"
+}
 
 expect "$(status http://127.0.0.1:8080/)" 200 "GET / (SPA shell)"
 expect "$(status http://127.0.0.1:8080/transactions)" 200 "GET /transactions (SPA fallback)"
@@ -61,9 +60,6 @@ web_curl http://127.0.0.1:8080/does-not-exist | grep -q '<html' || fail "SPA fal
 expect "$(status http://127.0.0.1:8080/api/unknown)" 404 "GET /api/unknown"
 expect "$(status http://127.0.0.1:8080/api/v1/accounts)" 404 "GET /api/v1/accounts (removed)"
 expect "$(status http://127.0.0.1:8080/api/trpc/accounts.list)" 401 "GET /api/trpc/accounts.list without session"
-# The agent reads the bot from the API (instance settings). Without one it stays healthy and
-# the webhook answers 503 "telegram not configured"; with one, 503 until boot recovery
-# finished, then 401 without the secret.
 agent_config=$(docker compose exec -T agent bun -e "const r=await fetch('http://api:4000/api/trpc/instance.agentConfig',{headers:{authorization:'Bearer '+process.env.FINANCE_API_SERVICE_KEY}});const j=await r.json();console.log(r.status, j.result?.data?.telegram ? 'telegram' : 'no-telegram', j.result?.data?.ai ? 'ai' : 'no-ai')") \
   || fail "agent -> api instance.agentConfig"
 case "$agent_config" in 200\ *) ok "agent reads instance.agentConfig ($agent_config)" ;; *) fail "instance.agentConfig: $agent_config" ;; esac
@@ -75,15 +71,9 @@ if echo "$agent_config" | grep -q ' no-telegram'; then
     || fail "agent /health while unconfigured"
   ok "agent healthy and waiting for a bot"
 else
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    webhook=$(status -X POST http://127.0.0.1:8080/webhooks/telegram)
-    [ "$webhook" = 503 ] || break
-    sleep 3
-  done
-  expect "$webhook" 401 "POST /webhooks/telegram without secret (agent)"
+  expect "$(webhook_status_after_recovery)" 401 "POST /webhooks/telegram without secret (agent)"
 fi
 
-# ---- sign-up, sign-in, session through the web entry ----
 users=$(docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc "select count(*) from users"' | tr -d '\r ')
 if [ "$users" = 0 ] && [ "${SMOKE_FIRST_USER:-}" != 1 ]; then
   fail "no users yet: the smoke user would own this instance. Sign up yourself first (or SMOKE_FIRST_USER=1)"
@@ -116,7 +106,6 @@ else
   ok "smoke user doesn't see the instance settings"
 fi
 
-# ---- backup, then restore into a scratch database ----
 out=$(docker compose run --rm -T backup now)
 echo "$out"
 file=$(echo "$out" | sed -n 's/.*"msg":"backup_done","file":"\([^"]*\)".*/\1/p' | tail -1)

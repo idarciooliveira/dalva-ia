@@ -1,25 +1,3 @@
-/**
- * The API for Playwright: recreates a throwaway database, migrates it, then serves.
- * Started by apps/web/playwright.config.ts; not for development (use `bun run dev:api`).
- *
- * PORT, PUBLIC_URL   where the API listens and the web origin in front of it
- * E2E_DATABASE_URL   database to recreate (name must start with dalva_e2e). Default: the
- *                    server of DATABASE_URL (the root .env, which the Playwright command
- *                    loads, or the compose server) with the database dalva_e2e_<PORT>, so runs on
- *                    different ports never drop each other's database.
- *
- * E2E_FINANCE_API_SERVICE_KEY  the service key the tests call the bot's routes with
- *                    (playwright.config.ts makes one per run). Default: random.
- * E2E_OWNER_EMAIL, E2E_OWNER_PASSWORD  the instance owner, signed up here before the API
- *                    serves, so no test's user can become the owner first.
- * E2E_BOT_USERNAME   the bot the Telegram stub answers for every token. The owner starts
- *                    with a bot configured, so Settings → Telegram can link from the first test.
- *
- * Telegram is a local stub (scripts/telegram-stub.ts, `TELEGRAM_API_URL`): no test reaches it.
- *
- * The other secrets are random per run; of the root .env only the server
- * address, DATABASE_POOL_MAX and LOG_LEVEL are used.
- */
 import { randomBytes } from "node:crypto";
 
 import { eq } from "drizzle-orm";
@@ -43,7 +21,6 @@ function defaultUrl(): string {
 }
 const url = new URL(process.env.E2E_DATABASE_URL || defaultUrl());
 const name = decodeURIComponent(url.pathname.slice(1));
-// It gets dropped: never let this point at a database that matters.
 if (!/^dalva_e2e\w*$/.test(name)) {
   console.error(`e2e-server: refusing to recreate "${name}"; the database name must start with dalva_e2e`);
   process.exit(1);
@@ -73,7 +50,6 @@ Object.assign(process.env, {
   TELEGRAM_API_URL: `http://127.0.0.1:${telegram.port}`,
 });
 
-// The owner: signed up first (the sign-up hook stores it), onboarded, with a bot configured.
 {
   const env = {
     DATABASE_URL: process.env.DATABASE_URL!,
@@ -108,8 +84,11 @@ Object.assign(process.env, {
     await database.close(1);
   }
 }
-// Rate limits per client address would trip on the suite's many sign-ups.
-delete process.env.CLIENT_IP_HEADER;
+disableAuthRateLimits();
 console.log(`e2e-server: ${name} migrated, API on :${process.env.PORT} for ${process.env.PUBLIC_URL}`);
 
 await import("../src/main");
+
+function disableAuthRateLimits(): void {
+  delete process.env.CLIENT_IP_HEADER;
+}
