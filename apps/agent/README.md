@@ -133,6 +133,6 @@ docker build -f apps/agent/Dockerfile -t dalva-agent .
 docker run -e FINANCE_API_URL=http://host.docker.internal:4000 -e FINANCE_API_SERVICE_KEY=... -p 8080:8080 dalva-agent
 ```
 
-Production runs the GHCR image in the compose stack, `compose.yml` (see `docs/deploy.md`).
+Production builds and runs this image in the compose stack, `compose.yml` (see `docs/deploy.md`).
 
 Build from the repo root: the image bundles the service with `@mpf/shared` into one file (only types come from `@mpf/api`) and runs it on distroless Bun as a non-root user.
